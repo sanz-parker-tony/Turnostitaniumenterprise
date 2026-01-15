@@ -1,0 +1,33 @@
+ESTE ES EL CÓDIGO QUE DEBES COPIAR Y PEGAR EN SUPABASE
+
+================================================
+INSTRUCCIONES:
+================================================
+1. Copia TODO el contenido de /supabase/functions/server/index-deploy.tsx
+2. Pega en el editor de Supabase
+3. Haz clic en "Deploy updates"
+
+================================================
+UBICACIÓN DEL ARCHIVO:
+================================================
+En Figma Make:
+- Ve a Files (panel izquierdo)
+- Navega a: supabase/functions/server/index-deploy.tsx
+- Selecciona TODO (Ctrl+A)
+- Copia (Ctrl+C)
+
+================================================
+VERIFICACIÓN:
+================================================
+El archivo debe:
+- Empezar con: import { Hono } from "npm:hono";
+- Terminar con: Deno.serve(app.fetch);
+- Tener aproximadamente 1324 líneas
+- La línea 30 debe decir: app.get("/make-server-e19f2094/health", (c) => {
+- La línea 1026 debe decir: app.post("/make-server-e19f2094/bootstrap/step1-tenant", async (c) => {
+
+================================================
+IMPORTANTE:
+================================================
+Asegúrate de copiar el archivo index-deploy.tsx
+NO copies index.tsx (ese es diferente)

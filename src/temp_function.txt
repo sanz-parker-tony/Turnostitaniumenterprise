@@ -1,0 +1,263 @@
+  // Función para generar el Reporte de Sobretiempo Resumido en PDF
+  const generarReporteSobretiempoResumido = () => {
+    toast.info('Generando reporte...', { description: 'Por favor espere' });
+
+    // Obtener nombres de filtros para cabecera
+    const getEmpresaName = () => empresa === 'all' ? 'Todas' : 'Titanium Corp';
+    const getLocalidadName = () => localidad === 'all' ? 'Todas' : localidad === 'bogota' ? 'Bogotá' : 'Medellín';
+    const getDepartamentoName = () => departamento === 'all' ? 'Todos' : departamento === 'prod' ? 'Producción' : 'Logística';
+    const getAreaName = () => area === 'all' ? 'Todas' : area === 'fabricacion' ? 'Fabricación' : 'Almacén';
+    const getCCName = () => centroCostos === 'all' ? 'Todos' : centroCostos;
+    
+    // Crear instancia de jsPDF
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    
+    // CABECERA DEL REPORTE
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 116, 217);
+    doc.text('REPORTE DE SOBRETIEMPO RESUMIDO', pageWidth / 2, 15, { align: 'center' });
+    
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 116, 217);
+    doc.text(getEmpresaName(), pageWidth / 2, 25, { align: 'center' });
+    
+    // CRITERIOS DE BÚSQUEDA
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text('Criterios de Búsqueda', 15, 40);
+    
+    // Línea divisoria
+    doc.setDrawColor(200, 200, 200);
+    doc.line(15, 42, pageWidth - 15, 42);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    
+    // Distribución horizontal de criterios
+    const col1 = 20;
+    const col2 = 90;
+    const col3 = 160;
+    const col4 = 230;
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Empresa:', col1, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.text(getEmpresaName(), col1 + 20, 50);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Localidad:', col2, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.text(getLocalidadName(), col2 + 22, 50);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Departamento:', col3, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.text(getDepartamentoName(), col3 + 28, 50);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Período:', col4, 50);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`${fechaInicio} - ${fechaFin}`, col4 + 18, 50);
+    
+    // Segunda fila
+    doc.setFont('helvetica', 'bold');
+    doc.text('Área:', col1, 56);
+    doc.setFont('helvetica', 'normal');
+    doc.text(getAreaName(), col1 + 12, 56);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Centro de Costos:', col2, 56);
+    doc.setFont('helvetica', 'normal');
+    doc.text(getCCName(), col2 + 35, 56);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Rol de Pago:', col3, 56);
+    doc.setFont('helvetica', 'normal');
+    doc.text(rolPago === 'all' ? 'Todos' : rolPago, col3 + 25, 56);
+    
+    // Tercera fila
+    doc.setFont('helvetica', 'bold');
+    doc.text('Grupo:', col1, 62);
+    doc.setFont('helvetica', 'normal');
+    doc.text(grupo === 'all' ? 'Todos' : grupo, col1 + 15, 62);
+    
+    // CONTENIDO JERÁRQUICO - RESUMIDO POR EMPLEADO
+    let y = 75;
+    mockSobretiemposJerarquica.departamentos.forEach((dept, deptIndex) => {
+      // QUIEBRE DE DEPARTAMENTO
+      if (deptIndex > 0) {
+        doc.addPage();
+        y = 20;
+      }
+      
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(0, 116, 217);
+      doc.setFillColor(232, 244, 255);
+      doc.rect(15, y - 5, pageWidth - 30, 8, 'F');
+      doc.text(`DEPARTAMENTO: ${dept.nombre}`, 20, y);
+      y += 12;
+      
+      dept.areas.forEach((area) => {
+        // QUIEBRE DE ÁREA
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(0, 91, 161);
+        doc.setFillColor(240, 248, 255);
+        doc.rect(15, y - 5, pageWidth - 30, 7, 'F');
+        doc.text(`ÁREA: ${area.nombre}`, 20, y);
+        y += 10;
+        
+        area.centrosCosto.forEach((cc) => {
+          // QUIEBRE DE CENTRO DE COSTO
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'bolditalic');
+          doc.setTextColor(51, 51, 51);
+          doc.text(`CENTRO DE COSTOS: ${cc.codigo} - ${cc.nombre}`, 20, y);
+          y += 8;
+          
+          // Verificar si necesitamos nueva página
+          if (y > 160) {
+            doc.addPage();
+            y = 20;
+          }
+          
+          // TABLA RESUMIDA DE EMPLEADOS CON SOBRETIEMPOS
+          const tableBody: any[] = [];
+          
+          // Encabezado con dos filas
+          const headerRow1 = [
+            { content: 'Código', rowSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center', valign: 'middle' } },
+            { content: 'Nombre', rowSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center', valign: 'middle' } },
+            { content: 'Documento', rowSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center', valign: 'middle' } },
+            { content: 'Cargo', rowSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center', valign: 'middle' } },
+            { content: 'H. Ord.', colSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'H. Noct.', colSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'ST 50%', colSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'ST 100% Jorn.', colSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'ST 100% Libre', colSpan: 2, styles: { fontSize: 7, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'TOTAL', colSpan: 2, styles: { fontSize: 7, fillColor: '#2ECC71', textColor: '#ffffff', halign: 'center', fontStyle: 'bold' } }
+          ];
+          
+          const headerRow2 = [
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' } },
+            { content: 'Hrs', styles: { fontSize: 6, fillColor: '#2ECC71', textColor: '#ffffff', halign: 'center', fontStyle: 'bold' } },
+            { content: '$', styles: { fontSize: 6, fillColor: '#2ECC71', textColor: '#ffffff', halign: 'center', fontStyle: 'bold' } }
+          ];
+          
+          // Filas de empleados con totales consolidados
+          cc.empleados.forEach((empleado) => {
+            // Calcular totales del período
+            let totalHrsOrdinarias = 0;
+            let totalHrsNocturnas = 0;
+            let totalSt50 = 0;
+            let totalSt100Jornada = 0;
+            let totalSt100Libre = 0;
+            
+            empleado.dias.forEach((dia) => {
+              totalHrsOrdinarias += dia.hrsOrdinarias;
+              totalHrsNocturnas += dia.hrsNocturnas;
+              totalSt50 += dia.st50;
+              totalSt100Jornada += dia.st100Jornada;
+              totalSt100Libre += dia.st100Libre;
+            });
+            
+            // Calcular valores monetarios
+            const valorOrdinarias = totalHrsOrdinarias * empleado.valorHoraOrdinaria;
+            const valorNocturnas = totalHrsNocturnas * empleado.valorHoraOrdinaria * 1.35;
+            const valorSt50 = totalSt50 * empleado.valorHoraOrdinaria * 1.5;
+            const valorSt100Jornada = totalSt100Jornada * empleado.valorHoraOrdinaria * 2.0;
+            const valorSt100Libre = totalSt100Libre * empleado.valorHoraOrdinaria * 2.0;
+            
+            const totalHrs = totalHrsOrdinarias + totalHrsNocturnas + totalSt50 + totalSt100Jornada + totalSt100Libre;
+            const totalValor = valorOrdinarias + valorNocturnas + valorSt50 + valorSt100Jornada + valorSt100Libre;
+            
+            tableBody.push([
+              { content: empleado.codigo, styles: { fontSize: 7, halign: 'left' } },
+              { content: empleado.nombre, styles: { fontSize: 7, halign: 'left' } },
+              { content: empleado.documento, styles: { fontSize: 7, halign: 'center' } },
+              { content: empleado.cargo, styles: { fontSize: 7, halign: 'left' } },
+              { content: totalHrsOrdinarias > 0 ? totalHrsOrdinarias.toFixed(1) : '-', styles: { fontSize: 7, halign: 'center' } },
+              { content: totalHrsOrdinarias > 0 ? `$${valorOrdinarias.toFixed(2)}` : '-', styles: { fontSize: 7, halign: 'right' } },
+              { content: totalHrsNocturnas > 0 ? totalHrsNocturnas.toFixed(1) : '-', styles: { fontSize: 7, halign: 'center' } },
+              { content: totalHrsNocturnas > 0 ? `$${valorNocturnas.toFixed(2)}` : '-', styles: { fontSize: 7, halign: 'right' } },
+              { content: totalSt50 > 0 ? totalSt50.toFixed(1) : '-', styles: { fontSize: 7, halign: 'center' } },
+              { content: totalSt50 > 0 ? `$${valorSt50.toFixed(2)}` : '-', styles: { fontSize: 7, halign: 'right' } },
+              { content: totalSt100Jornada > 0 ? totalSt100Jornada.toFixed(1) : '-', styles: { fontSize: 7, halign: 'center' } },
+              { content: totalSt100Jornada > 0 ? `$${valorSt100Jornada.toFixed(2)}` : '-', styles: { fontSize: 7, halign: 'right' } },
+              { content: totalSt100Libre > 0 ? totalSt100Libre.toFixed(1) : '-', styles: { fontSize: 7, halign: 'center' } },
+              { content: totalSt100Libre > 0 ? `$${valorSt100Libre.toFixed(2)}` : '-', styles: { fontSize: 7, halign: 'right' } },
+              { content: totalHrs.toFixed(1), styles: { fontSize: 7, fillColor: '#2ECC71', textColor: '#ffffff', fontStyle: 'bold', halign: 'center' } },
+              { content: `$${totalValor.toFixed(2)}`, styles: { fontSize: 7, fillColor: '#2ECC71', textColor: '#ffffff', fontStyle: 'bold', halign: 'right' } }
+            ]);
+          });
+          
+          // Generar tabla con encabezado de dos filas
+          autoTable(doc, {
+            head: [headerRow1, headerRow2],
+            body: tableBody,
+            startY: y,
+            theme: 'grid',
+            headStyles: { fillColor: '#0074D9', textColor: '#ffffff', halign: 'center' },
+            bodyStyles: { fillColor: '#f0f0f0' },
+            alternateRowStyles: { fillColor: '#ffffff' },
+            columnStyles: {
+              0: { cellWidth: 16, halign: 'left' },
+              1: { cellWidth: 35, halign: 'left' },
+              2: { cellWidth: 20, halign: 'center' },
+              3: { cellWidth: 30, halign: 'left' },
+              4: { cellWidth: 12, halign: 'center' },
+              5: { cellWidth: 15, halign: 'right' },
+              6: { cellWidth: 12, halign: 'center' },
+              7: { cellWidth: 15, halign: 'right' },
+              8: { cellWidth: 12, halign: 'center' },
+              9: { cellWidth: 15, halign: 'right' },
+              10: { cellWidth: 12, halign: 'center' },
+              11: { cellWidth: 15, halign: 'right' },
+              12: { cellWidth: 12, halign: 'center' },
+              13: { cellWidth: 15, halign: 'right' },
+              14: { cellWidth: 13, halign: 'center' },
+              15: { cellWidth: 16, halign: 'right' }
+            },
+            margin: { top: 5, bottom: 5 },
+            didDrawPage: function (data) {
+              // Footer
+              doc.setFontSize(8);
+              doc.setFont('helvetica', 'normal');
+              doc.setTextColor(0, 0, 0);
+              const pageNum = doc.internal.pages.length - 1;
+              doc.text(`Página ${pageNum} - Generado el ${new Date().toLocaleDateString('es-ES', { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}`, pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: 'center' });
+            }
+          });
+          
+          y = (doc as any).lastAutoTable.finalY + 10;
+        });
+      });
+    });
+    
+    // Generar y descargar el PDF
+    doc.save(`Reporte_Sobretiempo_Resumido_${fechaInicio}_${fechaFin}.pdf`);
+    
+    toast.success('Reporte generado exitosamente', {
+      description: 'El archivo PDF se ha descargado'
+    });
+  };

@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turnos Titanium - Control de Asistencias Inteligente OnPremise</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --primary: #0074D9;
+            --primary-foreground: #FFFFFF;
+            --secondary: #2ECC71;
+            --secondary-foreground: #FFFFFF;
+            --background: #FFFFFF;
+            --foreground: #1A1A1A;
+            --muted: #F5F5F5;
+            --muted-foreground: #666666;
+            --border: #E0E0E0;
+            --accent: #F0F9FF;
+            --destructive: #DC2626;
+            --warning: #F59E0B;
+            --success: #10B981;
+            --card-bg: #FFFFFF;
+            --shadow: rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: var(--foreground);
+            background-color: var(--background);
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        /* Header Navigation */
+        header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background-color: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+            z-index: 1000;
+            box-shadow: 0 2px 10px var(--shadow);
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            text-decoration: none;
+            color: var(--foreground);
+        }
+
+        .logo img {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+        }
+
+        .logo-text {
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            align-items: center;
+            list-style: none;
+        }
+
+        .nav-links a {
+            text-decoration: none;
+            color: var(--foreground);
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-links a:hover {
+            color: var(--primary);
+        }
+
+        .mobile-menu-button {
+            display: none;
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--foreground);
+        }
+
+        .mobile-menu {
+            display: none;
+            position: fixed;
+            top: 70px;
+            left: 0;
+            right: 0;
+            background-color: white;
+            border-bottom: 1px solid var(--border);
+            padding: 1rem;
+            box-shadow: 0 4px 6px var(--shadow);
+        }
+
+        .mobile-menu.active {
+            display: block;
+        }
+
+        .mobile-menu-links {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            list-style: none;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.625rem 1.25rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            border: none;
+        }
+
+        .btn-primary {
+            background-color: var(--primary);
+            color: var(--primary-foreground);
+        }
+
+        .btn-primary:hover {
+            background-color: #0063C1;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 116, 217, 0.3);
+        }
+
+        .btn-secondary {
+            background-color: var(--secondary);
+            color: var(--secondary-foreground);
+        }
+
+        .btn-secondary:hover {
+            background-color: #27AE60;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(46, 204, 113, 0.3);
+        }
+
+        .btn-outline {
+            background-color: transparent;
+            border: 2px solid var(--primary);
+            color: var(--primary);
+        }
+
+        .btn-outline:hover {
+            background-color: var(--primary);
+            color: var(--primary-foreground);
+        }
+
+        .btn-cta-outline {
+            background-color: transparent;
+            border: 2px solid white;
+            color: white;
+        }
+
+        .btn-cta-outline:hover {
+            background-color: white;
+            color: var(--primary);
+        }
+
+        .btn-lg {
+            padding: 0.875rem 2rem;
+            font-size: 1rem;
+        }
+
+        /* Hero Section */
+        .hero {
+            margin-top: 70px;
+            padding: 6rem 0;
+            background: linear-gradient(135deg, #0074D9 0%, #0063C1 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 1.5rem;
+            line-height: 1.2;
+        }
+
+        .hero .subtitle {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            opacity: 0.95;
+        }
+
+        .hero p {
+            font-size: 1.125rem;
+            margin-bottom: 2.5rem;
+            opacity: 0.9;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            margin-bottom: 1rem;
+        }
+
+        .badge-secondary {
+            background-color: var(--secondary);
+            color: var(--secondary-foreground);
+        }
+
+        .badge-outline {
+            background-color: transparent;
+            border: 2px solid var(--primary);
+            color: var(--primary);
+        }
+
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-4 { margin-bottom: 1rem; }
+        .mb-6 { margin-bottom: 1.5rem; }
+        .mb-8 { margin-bottom: 2rem; }
+
+        /* Features Section */
+        .features {
+            padding: 5rem 0;
+            background-color: var(--background);
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-header h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .section-header p {
+            font-size: 1.125rem;
+            color: var(--muted-foreground);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+
+        .feature-card {
+            padding: 2rem;
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+            transition: all 0.3s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px var(--shadow);
+        }
+
+        .feature-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+            background-color: var(--accent);
+            color: var(--primary);
+        }
+
+        .feature-icon.secondary {
+            background-color: #E8F8F0;
+            color: var(--secondary);
+        }
+
+        .feature-card h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card p {
+            color: var(--muted-foreground);
+            line-height: 1.6;
+        }
+
+        /* AI Section */
+        .ai-section {
+            padding: 5rem 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .ai-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .ai-content h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .ai-content p {
+            font-size: 1.125rem;
+            margin-bottom: 2rem;
+            opacity: 0.95;
+        }
+
+        .ai-features {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .ai-feature {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .ai-feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            background-color: rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .ai-feature h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .ai-feature p {
+            font-size: 1rem;
+            opacity: 0.9;
+            margin: 0;
+        }
+
+        .ai-image-container {
+            position: relative;
+        }
+
+        .ai-image-container img {
+            border-radius: 1rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            width: 100%;
+            height: auto;
+        }
+
+        /* OnPremise Section */
+        .onpremise-section {
+            padding: 5rem 0;
+            background-color: var(--muted);
+        }
+
+        .onpremise-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .onpremise-card {
+            background-color: white;
+            border-radius: 1rem;
+            padding: 3rem;
+            box-shadow: 0 10px 30px var(--shadow);
+        }
+
+        .onpremise-card .badge {
+            margin-bottom: 1rem;
+        }
+
+        .onpremise-card h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .onpremise-card .pricing {
+            font-size: 3rem;
+            font-weight: 800;
+            color: var(--primary);
+            margin: 1.5rem 0;
+        }
+
+        .onpremise-card .pricing-note {
+            color: var(--muted-foreground);
+            margin-bottom: 2rem;
+        }
+
+        .onpremise-features {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .onpremise-feature {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .onpremise-feature i {
+            color: var(--secondary);
+            flex-shrink: 0;
+        }
+
+        /* Mobile Section */
+        .mobile-section {
+            padding: 5rem 0;
+            background-color: var(--background);
+        }
+
+        .mobile-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .mobile-content h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+        }
+
+        .mobile-content p {
+            font-size: 1.125rem;
+            color: var(--muted-foreground);
+            margin-bottom: 2rem;
+        }
+
+        .mobile-features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .mobile-feature {
+            padding: 1.5rem;
+            background-color: var(--muted);
+            border-radius: 0.75rem;
+            border: 1px solid var(--border);
+        }
+
+        .mobile-feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            background-color: var(--accent);
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .mobile-feature h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .mobile-feature p {
+            font-size: 0.875rem;
+            color: var(--muted-foreground);
+            margin: 0;
+        }
+
+        .mobile-phone-mockup {
+            position: relative;
+            text-align: center;
+        }
+
+        .mobile-phone-mockup img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 2rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+
+        /* Integration Section */
+        .integration {
+            padding: 5rem 0;
+            background-color: var(--muted);
+        }
+
+        .integration-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4rem;
+            align-items: center;
+        }
+
+        .integration-features {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .integration-feature {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+        }
+
+        .integration-feature i {
+            color: var(--secondary);
+            flex-shrink: 0;
+            margin-top: 0.25rem;
+        }
+
+        .integration-feature h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .integration-feature p {
+            color: var(--muted-foreground);
+            margin: 0;
+        }
+
+        /* CTA Section */
+        .cta {
+            padding: 5rem 0;
+            background: linear-gradient(135deg, #0074D9 0%, #0063C1 100%);
+            color: white;
+            text-align: center;
+        }
+
+        .cta-content h2 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+        }
+
+        .cta-content p {
+            font-size: 1.125rem;
+            margin-bottom: 2.5rem;
+            opacity: 0.9;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* Footer */
+        footer {
+            background-color: #1A1A1A;
+            color: #FFFFFF;
+            padding: 3rem 0 1.5rem;
+        }
+
+        .footer-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr;
+            gap: 3rem;
+            margin-bottom: 2rem;
+        }
+
+        .footer-logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .footer-logo img {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+        }
+
+        .footer-logo span {
+            font-weight: 700;
+            font-size: 1.125rem;
+        }
+
+        .footer-description {
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 1.5rem;
+        }
+
+        footer h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        footer ul {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        footer a {
+            color: rgba(255, 255, 255, 0.7);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        footer a:hover {
+            color: var(--primary);
+        }
+
+        .footer-bottom {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-copyright p {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.875rem;
+        }
+
+        .footer-brand {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .footer-links a {
+            font-size: 0.875rem;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+
+            .mobile-menu-button {
+                display: block;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .hero .subtitle {
+                font-size: 1.125rem;
+            }
+
+            .hero p {
+                font-size: 1rem;
+            }
+
+            .section-header h2 {
+                font-size: 1.75rem;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .ai-grid,
+            .onpremise-grid,
+            .mobile-grid,
+            .integration-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .onpremise-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .onpremise-card {
+                padding: 2rem;
+            }
+
+            .mobile-features {
+                grid-template-columns: 1fr;
+            }
+
+            .footer-grid {
+                grid-template-columns: 1fr;
+                gap: 2rem;
+            }
+
+            .footer-bottom {
+                flex-direction: column;
+                gap: 1rem;
+                text-align: center;
+            }
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <nav>
+            <a href="#" class="logo">
+                <img src="https://via.placeholder.com/40/0074D9/FFFFFF?text=TT" alt="Turnos Titanium">
+                <span class="logo-text">Turnos Titanium</span>
+            </a>
+            
+            <ul class="nav-links">
+                <li><a href="#features">Características</a></li>
+                <li><a href="#ai">Inteligencia Artificial</a></li>
+                <li><a href="#onpremise">OnPremise</a></li>
+                <li><a href="#mobile">App Móvil</a></li>
+                <li><a href="#contact">Contacto</a></li>
+                <li><button class="btn btn-primary" onclick="handleGetStarted()">Comenzar</button></li>
+            </ul>
+
+            <button class="mobile-menu-button" onclick="toggleMobileMenu()">
+                <i data-lucide="menu" id="menu-icon" style="width: 24px; height: 24px;"></i>
+                <i data-lucide="x" id="close-icon" style="width: 24px; height: 24px; display: none;"></i>
+            </button>
+        </nav>
+
+        <div class="mobile-menu" id="mobileMenu">
+            <ul class="mobile-menu-links">
+                <li><a href="#features" onclick="closeMobileMenu()">Características</a></li>
+                <li><a href="#ai" onclick="closeMobileMenu()">Inteligencia Artificial</a></li>
+                <li><a href="#onpremise" onclick="closeMobileMenu()">OnPremise</a></li>
+                <li><a href="#mobile" onclick="closeMobileMenu()">App Móvil</a></li>
+                <li><a href="#contact" onclick="closeMobileMenu()">Contacto</a></li>
+                <li><button class="btn btn-primary" style="width: 100%;" onclick="handleGetStarted()">Comenzar</button></li>
+            </ul>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="container">
+            <span class="badge badge-secondary">Solución OnPremise</span>
+            <h1>Control de Asistencias<br>Potenciado por IA</h1>
+            <p class="subtitle">La solución definitiva para empresas que valoran la seguridad y el control total</p>
+            <p>
+                Turnos Titanium OnPremise combina tecnología de inteligencia artificial con instalación local,
+                ofreciendo análisis predictivos, planificación automatizada y control absoluto de tus datos.
+            </p>
+            <div class="hero-buttons">
+                <button class="btn btn-secondary btn-lg" onclick="handleGetStarted()">
+                    Solicitar Cotización
+                    <i data-lucide="arrow-right" style="width: 20px; height: 20px; margin-left: 0.5rem;"></i>
+                </button>
+                <button class="btn btn-cta-outline btn-lg">
+                    Ver Demo
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="container">
+            <div class="section-header">
+                <h2>Características Principales</h2>
+                <p>Todo lo que necesitas para gestionar tu fuerza laboral de manera eficiente</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i data-lucide="clock" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Registro Biométrico</h3>
+                    <p>Integración con dispositivos de huella, facial y RFID para marcaciones precisas y seguras</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon secondary">
+                        <i data-lucide="calendar" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Planificación de Turnos</h3>
+                    <p>Asignación inteligente de turnos con algoritmos que optimizan la distribución de personal</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i data-lucide="building-2" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Multi-Empresa y Multi-Localidad</h3>
+                    <p>Gestiona múltiples empresas, localidades, departamentos y áreas desde una única plataforma</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon secondary">
+                        <i data-lucide="file-text" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Reportes Avanzados</h3>
+                    <p>Genera reportes detallados de asistencia, novedades y turnos con múltiples criterios de búsqueda</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">
+                        <i data-lucide="shield-check" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Seguridad y Roles</h3>
+                    <p>Sistema completo de permisos y roles para control granular de accesos</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon secondary">
+                        <i data-lucide="refresh-cw" style="width: 32px; height: 32px;"></i>
+                    </div>
+                    <h3>Integración con Nómina</h3>
+                    <p>Exporta datos de asistencia directamente a tu sistema de nómina con formatos personalizables</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- AI Section -->
+    <section id="ai" class="ai-section">
+        <div class="container">
+            <div class="ai-grid">
+                <div class="ai-content">
+                    <span class="badge badge-secondary mb-4">Inteligencia Artificial</span>
+                    <h2>El Poder de la IA en la Gestión de Turnos</h2>
+                    <p>
+                        Turnos Titanium utiliza algoritmos avanzados de inteligencia artificial para optimizar
+                        la planificación de turnos, predecir necesidades de personal y automatizar decisiones complejas.
+                    </p>
+                    
+                    <div class="ai-features">
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="brain" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Planificación Predictiva</h3>
+                                <p>
+                                    La IA analiza patrones históricos y predice las necesidades de personal,
+                                    optimizando la asignación de turnos automáticamente.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="trending-up" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Análisis de Tendencias</h3>
+                                <p>
+                                    Identifica automáticamente patrones de ausentismo, horas extra recurrentes
+                                    y anomalías en las marcaciones.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="users" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Distribución Equitativa</h3>
+                                <p>
+                                    El algoritmo distribuye turnos de forma justa, considerando preferencias,
+                                    habilidades y disponibilidad de cada empleado.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="alert-triangle" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Alertas Inteligentes</h3>
+                                <p>
+                                    Recibe notificaciones proactivas sobre potenciales problemas de cobertura
+                                    o incumplimientos normativos antes de que ocurran.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="zap" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Optimización Continua</h3>
+                                <p>
+                                    El sistema aprende de cada ciclo de planificación y mejora constantemente
+                                    sus recomendaciones basándose en resultados reales.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="ai-feature">
+                            <div class="ai-feature-icon">
+                                <i data-lucide="bar-chart" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <div>
+                                <h3>Dashboard Analítico</h3>
+                                <p>
+                                    Visualiza métricas clave con gráficos interactivos y KPIs generados
+                                    automáticamente por la IA para toma de decisiones estratégicas.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ai-image-container">
+                    <img src="https://images.unsplash.com/photo-1677442136019-21780ecad995?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwyfHxhcnRpZmljaWFsJTIwaW50ZWxsaWdlbmNlJTIwYnVzaW5lc3N8ZW58MXx8fHwxNzYyMDA5OTQ3fDA&ixlib=rb-4.1.0&q=80&w=1080" alt="Inteligencia Artificial">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- OnPremise Section -->
+    <section id="onpremise" class="onpremise-section">
+        <div class="container">
+            <div class="onpremise-grid">
+                <div>
+                    <img src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxzZXJ2ZXIlMjByb29tfGVufDF8fHx8MTc2MjAwOTk0N3ww&ixlib=rb-4.1.0&q=80&w=1080" alt="OnPremise Servers" style="border-radius: 1rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); width: 100%;">
+                </div>
+
+                <div class="onpremise-card">
+                    <span class="badge badge-outline">Instalación Local</span>
+                    <h2>Turnos Titanium OnPremise</h2>
+                    <p style="color: var(--muted-foreground); margin-bottom: 1.5rem;">
+                        La solución perfecta para empresas que requieren control total de sus datos y 
+                        cumplimiento de normativas estrictas de privacidad.
+                    </p>
+
+                    <div class="pricing">Desde $8,500</div>
+                    <p class="pricing-note">Licencia perpetua • Pago único • Sin costos de suscripción</p>
+
+                    <button class="btn btn-primary btn-lg" style="width: 100%; margin-bottom: 2rem;" onclick="handleGetStarted()">
+                        Solicitar Cotización
+                    </button>
+
+                    <div class="onpremise-features">
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Licencia Perpetua:</strong> Compra única sin renovaciones mensuales</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Instalación Local:</strong> En tus propios servidores o infraestructura cloud privada</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Control Total:</strong> Datos alojados en tu infraestructura, sin dependencias externas</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Cumplimiento Normativo:</strong> Ideal para sectores regulados (banca, salud, gobierno)</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Personalización Avanzada:</strong> Adapta el sistema a tus procesos específicos</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Integración Profunda:</strong> API completa para conectar con sistemas legacy</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Usuarios Ilimitados:</strong> Sin límites de empleados según licencia adquirida</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Soporte Prioritario:</strong> Asistencia técnica dedicada y tiempos de respuesta garantizados</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Actualizaciones Incluidas:</strong> Acceso a nuevas versiones sin costo adicional</span>
+                        </div>
+                        <div class="onpremise-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <span><strong>Capacitación:</strong> Entrenamiento completo para administradores y usuarios clave</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 2rem; padding: 1.5rem; background-color: var(--accent); border-radius: 0.75rem; border-left: 4px solid var(--primary);">
+                        <p style="font-size: 0.875rem; color: var(--muted-foreground); margin: 0;">
+                            <strong>Mantenimiento Anual:</strong> 15% del valor de la licencia incluye soporte técnico,
+                            actualizaciones de seguridad y mejoras del sistema.
+                        </p>
+                    </div>
+
+                    <div style="margin-top: 1rem; padding: 1.5rem; background-color: #E8F8F0; border-radius: 0.75rem; border-left: 4px solid var(--secondary);">
+                        <h4 style="font-size: 0.875rem; font-weight: 600; margin-bottom: 0.75rem; color: var(--foreground);">Pool de Horas de Soporte Anuales</h4>
+                        <p style="font-size: 0.875rem; color: var(--muted-foreground); margin-bottom: 1rem;">
+                            A partir del segundo año, disponible por <strong style="color: var(--foreground);">$2,500/año</strong>
+                        </p>
+                        <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem;">
+                            <li style="display: flex; align-items: start; gap: 0.5rem; font-size: 0.875rem; color: var(--muted-foreground);">
+                                <i data-lucide="check-circle" style="width: 16px; height: 16px; color: var(--secondary); flex-shrink: 0; margin-top: 2px;"></i>
+                                <span>50 horas de soporte con prioridad 1</span>
+                            </li>
+                            <li style="display: flex; align-items: start; gap: 0.5rem; font-size: 0.875rem; color: var(--muted-foreground);">
+                                <i data-lucide="check-circle" style="width: 16px; height: 16px; color: var(--secondary); flex-shrink: 0; margin-top: 2px;"></i>
+                                <span>Opción de ampliar horas según necesidad</span>
+                            </li>
+                            <li style="display: flex; align-items: start; gap: 0.5rem; font-size: 0.875rem; color: var(--muted-foreground);">
+                                <i data-lucide="check-circle" style="width: 16px; height: 16px; color: var(--secondary); flex-shrink: 0; margin-top: 2px;"></i>
+                                <span>Ideal para soporte de usuarios y consultas técnicas</span>
+                            </li>
+                            <li style="display: flex; align-items: start; gap: 0.5rem; font-size: 0.75rem; font-style: italic; color: var(--muted-foreground); margin-top: 0.5rem;">
+                                <span style="margin-left: 1.5rem;">* No incluye personalizaciones (requieren presupuesto aparte)</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Mobile Section -->
+    <section id="mobile" class="mobile-section">
+        <div class="container">
+            <div class="section-header">
+                <span class="badge badge-secondary mb-4">Complemento Premium</span>
+                <h2>Turnos Titanium Mobile</h2>
+                <p style="font-size: 1.25rem; max-width: 800px;">
+                    Potencia tu sistema OnPremise con nuestra aplicación móvil que revoluciona 
+                    la gestión de solicitudes y aprobaciones. Autoservicio completo para empleados.
+                </p>
+            </div>
+
+            <div class="mobile-grid" style="margin-top: 3rem;">
+                <div class="mobile-content">
+                    <div style="background: linear-gradient(135deg, #2ECC71 0%, #27AE60 100%); color: white; padding: 2rem; border-radius: 1rem; margin-bottom: 2rem;">
+                        <h3 style="font-size: 1.5rem; margin-bottom: 0.5rem;">Complemento Independiente</h3>
+                        <div style="font-size: 2.5rem; font-weight: 800; margin: 1rem 0;">$500 + $2/usuario/mes</div>
+                        <p style="opacity: 0.95; margin: 0;">Licencia OnPremise + Costo por usuario activo</p>
+                    </div>
+
+                    <p style="font-size: 1.125rem; color: var(--muted-foreground); margin-bottom: 2rem;">
+                        <strong>Delega tareas operativas a tus empleados</strong> mientras mantienes control total. 
+                        La app móvil permite solicitar permisos, justificaciones, cambios de turno y regularizaciones, 
+                        todo con documentación de respaldo que los supervisores aprueban desde cualquier lugar.
+                    </p>
+
+                    <div class="mobile-features">
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="calendar-days" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Solicitud de Permisos</h3>
+                            <p>Los empleados solicitan permisos adjuntando documentación de respaldo directamente desde su celular.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="file-check" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Justificaciones</h3>
+                            <p>Envía justificaciones de ausencias o llegadas tardías con fotos de documentos médicos o certificados.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="repeat" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Cambios de Turno</h3>
+                            <p>Solicita intercambios de turno con compañeros y espera la aprobación del supervisor.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="clock" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Regularización</h3>
+                            <p>Regulariza marcaciones inconsistentes o faltantes explicando el motivo de la novedad.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="check-square" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Aprobación Rápida</h3>
+                            <p>Los supervisores aprueban o rechazan solicitudes con un solo toque, con notificaciones en tiempo real.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="paperclip" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Adjuntar Documentos</h3>
+                            <p>Sube fotos o PDFs de documentos de respaldo para validar cada solicitud automáticamente.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="bell" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Notificaciones Push</h3>
+                            <p>Recibe alertas instantáneas sobre el estado de tus solicitudes y nuevas asignaciones.</p>
+                        </div>
+
+                        <div class="mobile-feature">
+                            <div class="mobile-feature-icon">
+                                <i data-lucide="eye" style="width: 24px; height: 24px;"></i>
+                            </div>
+                            <h3>Consulta de Turnos</h3>
+                            <p>Visualiza tu calendario de turnos, horarios asignados y próximos días de trabajo.</p>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 2rem; padding: 1.5rem; background-color: var(--muted); border-radius: 0.75rem; border-left: 4px solid var(--secondary);">
+                        <p style="font-size: 0.875rem; color: var(--muted-foreground); margin: 0;">
+                            <strong>Autoservicio Completo:</strong> Reduce la carga administrativa delegando tareas
+                            rutinarias a los empleados, mientras mantienes control total con flujos de aprobación
+                            basados en documentación verificable.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="mobile-phone-mockup">
+                    <img src="https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2JpbGUlMjBhcHAlMjBidXNpbmVzc3xlbnwxfHx8fDE3NjIwMDk5NDd8MA&ixlib=rb-4.1.0&q=80&w=1080" alt="Mobile App">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Integration Section -->
+    <section class="integration">
+        <div class="container">
+            <div class="integration-grid">
+                <div>
+                    <span class="badge badge-secondary mb-4">Integración Biométrica</span>
+                    <h2 class="mb-6">Tecnología de vanguardia</h2>
+                    <p class="mb-8" style="font-size: 1.125rem; color: var(--muted-foreground);">
+                        Compatible con dispositivos biométricos de última generación para garantizar 
+                        la precisión y seguridad en el control de asistencias.
+                    </p>
+
+                    <div class="integration-features">
+                        <div class="integration-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <div>
+                                <h3>Múltiples Dispositivos</h3>
+                                <p>Soporte para lectores de huellas, reconocimiento facial, tarjetas RFID y más</p>
+                            </div>
+                        </div>
+
+                        <div class="integration-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <div>
+                                <h3>Sincronización en Tiempo Real</h3>
+                                <p>Las marcaciones se registran instantáneamente en el sistema</p>
+                            </div>
+                        </div>
+
+                        <div class="integration-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <div>
+                                <h3>Validación Anti-fraude</h3>
+                                <p>Tecnología biométrica que evita el marcado por terceros</p>
+                            </div>
+                        </div>
+
+                        <div class="integration-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <div>
+                                <h3>Multi-Localidad</h3>
+                                <p>Conecta dispositivos en múltiples ubicaciones geográficas desde una única plataforma</p>
+                            </div>
+                        </div>
+
+                        <div class="integration-feature">
+                            <i data-lucide="check-circle" style="width: 24px; height: 24px;"></i>
+                            <div>
+                                <h3>Backup Automático</h3>
+                                <p>Los dispositivos almacenan marcaciones localmente en caso de desconexión</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <img src="https://images.unsplash.com/photo-1699316252686-38babd282ca3?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0aW1lJTIwYXR0ZW5kYW5jZSUyMGJpb21ldHJpY3xlbnwxfHx8fDE3NjIwMDk5NDd8MA&ixlib=rb-4.1.0&q=80&w=1080" alt="Biometric Device" style="border-radius: 1rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); width: 100%;">
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section id="contact" class="cta">
+        <div class="cta-content">
+            <h2>¿Listo para optimizar tu gestión de asistencias?</h2>
+            <p>Únete a las empresas que ya confían en Turnos Titanium para gestionar su fuerza laboral</p>
+            
+            <div class="cta-buttons">
+                <button class="btn btn-secondary btn-lg" onclick="handleGetStarted()">
+                    Solicitar Cotización
+                    <i data-lucide="arrow-right" style="width: 20px; height: 20px; margin-left: 0.5rem;"></i>
+                </button>
+                <button class="btn btn-cta-outline btn-lg">
+                    Ver Demo
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <div class="footer-grid">
+                <div>
+                    <div class="footer-logo">
+                        <img src="https://via.placeholder.com/32/0074D9/FFFFFF?text=TT" alt="Turnos Titanium Logo">
+                        <span>Turnos Titanium</span>
+                    </div>
+                    <p class="footer-description">
+                        Sistema OnPremise para Control de Asistencias y Gestión de Turnos con Inteligencia Artificial
+                    </p>
+                </div>
+
+                <div>
+                    <h3>Producto</h3>
+                    <ul>
+                        <li><a href="#features">Características</a></li>
+                        <li><a href="#ai">Inteligencia Artificial</a></li>
+                        <li><a href="#onpremise">OnPremise</a></li>
+                        <li><a href="#mobile">App Móvil</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h3>Empresa</h3>
+                    <ul>
+                        <li><a href="#">Acerca de</a></li>
+                        <li><a href="#">Blog</a></li>
+                        <li><a href="#">Casos de Éxito</a></li>
+                        <li><a href="#contact">Contacto</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h3>Soporte</h3>
+                    <ul>
+                        <li><a href="#">Centro de Ayuda</a></li>
+                        <li><a href="#">Documentación</a></li>
+                        <li><a href="#">API</a></li>
+                        <li><a href="#">Descargas</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="footer-bottom">
+                <div class="footer-copyright">
+                    <p>© 2025 Turnos Titanium. Todos los derechos reservados.</p>
+                    <p style="font-size: 0.75rem; margin-top: 0.25rem;">
+                        Designed by <span class="footer-brand">Titanium-Labs Corp.</span> 2025
+                    </p>
+                </div>
+                <div class="footer-links">
+                    <a href="#">Términos</a>
+                    <a href="#">Privacidad</a>
+                    <a href="#">Cookies</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- JavaScript -->
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const mobileMenu = document.getElementById('mobileMenu');
+            const menuIcon = document.getElementById('menu-icon');
+            const closeIcon = document.getElementById('close-icon');
+            
+            mobileMenu.classList.toggle('active');
+            
+            if (mobileMenu.classList.contains('active')) {
+                menuIcon.style.display = 'none';
+                closeIcon.style.display = 'block';
+            } else {
+                menuIcon.style.display = 'block';
+                closeIcon.style.display = 'none';
+            }
+        }
+
+        function closeMobileMenu() {
+            const mobileMenu = document.getElementById('mobileMenu');
+            const menuIcon = document.getElementById('menu-icon');
+            const closeIcon = document.getElementById('close-icon');
+            
+            mobileMenu.classList.remove('active');
+            menuIcon.style.display = 'block';
+            closeIcon.style.display = 'none';
+        }
+
+        // Handle Get Started button
+        function handleGetStarted() {
+            // In a real implementation, this would redirect to your contact/quote page
+            alert('¡Gracias por tu interés! En producción, esto llevaría a un formulario de cotización o contacto.');
+            // window.location.href = '/contact'; // Uncomment this in production
+        }
+
+        // Smooth scroll for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
