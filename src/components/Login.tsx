@@ -1,155 +1,141 @@
+/**
+ * Login.tsx
+ * Pantalla de inicio de sesión para Turnos Titanium Enterprise
+ * Sistema On-Premise con autenticación Supabase
+ */
+
 import { useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
-import { Clock, AlertCircle, Loader2, Eye, EyeOff, Database, Shield } from 'lucide-react';
-import { Alert, AlertDescription } from './ui/alert';
+import { useAuth } from '../contexts/AuthContext';
+import { Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
 import { supabase } from '../lib/supabase';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
+import AdminPasswordReset from './AdminPasswordReset';
 
 export default function Login() {
+  const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showRecoverPassword, setShowRecoverPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    console.log('🔐 Intentando login con:', email);
-
     try {
-      // Login con Supabase Auth
-      console.log('📡 Llamando a Supabase Auth...');
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: password,
-      });
+      console.log('🔐 Intentando login con:', email);
+      
+      // SIMPLIFICADO: Solo hacer login, SIN creación automática
+      await signIn(email, password);
+      console.log('✅ Login exitoso');
 
-      console.log('📡 Respuesta de Supabase:', { data, error: signInError });
-
-      if (signInError) {
-        // Manejar errores específicos
-        console.error('❌ Error de Supabase:', signInError);
-        if (signInError.message.includes('Invalid login credentials')) {
-          setError('Email o contraseña incorrectos');
-        } else if (signInError.message.includes('Email not confirmed')) {
-          setError('Por favor, confirma tu email antes de iniciar sesión');
-        } else {
-          setError(signInError.message);
-        }
-        setIsLoading(false);
-        return;
+    } catch (err: any) {
+      console.error('❌ Error al iniciar sesión:', err);
+      
+      // Mejorar mensaje de error
+      let errorMessage = 'Error al iniciar sesión. Por favor, intenta nuevamente.';
+      
+      if (err.message?.includes('Invalid login credentials')) {
+        errorMessage = 'Credenciales inválidas. Si es la primera vez, el usuario debe ser creado desde Supabase Dashboard → Authentication → Users.';
+      } else if (err.message?.includes('Email not confirmed')) {
+        errorMessage = 'Por favor confirma tu correo electrónico antes de iniciar sesión.';
+      } else if (err.message) {
+        errorMessage = err.message;
       }
-
-      if (!data.session) {
-        console.error('❌ No se pudo crear sesión');
-        setError('No se pudo crear la sesión');
-        setIsLoading(false);
-        return;
-      }
-
-      console.log('✅ Sesión creada exitosamente');
-      console.log('📦 Session data:', {
-        userId: data.user.id,
-        email: data.user.email,
-        hasAccessToken: !!data.session.access_token
+      
+      setError(errorMessage);
+      
+      toast.error(errorMessage, {
+        duration: 6000,
+        position: 'top-center',
       });
-
-      // Login exitoso - Supabase Auth maneja la sesión automáticamente
-      // El AuthContext detectará el cambio y actualizará el estado
-      console.log('✅ LOGIN EXITOSO - AuthContext actualizará automáticamente');
-      console.log('👤 Usuario autenticado:', data.user.email);
-      console.log('⏳ Esperando a que AuthContext y PermissionsContext se actualicen...');
-      
-      setError('');
-      setIsLoading(false);
-      
-      // El componente App.tsx detectará la sesión y mostrará el Layout
-      
-    } catch (error: any) {
-      console.error('❌ Error en login:', error);
-      setError('Error inesperado al iniciar sesión. Intenta nuevamente.');
+    } finally {
       setIsLoading(false);
     }
   };
 
-  const handleRecoverPassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    setShowRecoverPassword(false);
-    alert('Se ha enviado un correo de recuperación');
-  };
-
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-lg shadow-lg p-8 border border-gray-200">
-          {/* Encabezado Institucional */}
-          <div className="flex flex-col items-center mb-8">
-            <div className="mb-4">
-              <img 
-                src={logoTurnos} 
-                alt="Turnos Titanium" 
-                className="w-16 h-16 rounded-xl shadow-md" 
-              />
-            </div>
-            
-            <h1 className="text-2xl font-semibold text-gray-900 mb-1">
-              Turnos Titanium
-            </h1>
-            <p className="text-sm text-gray-600 mb-2">
-              Plataforma Empresarial de Control de Asistencias
-            </p>
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Shield className="w-3 h-3" />
-              <span>Acceso Seguro On-Premise</span>
+        {/* Logo y título */}
+        <div className="text-center mb-8">
+          <div className="flex justify-center mb-4">
+            <img src={logoTurnos} alt="Turnos Titanium" className="h-16 w-16" />
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Turnos Titanium</h1>
+          <p className="text-gray-600">Plataforma Empresarial de Control de Asistencias y Turnos</p>
+          <div className="flex items-center justify-center gap-4 mt-4 text-sm text-gray-500">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-green-500"></div>
+              <span>Modalidad: On-Premise</span>
             </div>
           </div>
+        </div>
+
+        {/* Formulario de login */}
+        <div className="bg-white rounded-lg shadow-lg p-8">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Iniciar sesión</h2>
 
           {error && (
-            <Alert className="mb-4 border-red-200 bg-red-50">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              <AlertDescription className="text-red-800">
-                {error}
-              </AlertDescription>
-            </Alert>
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-red-900">Error de autenticación</p>
+                <p className="text-sm text-red-700 mt-1">{error}</p>
+              </div>
+            </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* Email */}
             <div>
-              <Label htmlFor="email">Correo electrónico</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="usuario@empresa.com"
-                required
-                className="mt-1"
-              />
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                Correo electrónico
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Mail className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                  placeholder="usuario@empresa.com"
+                  autoComplete="email"
+                />
+              </div>
             </div>
 
+            {/* Password */}
             <div>
-              <Label htmlFor="password">Contraseña</Label>
-              <div className="relative mt-1">
-                <Input
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                Contraseña
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-5 w-5 text-gray-400" />
+                </div>
+                <input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
                   required
+                  className="block w-full pl-10 pr-10 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                  placeholder="••••••••"
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-500 hover:text-gray-700"
                   onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
                 >
                   {showPassword ? (
                     <EyeOff className="h-5 w-5" />
@@ -160,58 +146,33 @@ export default function Login() {
               </div>
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full bg-[#0074D9] hover:bg-[#0074D9]/90"
+            {/* Submit button */}
+            <button
+              type="submit"
               disabled={isLoading}
+              className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {isLoading ? (
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   <span>Iniciando sesión...</span>
-                </div>
+                </>
               ) : (
-                'Acceder al sistema'
+                <span>Iniciar sesión</span>
               )}
-            </Button>
+            </button>
           </form>
 
-          <div className="mt-6 flex justify-between text-sm">
-            <Dialog open={showRecoverPassword} onOpenChange={setShowRecoverPassword}>
-              <DialogTrigger asChild>
-                <button className="text-[#0074D9] hover:text-[#0074D9]/80">
-                  Recuperar contraseña
-                </button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Recuperar Contraseña</DialogTitle>
-                  <DialogDescription>
-                    Ingrese su correo electrónico para recibir instrucciones
-                  </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleRecoverPassword} className="space-y-4">
-                  <div>
-                    <Label htmlFor="recover-email">Correo Electrónico</Label>
-                    <Input id="recover-email" type="email" required />
-                  </div>
-                  <Button type="submit" className="w-full">
-                    Enviar Instrucciones
-                  </Button>
-                </form>
-              </DialogContent>
-            </Dialog>
+          {/* Reset Password Helper */}
+          <div className="mt-4 text-center">
+            <AdminPasswordReset />
           </div>
+        </div>
 
-          {/* Footer Discreto */}
-          <div className="mt-8 pt-6 border-t border-gray-200">
-            <p className="text-center text-xs text-gray-400">
-              Turnos Titanium Enterprise v2.5.1
-            </p>
-            <p className="text-center text-xs text-gray-400 mt-1">
-              © 2025 Titanium-Labs Corp.
-            </p>
-          </div>
+        {/* Footer */}
+        <div className="mt-8 text-center text-sm text-gray-500">
+          <p>Turnos Titanium Enterprise v2.5.1 - Instalación On-Premise</p>
+          <p className="mt-1">© 2025 Titanium Labs Corp. Todos los derechos reservados.</p>
         </div>
       </div>
     </div>

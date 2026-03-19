@@ -39,8 +39,6 @@ export default function DashboardPage() {
         setDashboardType('SYSTEM_ADMIN');
       } else if (userRoles.includes('RRHH_ADMIN')) {
         setDashboardType('RRHH_ADMIN');
-      } else if (userRoles.includes('SUPERVISOR')) {
-        setDashboardType('SUPERVISOR');
       } else {
         setDashboardType('DEFAULT');
       }
@@ -70,7 +68,6 @@ export default function DashboardPage() {
           <p className="text-gray-600 mt-2">
             {dashboardType === 'EMPLOYEE' && 'Panel de autoservicio - Gestiona tus asistencias y solicitudes'}
             {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - Gestión de personal y aprobaciones'}
-            {dashboardType === 'SUPERVISOR' && 'Panel de Supervisor - Gestión de equipo'}
             {dashboardType === 'SYSTEM_ADMIN' && 'Panel de Administración - Configuración del sistema'}
             {dashboardType === 'TENANT_ADMIN' && 'Panel de Administración - Gestión del tenant'}
             {dashboardType === 'DEFAULT' && 'Panel principal'}
@@ -80,8 +77,8 @@ export default function DashboardPage() {
         {/* Dashboard EMPLOYEE */}
         {dashboardType === 'EMPLOYEE' && <EmployeeDashboard />}
 
-        {/* Dashboard RRHH_ADMIN / SUPERVISOR */}
-        {(dashboardType === 'RRHH_ADMIN' || dashboardType === 'SUPERVISOR') && <RRHHDashboard />}
+        {/* Dashboard RRHH_ADMIN */}
+        {dashboardType === 'RRHH_ADMIN' && <RRHHDashboard />}
 
         {/* Dashboard SYSTEM_ADMIN */}
         {dashboardType === 'SYSTEM_ADMIN' && <SystemAdminDashboard />}

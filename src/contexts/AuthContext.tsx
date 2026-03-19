@@ -1,13 +1,14 @@
 /**
- * Auth Context - Turnos Titanium
+ * Auth Context - Turnos Titanium Enterprise
  * Context global para manejar autenticación con Supabase
+ * Version: 1.0.0
  */
 
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
-import { supabase, getCurrentUserProfile } from '@/lib/supabase';
+import { supabase, getCurrentUserProfile } from '../lib/supabase';
 
 interface UserProfile {
   id: string;
@@ -30,7 +31,9 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   profile: UserProfile | null;
+  userRoles: string[];  // ✅ NUEVO: Array de role_keys del usuario
   isLoading: boolean;
+  signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateTenantInfo: (tenantId: string, tenantName: string) => void;  // ✅ NUEVO
@@ -42,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userRoles, setUserRoles] = useState<string[]>([]);  // ✅ NUEVO
   const [isLoading, setIsLoading] = useState(true);
 
   // Cargar perfil del usuario (simplificado - usa solo Auth)
@@ -49,17 +53,94 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('📋 Buscando perfil en BD para auth_user_id:', currentUser.id);
       
-      // ✅ PASO 1: Consultar la tabla users
+      // ✅ PASO 1: Buscar por auth_user_id primero
       const { data: existingUser, error: queryError } = await supabase
         .from('users_with_primary_role')
         .select('id, auth_user_id, tenant_id, tenant_name, username, email, display_name, preferred_language_code, last_login_at, created_at, role_key, role_name, role_scope, is_super_admin')
         .eq('auth_user_id', currentUser.id)
+        .limit(1)
         .single();
 
-      if (queryError && queryError.code !== 'PGRST116') {
-        // Error diferente a "not found"
-        console.error('❌ Error al consultar usuario:', queryError);
-        throw queryError;
+      if (queryError) {
+        // Si es error de "no encontrado", intentar por email
+        if (queryError.code === 'PGRST116' && currentUser.email) {
+          console.log('🔍 Usuario no encontrado por auth_user_id, buscando por email:', currentUser.email);
+          
+          const { data: userByEmail, error: emailError } = await supabase
+            .from('users_with_primary_role')
+            .select('id, auth_user_id, tenant_id, tenant_name, username, email, display_name, preferred_language_code, last_login_at, created_at, role_key, role_name, role_scope, is_super_admin')
+            .eq('email', currentUser.email)
+            .limit(1)
+            .single();
+
+          if (emailError) {
+            if (emailError.code !== 'PGRST116') {
+              console.error('❌ Error al consultar usuario por email:', emailError);
+            }
+            // Usuario no existe en BD - esto es normal en algunos casos
+            console.warn('⚠️ Usuario no encontrado en BD');
+            return;
+          }
+
+          if (userByEmail) {
+            console.log('✅ Usuario encontrado por email, vinculando auth_user_id...');
+            
+            // Actualizar el auth_user_id en la tabla users
+            await supabase
+              .from('users')
+              .update({ 
+                auth_user_id: currentUser.id,
+                updated_by: userByEmail.username,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', userByEmail.id);
+
+            console.log('✅ auth_user_id vinculado correctamente');
+            
+            // Usar este usuario para continuar
+            const formattedProfile: UserProfile = {
+              id: userByEmail.id,
+              auth_user_id: currentUser.id,
+              tenant_id: userByEmail.tenant_id,
+              tenant_name: userByEmail.tenant_name || 'Sin Tenant',
+              username: userByEmail.username,
+              email: userByEmail.email,
+              display_name: userByEmail.display_name,
+              preferred_language_code: userByEmail.preferred_language_code,
+              last_login_at: userByEmail.last_login_at,
+              created_at: userByEmail.created_at,
+              is_super_admin: userByEmail.is_super_admin,
+              role_scope: userByEmail.role_scope,
+              role_key: userByEmail.role_key,
+              role_name: userByEmail.role_name
+            };
+            
+            console.log('✅ Perfil cargado desde BD:', formattedProfile);
+            setProfile(formattedProfile);
+            localStorage.setItem('user_profile', JSON.stringify(formattedProfile));
+            
+            if (userByEmail.role_key) {
+              setUserRoles([userByEmail.role_key]);
+              console.log('✅ Roles establecidos:', [userByEmail.role_key]);
+            } else {
+              setUserRoles([]);
+            }
+            
+            // Actualizar last_login_at
+            await supabase
+              .from('users')
+              .update({ 
+                last_login_at: new Date().toISOString(),
+                updated_by: userByEmail.username,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', userByEmail.id);
+          }
+          return;
+        } else {
+          console.error('❌ Error al consultar usuario:', queryError);
+          throw queryError;
+        }
       }
 
       if (existingUser) {
@@ -87,6 +168,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProfile(formattedProfile);
         localStorage.setItem('user_profile', JSON.stringify(formattedProfile));
         
+        // ✅ Establecer userRoles array (por ahora solo el rol principal)
+        if (existingUser.role_key) {
+          setUserRoles([existingUser.role_key]);
+          console.log('✅ Roles establecidos:', [existingUser.role_key]);
+        } else {
+          setUserRoles([]);
+        }
+        
         // Actualizar last_login_at
         await supabase
           .from('users')
@@ -100,27 +189,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // ⚠️ PASO 2: Usuario NO encontrado - Crear perfil básico (solo para nuevos usuarios)
-      console.warn('⚠️ Usuario NO encontrado en BD, creando perfil temporal');
+      // ⚠️ PASO 2: Usuario NO encontrado en BD
+      console.warn('⚠️ Usuario NO encontrado en BD');
       
-      const tempProfile: UserProfile = {
-        id: currentUser.id,
-        auth_user_id: currentUser.id,
-        tenant_id: 'default', // Se obtendrá de los permisos
-        tenant_name: 'Empresa Demo',
-        username: currentUser.email?.split('@')[0] || 'usuario',
-        email: currentUser.email || '',
-        display_name: currentUser.user_metadata?.display_name || currentUser.email?.split('@')[0] || 'Usuario',
-        preferred_language_code: 'es',
-        last_login_at: new Date().toISOString(),
-        created_at: currentUser.created_at || new Date().toISOString()
-      };
-      
-      console.log('⚠️ Perfil temporal creado:', tempProfile);
-      setProfile(tempProfile);
-      localStorage.setItem('user_profile', JSON.stringify(tempProfile));
-    } catch (error) {
+      // No crear perfil temporal - el usuario debería existir en la BD
+      throw new Error('Usuario no encontrado en la base de datos. Por favor contacta al administrador.');
+    } catch (error: any) {
+      // ✅ Ignorar AbortError - es normal cuando se desmonta el componente
+      if (error?.name === 'AbortError') {
+        console.log('🛑 Carga de perfil cancelada (componente desmontado)');
+        return;
+      }
       console.error('❌ Error al cargar perfil:', error);
+      // No bloquear el flujo, permitir continuar
     }
   };
 
@@ -131,9 +212,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Sign in
+  const signIn = async (email: string, password: string) => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  };
+
   // Inicializar sesión
   useEffect(() => {
     console.log('🔐 AuthContext: Inicializando...');
+    
+    let isInitialized = false; // ✅ Flag para evitar múltiples inicializaciones
     
     // Obtener sesión actual
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -144,11 +241,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       if (session?.user) {
         console.log('🔐 AuthContext: Cargando perfil para sesión existente');
-        loadProfile(session.user);
+        loadProfile(session.user).finally(() => {
+          setIsLoading(false);
+          isInitialized = true;
+        });
+      } else {
+        setIsLoading(false);
+        isInitialized = true;
       }
-      
-      console.log('🔐 AuthContext: Inicialización completa, isLoading = false');
-      setIsLoading(false);
     });
 
     // Escuchar cambios de autenticación
@@ -156,31 +256,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('🔐 AuthContext: Auth event:', event);
-      console.log('🔐 AuthContext: Session:', session ? 'Sí' : 'No');
+      
+      // ✅ IGNORAR TOKEN_REFRESHED completamente - NO causa re-renders
+      if (event === 'TOKEN_REFRESHED') {
+        console.log('🔐 AuthContext: TOKEN_REFRESHED - Ignorado (no afecta UI)');
+        return; // ✅ Salir inmediatamente sin tocar el estado
+      }
+      
+      // ✅ IGNORAR eventos duplicados durante inicialización
+      if (!isInitialized && (event === 'INITIAL_SESSION' || event === 'SIGNED_IN')) {
+        console.log('🔐 AuthContext: Evento ignorado durante inicialización');
+        return;
+      }
       
       setSession(session);
       setUser(session?.user ?? null);
 
       if (event === 'SIGNED_IN' && session?.user) {
         console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
-        setIsLoading(true); // ✅ Mostrar loading mientras carga el perfil
-        await loadProfile(session.user);
-        console.log('🔐 AuthContext: Perfil cargado, estableciendo isLoading = false');
-        setIsLoading(false); // ✅ CRÍTICO: Establecer isLoading = false después de cargar
-        console.log('🔐 AuthContext: isLoading establecido en false');
+        setIsLoading(true);
+        try {
+          await loadProfile(session.user);
+        } catch (error) {
+          console.error('❌ Error cargando perfil en SIGNED_IN:', error);
+        } finally {
+          setIsLoading(false); // ✅ CRÍTICO: Siempre ejecutar esto
+        }
       }
 
       if (event === 'SIGNED_OUT') {
         console.log('🔐 AuthContext: SIGNED_OUT - Limpiando datos');
         setProfile(null);
+        setUserRoles([]);
         localStorage.removeItem('user_profile');
-        setIsLoading(false); // ✅ Asegurar que no quede en loading
-        // El componente App.tsx manejará la redirección basándose en user === null
-      }
-
-      if (event === 'TOKEN_REFRESHED' && session?.user) {
-        console.log('🔐 AuthContext: TOKEN_REFRESHED - Recargando perfil');
-        await loadProfile(session.user);
+        setIsLoading(false);
       }
     });
 
@@ -191,26 +300,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Sign out
   const signOut = async () => {
-    try {
-      setIsLoading(true);
-      const { error } = await supabase.auth.signOut();
-      
-      if (error) {
-        console.error('Error al cerrar sesión:', error);
-        throw error;
-      }
-
-      setUser(null);
-      setSession(null);
-      setProfile(null);
-      localStorage.removeItem('user_profile');
-      
-      // El componente App.tsx detectará user === null y mostrará Login
-    } catch (error) {
-      console.error('Error en signOut:', error);
-    } finally {
-      setIsLoading(false);
-    }
+    console.log('🚪 [LOGOUT] Iniciando cierre de sesión...');
+    
+    // 1. Limpiar estado local PRIMERO (para que React renderice Login inmediatamente)
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    setUserRoles([]);
+    
+    // 2. Limpiar localStorage
+    localStorage.removeItem('user_profile');
+    localStorage.removeItem('bootstrapToken');
+    localStorage.removeItem('turnosTitanium_tenantId');
+    localStorage.removeItem('turnosTitanium_tenantName');
+    localStorage.removeItem('wizard_completed'); // ✅ NUEVO: Limpiar cache del wizard
+    
+    console.log('✅ [LOGOUT] Estado local y localStorage limpiados');
+    
+    // 3. Cerrar sesión en Supabase en segundo plano (no esperar)
+    supabase.auth.signOut().catch(err => {
+      console.error('⚠️ [LOGOUT] Error al cerrar sesión en Supabase (ignorado):', err);
+    });
+    
+    console.log('✅ [LOGOUT] Logout completado - React mostrará Login');
+    // ✅ NO recargamos la página - dejamos que React renderice Login naturalmente
   };
 
   // Actualizar información del tenant
@@ -239,7 +352,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     session,
     profile,
+    userRoles,  // ✅ NUEVO
     isLoading,
+    signIn: async (email: string, password: string) => {
+      try {
+        setIsLoading(true);
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        
+        if (error) {
+          console.error('Error al iniciar sesión:', error);
+          throw error;
+        }
+
+        if (data.user) {
+          console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
+          await loadProfile(data.user);
+        }
+      } catch (error) {
+        console.error('Error en signIn:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    },
     signOut,
     refreshProfile,
     updateTenantInfo  // ✅ NUEVO

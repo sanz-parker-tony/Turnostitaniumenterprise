@@ -6,6 +6,7 @@
 'use client';
 
 import ScreenPageShell from '@/components/ScreenPageShell';
+import EmployeesManagement from '@/components/employees/EmployeesManagement';
 
 export default function EmployeesListPage() {
   return (
@@ -13,6 +14,8 @@ export default function EmployeesListPage() {
       screenKey="EMPL_LIST"
       title="Empleados"
       description="Gestión de empleados del sistema"
-    />
+    >
+      <EmployeesManagement />
+    </ScreenPageShell>
   );
 }

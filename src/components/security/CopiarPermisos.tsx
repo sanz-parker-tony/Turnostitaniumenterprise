@@ -1,3 +1,5 @@
+import { Badge } from '../ui/badge';
+import { toast } from 'sonner';
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
@@ -12,19 +14,7 @@ import {
   SelectValue,
 } from '../ui/select';
 import { Checkbox } from '../ui/checkbox';
-import { Badge } from '../ui/badge';
-import { toast } from 'sonner@2.0.3';
-import {
-  Copy,
-  GitBranch,
-  AlertTriangle,
-  CheckCircle2,
-  ArrowRight,
-  Shield,
-  FileText,
-  Eye,
-  Settings,
-} from 'lucide-react';
+import { Copy, GitBranch, AlertTriangle, CheckCircle2, ArrowRight, Shield, FileText, Eye, Settings } from 'lucide-react';
 import {
   Dialog,
   DialogContent,

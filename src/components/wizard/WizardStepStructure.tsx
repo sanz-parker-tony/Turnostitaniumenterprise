@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { Building2, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Download, MapPin, Loader2 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { 
   generateWorkLocationsTemplate, 

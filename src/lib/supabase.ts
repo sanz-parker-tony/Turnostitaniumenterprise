@@ -1,6 +1,7 @@
 /**
- * Supabase Client Configuration
+ * Supabase Client Configuration - Turnos Titanium Enterprise
  * Cliente para interactuar con Supabase desde el frontend con Auth
+ * Version: 1.0.0
  * 
  * 🔧 CONFIGURACIÓN:
  * Reemplaza los valores de SUPABASE_URL y SUPABASE_ANON_KEY

@@ -5,31 +5,37 @@
  * MÓDULOS:
  * - Idiomas del Sistema
  * - Grupos de Menú y Traducciones
- * - Pantallas y Traducciones (futuro)
- * - Acciones y Traducciones (futuro)
- * - Módulos y Traducciones (futuro)
+ * - Pantallas y Traducciones
+ * - Acciones y Traducciones
+ * - Tipos de Alcance
+ * - Grupos de Catálogos y Traducciones
+ * - Valores del Sistema y Traducciones
  * 
- * Solo accesible para Super Admin (tenant_id = GOD)
+ * Solo accesible para Super Admin (is_super_admin = true)
  */
 
 import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { Settings, Globe, LayoutGrid, Monitor, Zap, Package, AlertCircle } from 'lucide-react';
+import { Settings, Globe, LayoutGrid, Monitor, Zap, Target, List, Database, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import SystemLanguagesAdmin from './SystemLanguagesAdmin';
 import SystemMenuGroupsAdmin from './SystemMenuGroupsAdmin';
+import SystemScreensAdmin from './SystemScreensAdmin';
+import SystemActionsAdmin from './SystemActionsAdmin';
+import SystemScopeTypesAdmin from './SystemScopeTypesAdmin';
+import SystemLookupGroupsAdmin from './SystemLookupGroupsAdmin';
+import SystemLookupValuesAdmin from './SystemLookupValuesAdmin';
 
 export default function SystemAdministration() {
   const { profile } = useAuth();
   const [activeTab, setActiveTab] = useState('languages');
 
   // ✅ Verificar si el usuario es Super Admin
-  const isSuperAdmin = profile?.is_super_admin === true || profile?.role_scope === 'SYSTEM';
+  const isSuperAdmin = profile?.is_super_admin === true;
   
   console.log('[SYSTEM-ADMIN] Validación Super Admin:', {
     is_super_admin: profile?.is_super_admin,
-    role_scope: profile?.role_scope,
     isSuperAdmin,
     profile
   });
@@ -106,16 +112,14 @@ export default function SystemAdministration() {
               </TabsTrigger>
               <TabsTrigger 
                 value="screens" 
-                disabled
-                className="flex items-center gap-2 opacity-50"
+                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-[#0074D9]"
               >
                 <Monitor className="size-4" />
                 <span className="hidden sm:inline">Pantallas</span>
               </TabsTrigger>
               <TabsTrigger 
                 value="actions" 
-                disabled
-                className="flex items-center gap-2 opacity-50"
+                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-[#0074D9]"
               >
                 <Zap className="size-4" />
                 <span className="hidden sm:inline">Acciones</span>
@@ -125,8 +129,29 @@ export default function SystemAdministration() {
                 disabled
                 className="flex items-center gap-2 opacity-50"
               >
-                <Package className="size-4" />
+                <Target className="size-4" />
                 <span className="hidden sm:inline">Módulos</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="scope-types" 
+                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-[#0074D9]"
+              >
+                <List className="size-4" />
+                <span className="hidden sm:inline">Tipos de Alcance</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="lookup-groups" 
+                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-[#0074D9]"
+              >
+                <Database className="size-4" />
+                <span className="hidden sm:inline">Grupos de Catálogos</span>
+              </TabsTrigger>
+              <TabsTrigger 
+                value="lookup-values" 
+                className="flex items-center gap-2 data-[state=active]:bg-white data-[state=active]:text-[#0074D9]"
+              >
+                <Database className="size-4" />
+                <span className="hidden sm:inline">Valores del Sistema</span>
               </TabsTrigger>
             </TabsList>
 
@@ -140,34 +165,14 @@ export default function SystemAdministration() {
               <SystemMenuGroupsAdmin />
             </TabsContent>
 
-            {/* Tab: Pantallas (Próximamente) */}
+            {/* Tab: Pantallas */}
             <TabsContent value="screens" className="mt-6">
-              <Card className="border-gray-200 bg-gray-50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-gray-600">
-                    <Monitor className="size-5" />
-                    Administración de Pantallas
-                  </CardTitle>
-                  <CardDescription>
-                    Módulo en construcción. Permitirá gestionar las pantallas del sistema (system_screens) y sus traducciones.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+              <SystemScreensAdmin />
             </TabsContent>
 
-            {/* Tab: Acciones (Próximamente) */}
+            {/* Tab: Acciones */}
             <TabsContent value="actions" className="mt-6">
-              <Card className="border-gray-200 bg-gray-50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-gray-600">
-                    <Zap className="size-5" />
-                    Administración de Acciones
-                  </CardTitle>
-                  <CardDescription>
-                    Módulo en construcción. Permitirá gestionar las acciones del sistema (system_actions) y sus traducciones.
-                  </CardDescription>
-                </CardHeader>
-              </Card>
+              <SystemActionsAdmin />
             </TabsContent>
 
             {/* Tab: Módulos (Próximamente) */}
@@ -175,7 +180,7 @@ export default function SystemAdministration() {
               <Card className="border-gray-200 bg-gray-50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-gray-600">
-                    <Package className="size-5" />
+                    <Target className="size-5" />
                     Administración de Módulos
                   </CardTitle>
                   <CardDescription>
@@ -183,6 +188,21 @@ export default function SystemAdministration() {
                   </CardDescription>
                 </CardHeader>
               </Card>
+            </TabsContent>
+
+            {/* Tab: Tipos de Alcance */}
+            <TabsContent value="scope-types" className="mt-6">
+              <SystemScopeTypesAdmin />
+            </TabsContent>
+
+            {/* Tab: Grupos de Catálogos */}
+            <TabsContent value="lookup-groups" className="mt-6">
+              <SystemLookupGroupsAdmin />
+            </TabsContent>
+
+            {/* Tab: Valores del Sistema */}
+            <TabsContent value="lookup-values" className="mt-6">
+              <SystemLookupValuesAdmin />
             </TabsContent>
           </Tabs>
         </CardContent>

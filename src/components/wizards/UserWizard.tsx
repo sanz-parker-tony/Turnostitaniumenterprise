@@ -1,0 +1,131 @@
+/**
+ * UserWizard.tsx
+ * Wizard de 4 pasos para creación de usuarios con permisos completos
+ * Ejecuta: TENANT_ADMIN
+ * Ubicación: Menú MAINTENANCE → Asistente de Usuarios
+ */
+
+import { useState } from 'react';
+import { X, User, Monitor, Database, FileText } from 'lucide-react';
+
+interface UserWizardProps {
+  onClose: () => void;
+  onComplete?: () => void;
+}
+
+export default function UserWizard({ onClose, onComplete }: UserWizardProps) {
+  const [currentStep, setCurrentStep] = useState(1);
+
+  const steps = [
+    { id: 1, name: 'Usuario', icon: User },
+    { id: 2, name: 'Permisos App', icon: Monitor },
+    { id: 3, name: 'Permisos Info', icon: Database },
+    { id: 4, name: 'Reportes', icon: FileText }
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Asistente de Creación de Usuario</h2>
+            <p className="text-sm text-gray-600 mt-1">Configure un usuario con todos sus permisos</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Stepper */}
+        <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+          <div className="flex items-center justify-between max-w-3xl mx-auto">
+            {steps.map((step, index) => (
+              <div key={step.id} className="flex items-center">
+                <div className={`flex flex-col items-center ${step.id <= currentStep ? 'text-blue-600' : 'text-gray-400'}`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    step.id === currentStep 
+                      ? 'bg-blue-600 text-white' 
+                      : step.id < currentStep 
+                        ? 'bg-green-600 text-white' 
+                        : 'bg-gray-200 text-gray-500'
+                  }`}>
+                    <step.icon className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs mt-1 font-medium">{step.name}</span>
+                </div>
+                {index < steps.length - 1 && (
+                  <div className={`w-20 h-0.5 mx-3 ${step.id < currentStep ? 'bg-green-600' : 'bg-gray-300'}`} />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="max-w-4xl mx-auto">
+            {currentStep === 1 && (
+              <div className="text-center py-12">
+                <User className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Paso 1: Datos del Usuario</h3>
+                <p className="text-gray-600">Username, email, nombre, password, rol base</p>
+              </div>
+            )}
+            {currentStep === 2 && (
+              <div className="text-center py-12">
+                <Monitor className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Paso 2: Permisos de Aplicación</h3>
+                <p className="text-gray-600">Selección de pantallas y acciones (role_screen_actions)</p>
+              </div>
+            )}
+            {currentStep === 3 && (
+              <div className="text-center py-12">
+                <Database className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Paso 3: Permisos de Información</h3>
+                <p className="text-gray-600">Alcance de datos (empresas, departamentos, áreas)</p>
+              </div>
+            )}
+            {currentStep === 4 && (
+              <div className="text-center py-12">
+                <FileText className="w-16 h-16 mx-auto text-blue-600 mb-4" />
+                <h3 className="text-lg font-semibold mb-2">Paso 4: Permisos de Reportes</h3>
+                <p className="text-gray-600">Reportes que puede ejecutar y visualizar</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between bg-gray-50">
+          <button
+            onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
+            disabled={currentStep === 1}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Atrás
+          </button>
+          <div className="text-sm text-gray-600">
+            Paso {currentStep} de {steps.length}
+          </div>
+          <button
+            onClick={() => {
+              if (currentStep === steps.length) {
+                onComplete?.();
+                onClose();
+              } else {
+                setCurrentStep(currentStep + 1);
+              }
+            }}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+          >
+            {currentStep === steps.length ? 'Crear Usuario' : 'Siguiente'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

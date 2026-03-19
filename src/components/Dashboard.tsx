@@ -1,402 +1,303 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+/**
+ * Dashboard - Página principal del sistema
+ * Muestra información relevante según el rol del usuario
+ */
+
+'use client';
+
+import { useAuth } from '../contexts/AuthContext';
+import { usePermissions } from '../contexts/PermissionsContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Users, Clock, AlertTriangle, CheckCircle, TrendingUp, Calendar, ArrowUp, ArrowDown, Activity, Bell, LogIn, FileText } from 'lucide-react';
-import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Badge } from './ui/badge';
-import { Button } from './ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { demoPermisosProgra, demoJustificacionesReq, demoCambiosTurno } from './DemoData';
+import { 
+  Users, 
+  Building2, 
+  Clock, 
+  FileText, 
+  Calendar,
+  TrendingUp,
+  AlertCircle,
+  Shield,
+  Settings,
+  BarChart3
+} from 'lucide-react';
 
-const attendanceData = [
-  { day: 'Lun', presentes: 145, ausentes: 5, atrasos: 8 },
-  { day: 'Mar', presentes: 148, ausentes: 2, atrasos: 5 },
-  { day: 'Mié', presentes: 142, ausentes: 8, atrasos: 12 },
-  { day: 'Jue', presentes: 147, ausentes: 3, atrasos: 6 },
-  { day: 'Vie', presentes: 140, ausentes: 10, atrasos: 15 },
-];
-
-const shiftData = [
-  { name: 'Diurno', value: 85, color: '#0074D9' },
-  { name: 'Nocturno', value: 45, color: '#3498DB' },
-  { name: 'Rotativo', value: 20, color: '#2ECC71' },
-];
-
-const overtimeData = [
-  { department: 'Producción', hours: 120 },
-  { department: 'Logística', hours: 85 },
-  { department: 'Mantenimiento', hours: 95 },
-  { department: 'Calidad', hours: 45 },
-  { department: 'Administración', hours: 30 },
-];
-
-export default function Dashboard() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'administrador';
-  const isSupervisor = user?.role === 'supervisor';
-  
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [liveEmployees, setLiveEmployees] = useState(isAdmin ? 150 : 32);
-  const [liveAttendance, setLiveAttendance] = useState(isAdmin ? 94 : 97);
-
-  // Simulación de tiempo en vivo
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Simulación de datos en tiempo real
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLiveEmployees(prev => prev + Math.floor(Math.random() * 3 - 1));
-      setLiveAttendance(prev => {
-        const change = Math.random() * 2 - 1;
-        return Math.min(100, Math.max(90, prev + change));
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const recentNotifications = [
-    { id: 1, type: 'success', message: 'Planificación semanal completada', time: 'Hace 2 horas', timestamp: '2025-11-09 16:30:00' },
-    { id: 2, type: 'warning', message: '5 empleados pendientes de confirmación', time: 'Hace 3 horas', timestamp: '2025-11-09 15:30:00' },
-    { id: 3, type: 'info', message: 'Nuevo turno nocturno configurado', time: 'Hace 5 horas', timestamp: '2025-11-09 13:30:00' },
-    { id: 4, type: 'success', message: 'Reporte mensual generado', time: 'Ayer', timestamp: '2025-11-08 10:00:00' },
-    { id: 5, type: 'warning', message: '3 solicitudes de permiso pendientes', time: 'Ayer', timestamp: '2025-11-08 09:15:00' },
-    { id: 6, type: 'info', message: 'Sincronización con nómina completada', time: 'Hace 2 días', timestamp: '2025-11-07 18:00:00' },
-  ];
-
-  const recentClockings = [
-    { id: 1, employee: 'Juan Pérez', cedula: '0912345678', type: 'Entrada', time: '07:58', date: '09/11/2025', location: 'Planta Guayaquil', status: 'A tiempo' },
-    { id: 2, employee: 'María García', cedula: '0923456789', type: 'Salida', time: '17:05', date: '09/11/2025', location: 'Planta Guayaquil', status: 'Normal' },
-    { id: 3, employee: 'Pedro López', cedula: '0934567890', type: 'Entrada', time: '08:15', date: '09/11/2025', location: 'Planta Quito', status: 'Atraso' },
-    { id: 4, employee: 'Ana Martínez', cedula: '0945678901', type: 'Salida', time: '17:00', date: '09/11/2025', location: 'Oficina Central', status: 'Normal' },
-    { id: 5, employee: 'Carlos Rodríguez', cedula: '0956789012', type: 'Entrada', time: '07:55', date: '09/11/2025', location: 'Planta Guayaquil', status: 'A tiempo' },
-    { id: 6, employee: 'Sofía Ramírez', cedula: '0967890123', type: 'Entrada', time: '08:02', date: '09/11/2025', location: 'Planta Quito', status: 'A tiempo' },
-    { id: 7, employee: 'Luis Torres', cedula: '0978901234', type: 'Salida', time: '16:50', date: '09/11/2025', location: 'Planta Guayaquil', status: 'Normal' },
-    { id: 8, employee: 'Carmen Flores', cedula: '0989012345', type: 'Entrada', time: '08:20', date: '09/11/2025', location: 'Oficina Central', status: 'Atraso' },
-  ];
-
-  // Combinar todas las solicitudes recientes
-  const allRequests = [
-    ...demoPermisosProgra.slice(0, 3).map(p => ({ 
-      ...p, 
-      tipo: 'Permiso',
-      fechaSolicitud: p.fechaSolicitud || '08/11/2025'
-    })),
-    ...demoJustificacionesReq.slice(0, 2).map(j => ({ 
-      ...j, 
-      tipo: 'Justificación',
-      empleado: j.empleado,
-      estado: j.estado,
-      fechaSolicitud: j.fecha
-    })),
-    ...demoCambiosTurno.slice(0, 2).map(c => ({ 
-      ...c, 
-      tipo: 'Cambio de Turno',
-      empleado: c.empleado,
-      estado: c.estado,
-      fechaSolicitud: c.fechaSolicitud || '07/11/2025'
-    }))
-  ].sort((a, b) => {
-    // Ordenar por fecha más reciente
-    const dateA = new Date(a.fechaSolicitud.split('/').reverse().join('-'));
-    const dateB = new Date(b.fechaSolicitud.split('/').reverse().join('-'));
-    return dateB.getTime() - dateA.getTime();
-  });
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+// Componente para mostrar información por rol
+const RoleInfo = ({ roleKey }: { roleKey: string | undefined }) => {
+  const roleInfo: Record<string, { title: string; description: string; icon: any; color: string }> = {
+    'SYSTEM_ADMIN': {
+      title: 'Administrador del Sistema',
+      description: 'Acceso completo a configuración de seguridad y administración del sistema',
+      icon: Shield,
+      color: 'text-red-600',
+    },
+    'TENANT_ADMIN': {
+      title: 'Administrador de Tenant',
+      description: 'Gestión de estructura organizacional, configuración y mantenimiento',
+      icon: Settings,
+      color: 'text-purple-600',
+    },
+    'RRHH_ADMIN': {
+      title: 'Administrador de RRHH',
+      description: 'Control de asistencias, reportes y gestión de empleados',
+      icon: Users,
+      color: 'text-blue-600',
+    },
+    'SUPERVISOR': {
+      title: 'Supervisor',
+      description: 'Visualización de asistencias y reportes de su área',
+      icon: BarChart3,
+      color: 'text-green-600',
+    },
+    'EMPLOYEE': {
+      title: 'Empleado',
+      description: 'Acceso al kiosco para registro de asistencia',
+      icon: Clock,
+      color: 'text-orange-600',
+    },
   };
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const info = roleInfo[roleKey || ''] || roleInfo['EMPLOYEE'];
+  const Icon = info.icon;
+
+  return (
+    <div className="flex items-center gap-4 p-4 bg-white rounded-lg border">
+      <div className={`p-3 rounded-lg bg-gray-100`}>
+        <Icon className={`h-8 w-8 ${info.color}`} />
+      </div>
+      <div className="flex-1">
+        <h3 className="font-semibold text-lg">{info.title}</h3>
+        <p className="text-sm text-muted-foreground">{info.description}</p>
+      </div>
+    </div>
+  );
+};
+
+export function Dashboard() {
+  const { profile } = useAuth();
+  const { menuScreens } = usePermissions();
+
+  const stats = [
+    {
+      title: 'Empleados Activos',
+      value: '0',
+      icon: Users,
+      description: 'Total de empleados registrados',
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-100',
+    },
+    {
+      title: 'Turnos Hoy',
+      value: '0',
+      icon: Clock,
+      description: 'Turnos programados para hoy',
+      color: 'text-green-600',
+      bgColor: 'bg-green-100',
+    },
+    {
+      title: 'Departamentos',
+      value: '0',
+      icon: Building2,
+      description: 'Departamentos activos',
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-100',
+    },
+    {
+      title: 'Reportes Pendientes',
+      value: '0',
+      icon: FileText,
+      description: 'Reportes por revisar',
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-100',
+    },
+  ];
+
+  // Grupos de menú por rol
+  const getMenuGroupsByRole = (roleKey: string | undefined) => {
+    const menuMap: Record<string, string[]> = {
+      'SYSTEM_ADMIN': ['SECURITY'],
+      'TENANT_ADMIN': ['MAINT', 'CONFIG', 'ORG'],
+      'RRHH_ADMIN': ['DASH', 'ATTENDANCE', 'REPORTS'],
+      'SUPERVISOR': ['DASH', 'ATTENDANCE', 'REPORTS'],
+      'EMPLOYEE': ['KIOSK'],
+    };
+    return menuMap[roleKey || ''] || [];
   };
+
+  const expectedGroups = getMenuGroupsByRole(profile?.role_key);
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl text-foreground">
-            {user?.name?.split(' ')[0] || 'Usuario'}
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {isAdmin 
-              ? `Vista general de ${user?.company}` 
-              : `Área de ${user?.area} - ${user?.company}`}
-          </p>
-        </div>
-        <div className="text-sm text-muted-foreground">
-          <p className="capitalize">{formatDate(currentTime)}</p>
-          <p className="text-right mt-1 flex items-center gap-2">
-            <Activity className="w-4 h-4 text-success animate-pulse" />
-            {formatTime(currentTime)}
-          </p>
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          Bienvenido, {profile?.display_name}
+        </h1>
+        <p className="text-gray-600">
+          Sistema Enterprise de Control de Asistencias y Turnos de Trabajo
+        </p>
       </div>
 
-      {/* KPI Cards - Primera Fila - 4 Indicadores */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-        <Card className="border-l-4 border-l-primary hover:shadow-lg transition-all duration-200">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardDescription className="text-xs">Horas Extra</CardDescription>
-            <CardTitle className="text-3xl mt-1 text-foreground">{isAdmin ? '12' : '4'}</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <div className="flex items-center gap-1 text-xs">
-              <ArrowDown className="w-3 h-3 text-destructive" />
-              <span className="text-destructive">9%</span>
-              <span className="text-muted-foreground">vs mes anterior</span>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Role Info */}
+      <RoleInfo roleKey={profile?.role_key} />
 
-        <Card className="border-l-4 border-l-destructive hover:shadow-lg transition-all duration-200">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardDescription className="text-xs">Ausencias</CardDescription>
-            <CardTitle className="text-3xl mt-1 text-foreground">{isAdmin ? '0' : '0'}</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <div className="flex items-center gap-1 text-xs">
-              <ArrowDown className="w-3 h-3 text-success" />
-              <span className="text-success">12%</span>
-              <span className="text-muted-foreground">vs mes anterior</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-[#9B59B6] hover:shadow-lg transition-all duration-200">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardDescription className="text-xs">Permisos</CardDescription>
-            <CardTitle className="text-3xl mt-1 text-foreground">{isAdmin ? '2' : '1'}</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <div className="flex items-center gap-1 text-xs">
-              <ArrowUp className="w-3 h-3 text-success" />
-              <span className="text-success">3%</span>
-              <span className="text-muted-foreground">vs mes anterior</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-l-4 border-l-[#E67E22] hover:shadow-lg transition-all duration-200">
-          <CardHeader className="pb-2 px-4 pt-4">
-            <CardDescription className="text-xs">Atrasos</CardDescription>
-            <CardTitle className="text-3xl mt-1 text-foreground">{isAdmin ? '3' : '1'}</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-3">
-            <div className="flex items-center gap-1 text-xs">
-              <ArrowUp className="w-3 h-3 text-destructive" />
-              <span className="text-destructive">5%</span>
-              <span className="text-muted-foreground">vs mes anterior</span>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Stats Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {stats.map((stat, index) => {
+          const Icon = stat.icon;
+          return (
+            <Card key={index}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">
+                  {stat.title}
+                </CardTitle>
+                <div className={`${stat.bgColor} p-2 rounded-lg`}>
+                  <Icon className={`h-4 w-4 ${stat.color}`} />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{stat.value}</div>
+                <p className="text-xs text-muted-foreground">
+                  {stat.description}
+                </p>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
-      {/* Segunda Fila - Gráficos y Actividad Reciente */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Tendencia de Asistencia */}
-        <Card>
+      {/* Main Content Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+        {/* Calendar/Schedule */}
+        <Card className="col-span-4">
           <CardHeader>
-            <CardTitle className="text-lg">Tendencia de Asistencia</CardTitle>
-            <CardDescription>Últimos 5 días</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Turnos de la Semana
+            </CardTitle>
+            <CardDescription>
+              Vista general de los turnos programados
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={350}>
-              <BarChart data={attendanceData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="day" className="text-xs" />
-                <YAxis className="text-xs" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px'
-                  }}
-                />
-                <Legend />
-                <Bar dataKey="presentes" fill="#0074D9" name="Presentes" />
-                <Bar dataKey="ausentes" fill="#E74C3C" name="Ausentes" />
-                <Bar dataKey="atrasos" fill="#F39C12" name="Atrasos" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Actividad Reciente */}
-        <Card className="border-l-4 border-l-info hover:shadow-lg transition-all duration-200">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Activity className="w-5 h-5 text-info" />
-              <div>
-                <CardTitle className="text-lg">Actividad Reciente</CardTitle>
-                <CardDescription>Notificaciones y marcaciones en tiempo real</CardDescription>
+            <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+              <div className="text-center">
+                <Calendar className="h-16 w-16 mx-auto mb-4 opacity-20" />
+                <p className="text-sm">No hay turnos programados</p>
+                <p className="text-xs mt-2">Los turnos aparecerán aquí una vez configurados</p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Recent Activity */}
+        <Card className="col-span-3">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5" />
+              Actividad Reciente
+            </CardTitle>
+            <CardDescription>
+              Últimas acciones en el sistema
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            <Tabs defaultValue="marcaciones" className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-3">
-                <TabsTrigger value="marcaciones" className="data-[state=active]:bg-[#0074D9] data-[state=active]:text-white text-xs">
-                  Últimas Marcaciones
-                </TabsTrigger>
-                <TabsTrigger value="notificaciones" className="data-[state=active]:bg-[#0074D9] data-[state=active]:text-white text-xs">
-                  Últimas Notificaciones
-                </TabsTrigger>
-                <TabsTrigger value="solicitudes" className="data-[state=active]:bg-[#0074D9] data-[state=active]:text-white text-xs">
-                  Últimas Solicitudes
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="marcaciones" className="space-y-2 h-[280px] overflow-y-auto">
-                {recentClockings.slice(0, 8).map((clocking) => (
-                  <div key={clocking.id} className="flex items-start gap-2 pb-2 border-b last:border-0">
-                    <LogIn className={`w-4 h-4 mt-1 flex-shrink-0 ${
-                      clocking.type === 'Entrada' ? 'text-success' : 'text-info'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium">{clocking.employee}</span>
-                        <span className="text-muted-foreground"> - {clocking.type}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {clocking.time} - {clocking.location}
-                      </p>
-                    </div>
-                    <Badge 
-                      variant="outline" 
-                      className={`flex-shrink-0 text-xs ${
-                        clocking.status === 'A tiempo' ? 'bg-success/10 text-success border-success' :
-                        clocking.status === 'Atraso' ? 'bg-warning/10 text-warning border-warning' :
-                        'bg-info/10 text-info border-info'
-                      }`}
-                    >
-                      {clocking.status}
-                    </Badge>
-                  </div>
-                ))}
-              </TabsContent>
-
-              <TabsContent value="notificaciones" className="space-y-2 h-[280px] overflow-y-auto">
-                {recentNotifications.slice(0, 8).map((notification) => (
-                  <div key={notification.id} className="flex items-start gap-2 pb-2 border-b last:border-0">
-                    <Bell className={`w-4 h-4 mt-1 flex-shrink-0 ${
-                      notification.type === 'success' ? 'text-success' :
-                      notification.type === 'warning' ? 'text-warning' : 'text-info'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">{notification.message}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{notification.time}</p>
-                    </div>
-                    <Badge variant="outline" className={`flex-shrink-0 text-xs ${
-                      notification.type === 'success' ? 'bg-success/10 text-success border-success' :
-                      notification.type === 'warning' ? 'bg-warning/10 text-warning border-warning' :
-                      'bg-info/10 text-info border-info'
-                    }`}>
-                      {notification.type === 'warning' ? 'Atención' :
-                       notification.type === 'success' ? 'Completado' : 'Info'}
-                    </Badge>
-                  </div>
-                ))}
-              </TabsContent>
-
-              <TabsContent value="solicitudes" className="space-y-2 h-[280px] overflow-y-auto">
-                {allRequests.slice(0, 8).map((request, index) => (
-                  <div key={`${request.tipo}-${request.id || index}`} className="flex items-start gap-2 pb-2 border-b last:border-0">
-                    <FileText className="w-4 h-4 mt-1 flex-shrink-0 text-primary" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm">
-                        <span className="font-medium">{request.empleado}</span>
-                        <span className="text-muted-foreground"> - {request.tipo}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {request.fechaSolicitud}
-                      </p>
-                    </div>
-                    <Badge 
-                      variant="outline" 
-                      className={`flex-shrink-0 text-xs ${
-                        request.estado === 'Aprobado' ? 'bg-success/10 text-success border-success' :
-                        request.estado === 'Rechazado' ? 'bg-destructive/10 text-destructive border-destructive' :
-                        'bg-warning/10 text-warning border-warning'
-                      }`}
-                    >
-                      {request.estado}
-                    </Badge>
-                  </div>
-                ))}
-              </TabsContent>
-            </Tabs>
+            <div className="space-y-4">
+              <div className="flex items-center justify-center h-[300px] text-muted-foreground">
+                <div className="text-center">
+                  <AlertCircle className="h-16 w-16 mx-auto mb-4 opacity-20" />
+                  <p className="text-sm">No hay actividad reciente</p>
+                  <p className="text-xs mt-2">Las acciones del sistema aparecerán aquí</p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Tercera Fila - Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Shift Distribution */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Distribución de Turnos</CardTitle>
-            <CardDescription>Personal por turno</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={shiftData}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="value"
+      {/* Quick Access */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Acceso Rápido a Pantallas</CardTitle>
+          <CardDescription>
+            Tienes acceso a {menuScreens.length} pantallas del sistema
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {menuScreens.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <p className="text-sm">No hay pantallas disponibles</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              {menuScreens.slice(0, 8).map((screen) => (
+                <button
+                  key={screen.screen_key}
+                  onClick={() => window.location.href = screen.route_path}
+                  className="flex items-center gap-3 p-3 rounded-lg border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
                 >
-                  {shiftData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px'
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{screen.screen_name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{screen.menu_group_name}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-        {/* Overtime by Department */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Horas Extra por Departamento</CardTitle>
-            <CardDescription>Mes actual</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={overtimeData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis type="number" className="text-xs" />
-                <YAxis dataKey="department" type="category" className="text-xs" />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: 'hsl(var(--card))',
-                    border: '1px solid hsl(var(--border))',
-                    borderRadius: '6px'
-                  }}
-                />
-                <Bar dataKey="hours" fill="#2ECC71" name="Horas" />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
+      {/* System Info */}
+      <Card className="border-blue-200 bg-blue-50/50">
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <div className="space-y-3">
+              <div>
+                <p className="text-sm font-medium text-blue-900 mb-2">
+                  Información del Sistema
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-blue-800">
+                  <div>
+                    <span className="font-medium">Usuario:</span> {profile?.email}
+                  </div>
+                  <div>
+                    <span className="font-medium">Rol:</span> {profile?.role_name}
+                  </div>
+                  <div>
+                    <span className="font-medium">Tenant:</span> {profile?.tenant_name}
+                  </div>
+                  <div>
+                    <span className="font-medium">Pantallas:</span> {menuScreens.length}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-sm text-blue-900 font-medium mb-2">
+                  Grupos de Menú Asignados:
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {expectedGroups.map(group => (
+                    <span key={group} className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">
+                      {group}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <p className="text-sm text-blue-900 font-medium mb-2">Roles en el Sistema:</p>
+                <ul className="text-xs text-blue-800 space-y-1 list-disc list-inside">
+                  <li><strong>SYSTEM_ADMIN:</strong> Acceso a SECURITY (configuración de seguridad y permisos)</li>
+                  <li><strong>TENANT_ADMIN:</strong> Acceso a MAINT, CONFIG, ORG (estructura y configuración)</li>
+                  <li><strong>RRHH_ADMIN / SUPERVISOR:</strong> Acceso a DASH, ATTENDANCE, REPORTS (operación diaria)</li>
+                  <li><strong>EMPLOYEE:</strong> Acceso a KIOSK (marcaje y consultas personales)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

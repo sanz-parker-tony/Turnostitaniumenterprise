@@ -8,9 +8,17 @@
  * - ✅ NO modifica estructura técnica (keys, rutas, orden)
  * - ✅ Multiidioma desde system_languages
  * - Solo Super Admin (tenant_id = GOD)
+ * 
+ * VALIDACIÓN:
+ * ✅ react-hook-form + zod
+ * ✅ Validación en tiempo real después del submit
+ * ✅ Mensajes de error claros por campo
  */
 
 import { useState, useEffect } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -20,9 +28,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Search, Languages, Edit, Save, X, Lock, Globe, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { FormInput } from '../forms';
 
 interface SystemLanguage {
   code: string;
