@@ -25,6 +25,24 @@ import {
   getSystemTenantSettings,
   updateSystemTenantSettings
 } from "./tenant-routes.tsx";
+import {
+  getSystemSettings,
+  createSystemSetting,
+  updateSystemSetting,
+  getEffectiveSetting,
+  getAllEffectiveSettings,
+  getTenantSettingOverrides,
+  upsertTenantSettingOverride,
+  deleteTenantSettingOverride,
+  getCompanySettingOverrides,
+  upsertCompanySettingOverride,
+  deleteCompanySettingOverride,
+  getProfileSettingOverrides,
+  upsertProfileSettingOverride,
+  deleteProfileSettingOverride,
+  getSettingDataTypes,
+  verifySettingsModel,
+} from "./settings-routes.tsx";
 
 const app = new Hono();
 
@@ -722,5 +740,39 @@ app.get("/make-server-e19f2094/lookup-values/data-types", requireAuth, getDataTy
 // Endpoints del tenant único (SYSTEM)
 app.get("/make-server-e19f2094/tenant/settings", getSystemTenantSettings);
 app.put("/make-server-e19f2094/tenant/settings", updateSystemTenantSettings);
+
+// ============================================================================
+// ENDPOINTS DEL MODELO DE PARÁMETROS — system_settings
+// ============================================================================
+
+// Catálogo maestro
+app.get("/make-server-e19f2094/system-settings",        requireAuth, getSystemSettings);
+app.post("/make-server-e19f2094/system-settings",       requireAuth, createSystemSetting);
+app.put("/make-server-e19f2094/system-settings/:id",    requireAuth, updateSystemSetting);
+
+// Resolución de valor efectivo
+app.get("/make-server-e19f2094/settings/effective",     requireAuth, getEffectiveSetting);
+app.get("/make-server-e19f2094/settings/all-effective", requireAuth, getAllEffectiveSettings);
+
+// Tipos de dato (corregido)
+app.get("/make-server-e19f2094/lookup-values/setting-data-types", requireAuth, getSettingDataTypes);
+
+// Overrides por nivel — Tenant
+app.get("/make-server-e19f2094/tenants/:id/settings-overrides",              requireAuth, getTenantSettingOverrides);
+app.post("/make-server-e19f2094/tenants/:id/settings-overrides",             requireAuth, upsertTenantSettingOverride);
+app.delete("/make-server-e19f2094/tenants/:id/settings-overrides/:setting_id", requireAuth, deleteTenantSettingOverride);
+
+// Overrides por nivel — Company
+app.get("/make-server-e19f2094/companies/:id/settings-overrides",              requireAuth, getCompanySettingOverrides);
+app.post("/make-server-e19f2094/companies/:id/settings-overrides",             requireAuth, upsertCompanySettingOverride);
+app.delete("/make-server-e19f2094/companies/:id/settings-overrides/:setting_id", requireAuth, deleteCompanySettingOverride);
+
+// Overrides por nivel — Employee Profile
+app.get("/make-server-e19f2094/employee-profiles/:id/settings-overrides",              requireAuth, getProfileSettingOverrides);
+app.post("/make-server-e19f2094/employee-profiles/:id/settings-overrides",             requireAuth, upsertProfileSettingOverride);
+app.delete("/make-server-e19f2094/employee-profiles/:id/settings-overrides/:setting_id", requireAuth, deleteProfileSettingOverride);
+
+// Verificación del modelo
+app.get("/make-server-e19f2094/settings/verify", verifySettingsModel);
 
 Deno.serve(app.fetch);

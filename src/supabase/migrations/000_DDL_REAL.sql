@@ -3,20 +3,36 @@
 -- Turnos Titanium Enterprise - ESTRUCTURA REAL DE SUPABASE
 -- ============================================================================
 -- Descripción:
---   Este archivo contiene la estructura EXACTA del schema public de Supabase
---   Incluye ~70 tablas con todos sus constraints, foreign keys e índices
---   
+--   Este archivo contiene la estructura EXACTA del schema public de Supabase.
+--   Refleja el estado real de la base de datos exportado desde Supabase Studio.
+--
 -- Nota Importante:
---   Este DDL fue extraído directamente de Supabase en producción
---   NO ejecutar este archivo - solo para documentación y referencia
---   La estructura YA EXISTE en Supabase
+--   Este DDL fue extraído directamente de Supabase en producción.
+--   NO ejecutar este archivo — solo para documentación y referencia.
+--   La estructura YA EXISTE en Supabase.
 --
 -- Uso:
 --   1. Para documentación de la arquitectura
 --   2. Como referencia para 001_FACTORY_RESET.sql
 --   3. Como referencia para 002_SEED_COMPLETE.sql
+--   4. Como referencia para 003_SETTINGS_REFACTOR.sql
 --
--- Última actualización: 2026-01-25
+-- Historial de actualizaciones:
+--   2026-01-25 — Versión inicial
+--   2026-04-06 — Actualizado con DDL exportado desde Supabase (abril 2026).
+--                Cambios incluidos:
+--                · system_message_translations: PK compuesta (message_key, language_code),
+--                  nuevas columnas message_key, message_key_id, is_active, nuevas FK
+--                · v_gender_group_id y v_super_admin_role_id: tablas auxiliares añadidas
+--                · work_locations: nuevas columnas company_id, address_line1, latitude, longitude
+--                · tenant_onboarding: eliminadas cláusulas ON DELETE CASCADE / SET NULL
+--                · system_settings: tabla maestra de parámetros — REDISEÑO COMPLETO
+--                · employee_settings: NUEVA tabla (nivel empleado individual, prioridad máxima)
+--                · Jerarquía de resolución implementada:
+--                  employee_settings > employee_profile_settings > company_settings
+--                  > tenant_settings > system_settings.default_value
+--                · tenant_settings, company_settings, employee_profile_settings:
+--                  refactorizadas para solo referenciar system_settings (guardan el valor)
 -- ============================================================================
 
 -- WARNING: This schema is for context only and is NOT meant to be run.
@@ -24,7 +40,34 @@
 -- This file serves as the SINGLE SOURCE OF TRUTH for database structure.
 
 -- ============================================================================
--- TABLAS DEL SISTEMA (70+ tablas)
+-- JERARQUÍA DE RESOLUCIÓN DE PARÁMETROS DEL SISTEMA
+-- ============================================================================
+--
+--  Nivel 5 — employee_settings         (PRIORIDAD MÁXIMA — valor personal del empleado)
+--       ↑ sobreescribe a todos los niveles inferiores
+--  Nivel 4 — employee_profile_settings (valor por perfil de empleado)
+--       ↑ sobreescribe a company, tenant y system
+--  Nivel 3 — company_settings          (valor por compañía)
+--       ↑ sobreescribe a tenant y system
+--  Nivel 2 — tenant_settings           (valor por tenant/cliente)
+--       ↑ sobreescribe al default del sistema
+--  Nivel 1 — system_settings           (PRIORIDAD MÍNIMA — default del catálogo maestro)
+--
+--  Ejemplo práctico: parámetro "MAX_WORK_HOURS_PER_DAY"
+--    · Si el empleado Juan tiene employee_settings con ese parámetro → se usa ese valor
+--    · Si no, se busca en employee_profile_settings del perfil asignado al empleado
+--    · Si no, se busca en company_settings de la compañía a la que pertenece Juan
+--    · Si no, se busca en tenant_settings del tenant activo
+--    · Si no, se usa system_settings.default_value (el valor base del catálogo)
+--
+--  Diseño de las tablas de override (niveles 2 a 5):
+--    · Solo almacenan: system_setting_id (FK), setting_value (text), y campos de auditoría
+--    · UNIQUE constraint en (entidad_id, system_setting_id) → un override por parámetro
+--    · NO definen el nombre, tipo ni descripción del parámetro (eso vive en system_settings)
+-- ============================================================================
+
+-- ============================================================================
+-- TABLAS DEL SISTEMA
 -- ============================================================================
 
 CREATE TABLE public.action_translations (
@@ -182,12 +225,15 @@ CREATE TABLE public.companies (
   CONSTRAINT companies_company_city_id_fkey FOREIGN KEY (company_city_id) REFERENCES public.lookup_values(id)
 );
 
+-- NIVEL 3 de jerarquía: Override a nivel de compañía.
+-- Solo almacena el valor del parámetro; la definición completa vive en system_settings.
+-- Un registro por (company_id, system_setting_id) → UNIQUE constraint.
+-- Si no existe override aquí, se escala al tenant_settings o al default del sistema.
 CREATE TABLE public.company_settings (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL,
   company_id uuid NOT NULL,
-  setting_key character varying NOT NULL,
-  value_type_id uuid NOT NULL,
+  system_setting_id uuid NOT NULL,
   setting_value text NOT NULL,
   is_active boolean NOT NULL DEFAULT true,
   created_by character varying NOT NULL,
@@ -195,9 +241,10 @@ CREATE TABLE public.company_settings (
   updated_by character varying,
   updated_at timestamp with time zone,
   CONSTRAINT company_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT company_settings_company_setting_uq UNIQUE (company_id, system_setting_id),
   CONSTRAINT company_settings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
   CONSTRAINT company_settings_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
-  CONSTRAINT company_settings_value_type_id_fkey FOREIGN KEY (value_type_id) REFERENCES public.lookup_values(id)
+  CONSTRAINT company_settings_system_setting_id_fkey FOREIGN KEY (system_setting_id) REFERENCES public.system_settings(id)
 );
 
 CREATE TABLE public.cost_centers (
@@ -338,12 +385,15 @@ CREATE TABLE public.employee_companies (
   CONSTRAINT employee_companies_contract_type_id_fkey FOREIGN KEY (contract_type_id) REFERENCES public.lookup_values(id)
 );
 
+-- NIVEL 4 de jerarquía: Override a nivel de perfil de empleado.
+-- Solo almacena el valor del parámetro; la definición completa vive en system_settings.
+-- Un registro por (employee_profile_id, system_setting_id) → UNIQUE constraint.
+-- Si no existe override aquí, se escala al company_settings, tenant_settings o default.
 CREATE TABLE public.employee_profile_settings (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL,
   employee_profile_id uuid NOT NULL,
-  setting_key character varying NOT NULL,
-  value_type_id uuid NOT NULL,
+  system_setting_id uuid NOT NULL,
   setting_value text NOT NULL,
   is_active boolean NOT NULL DEFAULT true,
   created_by character varying NOT NULL,
@@ -351,9 +401,10 @@ CREATE TABLE public.employee_profile_settings (
   updated_by character varying,
   updated_at timestamp with time zone,
   CONSTRAINT employee_profile_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_profile_settings_profile_setting_uq UNIQUE (employee_profile_id, system_setting_id),
   CONSTRAINT employee_profile_settings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
   CONSTRAINT employee_profile_settings_employee_profile_id_fkey FOREIGN KEY (employee_profile_id) REFERENCES public.employee_profiles(id),
-  CONSTRAINT employee_profile_settings_value_type_id_fkey FOREIGN KEY (value_type_id) REFERENCES public.lookup_values(id)
+  CONSTRAINT employee_profile_settings_system_setting_id_fkey FOREIGN KEY (system_setting_id) REFERENCES public.system_settings(id)
 );
 
 CREATE TABLE public.employee_profile_work_patterns (
@@ -457,6 +508,30 @@ CREATE TABLE public.employees (
   CONSTRAINT employees_pkey PRIMARY KEY (id),
   CONSTRAINT employees_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
   CONSTRAINT employees_employee_gender_id_fkey FOREIGN KEY (employee_gender_id) REFERENCES public.lookup_values(id)
+);
+
+-- ⭐ NUEVA TABLA — NIVEL 5 de jerarquía (PRIORIDAD MÁXIMA).
+-- Override personal a nivel de empleado individual.
+-- Un empleado puede tener valores únicos para cualquier parámetro definido en system_settings.
+-- Este nivel sobreescribe TODOS los demás: perfil, compañía, tenant y default del sistema.
+-- Ejemplo: Juan puede tener MAX_WORK_HOURS_PER_DAY = 10, mientras su perfil dice 8.
+-- Un registro por (employee_id, system_setting_id) → UNIQUE constraint.
+CREATE TABLE public.employee_settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  employee_id uuid NOT NULL,
+  system_setting_id uuid NOT NULL,
+  setting_value text NOT NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by character varying NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_by character varying,
+  updated_at timestamp with time zone,
+  CONSTRAINT employee_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT employee_settings_employee_setting_uq UNIQUE (employee_id, system_setting_id),
+  CONSTRAINT employee_settings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+  CONSTRAINT employee_settings_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT employee_settings_system_setting_id_fkey FOREIGN KEY (system_setting_id) REFERENCES public.system_settings(id)
 );
 
 CREATE TABLE public.holidays (
@@ -944,15 +1019,24 @@ CREATE TABLE public.system_message_keys (
   CONSTRAINT system_message_keys_pkey PRIMARY KEY (id)
 );
 
+-- ⚠️ CAMBIO ABR-2026: Estructura de system_message_translations actualizada.
+--   PK ahora es compuesta (message_key, language_code).
+--   Nuevas columnas: message_key (varchar), message_key_id (uuid, nullable), is_active.
+--   Nuevas FK: fk_message_key → system_message_keys(message_key),
+--              fk_system_message_translations_key → system_message_keys(id).
 CREATE TABLE public.system_message_translations (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  message_id uuid NOT NULL,
   language_code character varying NOT NULL,
   translated_text character varying NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT system_message_translations_pkey PRIMARY KEY (id),
-  CONSTRAINT system_message_translations_message_id_fkey FOREIGN KEY (message_id) REFERENCES public.system_message_keys(id),
-  CONSTRAINT system_message_translations_language_code_fkey FOREIGN KEY (language_code) REFERENCES public.system_languages(code)
+  message_key character varying NOT NULL,
+  message_key_id uuid,
+  is_active boolean NOT NULL DEFAULT true,
+  CONSTRAINT system_message_translations_pkey PRIMARY KEY (message_key, language_code),
+  CONSTRAINT system_message_translations_language_code_fkey FOREIGN KEY (language_code) REFERENCES public.system_languages(code),
+  CONSTRAINT fk_message_key FOREIGN KEY (message_key) REFERENCES public.system_message_keys(message_key),
+  CONSTRAINT fk_language_code FOREIGN KEY (language_code) REFERENCES public.system_languages(code),
+  CONSTRAINT fk_system_message_translations_key FOREIGN KEY (message_key_id) REFERENCES public.system_message_keys(id)
 );
 
 CREATE TABLE public.system_report_translations (
@@ -987,6 +1071,66 @@ CREATE TABLE public.system_reports (
   CONSTRAINT system_reports_application_module_id_fkey FOREIGN KEY (application_module_id) REFERENCES public.lookup_values(id)
 );
 
+-- ============================================================================
+-- CATÁLOGO MAESTRO DE PARÁMETROS (NIVEL 1 — base de la jerarquía)
+-- ============================================================================
+-- system_settings es la tabla fuente de verdad para TODOS los parámetros del software.
+-- Define el parámetro: clave, nombre, tipo de dato, valor por defecto, validaciones,
+-- y en qué niveles puede ser sobreescrito.
+--
+-- Las tablas de override (tenant_settings, company_settings, employee_profile_settings,
+-- employee_settings) NO definen parámetros: solo almacenan setting_value + system_setting_id.
+--
+-- Flujo de resolución del valor efectivo de un parámetro para un empleado:
+--   1. ¿Existe employee_settings activo para este employee_id + setting_key?  → usar ese valor
+--   2. ¿Existe employee_profile_settings activo para su profile + setting_key? → usar ese valor
+--   3. ¿Existe company_settings activo para su company + setting_key?          → usar ese valor
+--   4. ¿Existe tenant_settings activo para el tenant + setting_key?            → usar ese valor
+--   5. Usar system_settings.default_value                                      → fallback final
+--
+-- Columnas:
+--   setting_key          — identificador único del parámetro (p.ej. 'MAX_WORK_HOURS_PER_DAY')
+--   setting_name         — nombre legible en UI (p.ej. 'Máx. horas de trabajo por jornada')
+--   setting_short_key    — alias corto (p.ej. 'MAX_HRS_JORNADA')
+--   setting_description  — descripción detallada del efecto del parámetro
+--   value_type_id        — FK a lookup_values (grupo DATA_TYPE): TEXT, INTEGER, DECIMAL,
+--                          BOOLEAN, TIME, DATE, JSON, etc.
+--   default_value        — valor por defecto si ningún nivel de override lo sobreescribe
+--   min_value            — límite mínimo para validación (aplica a tipos numéricos/fecha)
+--   max_value            — límite máximo para validación
+--   is_tenant_override   — permite override a nivel tenant_settings
+--   is_company_override  — permite override a nivel company_settings
+--   is_profile_override  — permite override a nivel employee_profile_settings
+--   is_employee_override — permite override a nivel employee_settings (personal)
+--   category             — agrupación temática del parámetro (p.ej. 'JORNADA', 'NOMINA', 'UI')
+-- ============================================================================
+CREATE TABLE public.system_settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  setting_key character varying NOT NULL,
+  setting_name character varying NOT NULL,
+  setting_short_key character varying NOT NULL,
+  setting_description text,
+  value_type_id uuid,
+  default_value text,
+  min_value text,
+  max_value text,
+  is_tenant_override boolean NOT NULL DEFAULT true,
+  is_company_override boolean NOT NULL DEFAULT true,
+  is_profile_override boolean NOT NULL DEFAULT true,
+  is_employee_override boolean NOT NULL DEFAULT false,
+  category character varying,
+  sort_order integer NOT NULL DEFAULT 0,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by character varying NOT NULL DEFAULT 'SYSTEM',
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_by character varying,
+  updated_at timestamp with time zone,
+  CONSTRAINT system_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT system_settings_setting_key_uq UNIQUE (setting_key),
+  CONSTRAINT system_settings_value_type_fkey FOREIGN KEY (value_type_id)
+    REFERENCES public.lookup_values(id)
+);
+
 CREATE TABLE public.tenant_language_settings (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL UNIQUE,
@@ -1010,6 +1154,8 @@ CREATE TABLE public.tenant_members (
   CONSTRAINT tenant_members_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id)
 );
 
+-- ⚠️ CAMBIO ABR-2026: Se eliminaron las cláusulas ON DELETE CASCADE (tenant_id_fkey)
+-- y ON DELETE SET NULL (user_id_fkey) que existían en la versión anterior.
 CREATE TABLE public.tenant_onboarding (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL UNIQUE,
@@ -1024,31 +1170,29 @@ CREATE TABLE public.tenant_onboarding (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone,
   CONSTRAINT tenant_onboarding_pkey PRIMARY KEY (id),
-  CONSTRAINT tenant_onboarding_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id) ON DELETE CASCADE,
-  CONSTRAINT tenant_onboarding_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE SET NULL
+  CONSTRAINT tenant_onboarding_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+  CONSTRAINT tenant_onboarding_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id)
 );
 
--- ✅ CRÍTICO: Forzar que onboarding_status y current_step sean VARCHAR sin límite
--- (Supabase Studio puede haber modificado las columnas manualmente a VARCHAR(3))
-ALTER TABLE public.tenant_onboarding 
-  ALTER COLUMN onboarding_status TYPE character varying,
-  ALTER COLUMN current_step TYPE character varying;
-
+-- NIVEL 2 de jerarquía: Override a nivel de tenant/cliente.
+-- Solo almacena el valor del parámetro; la definición completa vive en system_settings.
+-- Un registro por (tenant_id, system_setting_id) → UNIQUE constraint.
+-- Solo aplica si system_settings.is_tenant_override = true para ese parámetro.
+-- Si no existe override aquí, se usa system_settings.default_value.
 CREATE TABLE public.tenant_settings (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL,
-  setting_key character varying NOT NULL,
-  setting_short_key character varying NOT NULL,
-  value_type_id uuid NOT NULL,
-  setting_value text,
+  system_setting_id uuid NOT NULL,
+  setting_value text NOT NULL,
   is_active boolean NOT NULL DEFAULT true,
   created_by character varying NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_by character varying,
   updated_at timestamp with time zone,
   CONSTRAINT tenant_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT tenant_settings_tenant_setting_uq UNIQUE (tenant_id, system_setting_id),
   CONSTRAINT tenant_settings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
-  CONSTRAINT tenant_settings_value_type_id_fkey FOREIGN KEY (value_type_id) REFERENCES public.lookup_values(id)
+  CONSTRAINT tenant_settings_system_setting_id_fkey FOREIGN KEY (system_setting_id) REFERENCES public.system_settings(id)
 );
 
 CREATE TABLE public.tenant_subscriptions (
@@ -1172,7 +1316,7 @@ CREATE TABLE public.user_roles (
 CREATE TABLE public.users (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL,
-  auth_user_id uuid UNIQUE,  -- ✅ NULLABLE: Se vincula en el primer login
+  auth_user_id uuid NOT NULL UNIQUE,
   username character varying NOT NULL,
   display_name character varying,
   email character varying CHECK (email::text ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'::text),
@@ -1186,13 +1330,18 @@ CREATE TABLE public.users (
   updated_at timestamp with time zone,
   CONSTRAINT users_pkey PRIMARY KEY (id),
   CONSTRAINT users_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+  CONSTRAINT users_auth_user_id_fkey FOREIGN KEY (auth_user_id) REFERENCES auth.users(id),
   CONSTRAINT users_preferred_language_code_fkey FOREIGN KEY (preferred_language_code) REFERENCES public.system_languages(code)
 );
 
+-- ⭐ NUEVA TABLA ABR-2026: Tabla auxiliar para lookup del grupo de género.
+-- Creada automáticamente por Supabase o por una vista materializada del sistema.
 CREATE TABLE public.v_gender_group_id (
   id uuid
 );
 
+-- ⭐ NUEVA TABLA ABR-2026: Tabla auxiliar para lookup del ID del rol super-admin.
+-- Usada internamente para validaciones de permisos de sistema.
 CREATE TABLE public.v_super_admin_role_id (
   id uuid NOT NULL,
   CONSTRAINT v_super_admin_role_id_pkey PRIMARY KEY (id)
@@ -1215,6 +1364,11 @@ CREATE TABLE public.work_groups (
   CONSTRAINT work_groups_payroll_group_id_fkey FOREIGN KEY (payroll_group_id) REFERENCES public.payroll_groups(id)
 );
 
+-- ⚠️ CAMBIO ABR-2026: work_locations ahora incluye columnas nuevas:
+--   · company_id uuid (nullable) — FK a companies (no declarada en el DDL exportado)
+--   · address_line1 character varying
+--   · latitude numeric
+--   · longitude numeric
 CREATE TABLE public.work_locations (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   tenant_id uuid NOT NULL,
@@ -1255,16 +1409,59 @@ CREATE TABLE public.work_patterns (
 );
 
 -- ============================================================================
--- FIN DEL DDL - TOTAL: 70+ TABLAS
+-- NOTAS FINALES DE AUDITORÍA DDL
 -- ============================================================================
--- Tablas principales:
--- - Core: tenants, users, roles, companies, employees
--- - Seguridad: actions, screens, screen_actions, role_screen_actions
--- - Catálogos: lookup_groups, lookup_values
--- - Estructura org: departments, areas, cost_centers, job_titles
--- - Asistencia: attendance_events, employee_time_punches, shifts
--- - Configuración: tenant_settings, company_settings, employee_profile_settings
--- - Reportes: system_reports, report_parameters, report_permissions
--- - I18n: system_languages, *_translations
--- - Suscripciones: subscription_plans, tenant_subscriptions, payment_transactions
+-- Resumen de cambios ABR-2026 vs versión anterior (ENE-2026):
+--
+-- NUEVAS TABLAS:
+--   · system_settings             — catálogo maestro de parámetros (rediseño completo)
+--   · employee_settings           — override nivel empleado individual (NIVEL 5 / máxima prioridad)
+--   · v_gender_group_id           — tabla auxiliar de sistema
+--   · v_super_admin_role_id       — tabla auxiliar de sistema
+--
+-- TABLAS MODIFICADAS (estructuralmente):
+--   · system_message_translations — PK compuesta, nuevas columnas y FK (export Supabase)
+--   · work_locations              — nuevas columnas: company_id, address_line1, latitude, longitude
+--   · tenant_onboarding           — eliminadas ON DELETE CASCADE y ON DELETE SET NULL
+--
+-- TABLAS REFACTORIZADAS — Jerarquía de parámetros (migración 003):
+--   ANTES tenían: setting_key, setting_short_key, value_type_id (definían el parámetro)
+--   AHORA tienen: system_setting_id FK, setting_value (solo el override del valor)
+--
+--   · tenant_settings
+--       DROP: setting_key, setting_short_key, value_type_id
+--       ADD:  system_setting_id uuid NOT NULL FK → system_settings(id)
+--       ADD:  UNIQUE (tenant_id, system_setting_id)
+--       Condición: system_settings.is_tenant_override = true
+--
+--   · company_settings
+--       DROP: setting_key, value_type_id
+--       ADD:  system_setting_id uuid NOT NULL FK → system_settings(id)
+--       ADD:  UNIQUE (company_id, system_setting_id)
+--       Condición: system_settings.is_company_override = true
+--
+--   · employee_profile_settings
+--       DROP: setting_key, value_type_id
+--       ADD:  system_setting_id uuid NOT NULL FK → system_settings(id)
+--       ADD:  UNIQUE (employee_profile_id, system_setting_id)
+--       Condición: system_settings.is_profile_override = true
+--
+-- NUEVA TABLA employee_settings:
+--   · employee_id uuid NOT NULL FK → employees(id)
+--   · system_setting_id uuid NOT NULL FK → system_settings(id)
+--   · UNIQUE (employee_id, system_setting_id)
+--   · Condición: system_settings.is_employee_override = true
+--
+-- ============================================================================
+-- RESUMEN DE JERARQUÍA (de mayor a menor prioridad):
+-- ============================================================================
+--   5. employee_settings         → valor personal del empleado
+--   4. employee_profile_settings → valor del perfil asignado al empleado
+--   3. company_settings          → valor de la compañía del empleado
+--   2. tenant_settings           → valor del tenant/cliente
+--   1. system_settings           → default_value (fallback final del catálogo maestro)
+-- ============================================================================
+--
+-- SCRIPT DE MIGRACIÓN REQUERIDO EN SUPABASE SQL EDITOR:
+--   Ejecutar manualmente: /supabase/migrations/003_SETTINGS_REFACTOR.sql
 -- ============================================================================

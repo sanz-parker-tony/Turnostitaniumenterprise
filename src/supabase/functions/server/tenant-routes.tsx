@@ -194,20 +194,36 @@ export async function updateTenant(c: any) {
 
 /**
  * GET /tenants/:id/settings
+ * Obtiene los overrides de settings del tenant, enriquecidos con info del parámetro maestro.
+ * Compatible con el nuevo modelo (post-migración 003).
  */
 export async function getTenantSettings(c: any) {
   try {
     const tenantId = c.req.param('id');
     const supabase = getSupabaseClient();
 
+    // Intentar query con nuevo modelo (system_setting_id)
     const { data, error } = await supabase
       .from('tenant_settings')
       .select(`
-        *,
-        value_type:lookup_values!tenant_settings_value_type_id_fkey (
+        id,
+        tenant_id,
+        system_setting_id,
+        setting_value,
+        is_active,
+        created_by,
+        created_at,
+        updated_by,
+        updated_at,
+        system_setting:system_settings (
           id,
-          lookup_key,
-          lookup_label
+          setting_key,
+          setting_name,
+          setting_short_key,
+          default_value,
+          value_type:lookup_values!system_settings_value_type_fkey (
+            id, lookup_key, lookup_label
+          )
         )
       `)
       .eq('tenant_id', tenantId)
@@ -224,6 +240,8 @@ export async function getTenantSettings(c: any) {
 
 /**
  * POST /tenants/:id/settings
+ * Crea un override de tenant para un parámetro del catálogo maestro.
+ * Nuevo modelo: requiere system_setting_id, NO acepta setting_key libre.
  */
 export async function createTenantSetting(c: any) {
   try {
@@ -231,21 +249,45 @@ export async function createTenantSetting(c: any) {
     const body = await c.req.json();
     const supabase = getSupabaseClient();
 
+    const { system_setting_id, setting_value, created_by, is_active } = body;
+
+    if (!system_setting_id) {
+      return c.json({ error: 'system_setting_id es obligatorio. Los overrides deben referenciar un parámetro del catálogo maestro.' }, 400);
+    }
+    if (setting_value === undefined || setting_value === null) {
+      return c.json({ error: 'setting_value es obligatorio' }, 400);
+    }
+
+    // Verificar que el parámetro existe y está activo
+    const { data: ss } = await supabase
+      .from('system_settings')
+      .select('id, setting_key')
+      .eq('id', system_setting_id)
+      .eq('is_active', true)
+      .single();
+
+    if (!ss) {
+      return c.json({ error: 'Parámetro no encontrado o inactivo en el catálogo maestro' }, 400);
+    }
+
     const { data, error } = await supabase
       .from('tenant_settings')
       .insert({
         tenant_id: tenantId,
-        setting_key: body.setting_key,
-        setting_short_key: body.setting_short_key,
-        value_type_id: body.value_type_id,
-        setting_value: body.setting_value,
-        is_active: body.is_active,
-        created_by: body.created_by
+        system_setting_id,
+        setting_value: String(setting_value),
+        is_active: is_active !== false,
+        created_by: created_by || 'ADMIN',
       })
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (error.code === '23505') {
+        return c.json({ error: `Ya existe un override para este parámetro en este tenant` }, 409);
+      }
+      throw error;
+    }
 
     return c.json({ setting: data });
   } catch (error: any) {
@@ -256,6 +298,8 @@ export async function createTenantSetting(c: any) {
 
 /**
  * PUT /tenants/:id/settings/:setting_id
+ * Actualiza el valor de un override de tenant.
+ * Solo permite modificar setting_value e is_active.
  */
 export async function updateTenantSetting(c: any) {
   try {
@@ -263,16 +307,15 @@ export async function updateTenantSetting(c: any) {
     const body = await c.req.json();
     const supabase = getSupabaseClient();
 
+    const { setting_value, is_active, updated_by } = body;
+
     const { data, error } = await supabase
       .from('tenant_settings')
       .update({
-        setting_key: body.setting_key,
-        setting_short_key: body.setting_short_key,
-        value_type_id: body.value_type_id,
-        setting_value: body.setting_value,
-        is_active: body.is_active,
-        updated_by: body.updated_by,
-        updated_at: new Date().toISOString()
+        setting_value: setting_value !== undefined ? String(setting_value) : undefined,
+        is_active,
+        updated_by: updated_by || 'ADMIN',
+        updated_at: new Date().toISOString(),
       })
       .eq('id', settingId)
       .select()
@@ -289,6 +332,7 @@ export async function updateTenantSetting(c: any) {
 
 /**
  * DELETE /tenants/:id/settings/:setting_id
+ * Elimina el override de tenant = "restablecer herencia al valor del sistema".
  */
 export async function deleteTenantSetting(c: any) {
   try {
@@ -302,7 +346,7 @@ export async function deleteTenantSetting(c: any) {
 
     if (error) throw error;
 
-    return c.json({ success: true });
+    return c.json({ success: true, message: 'Override eliminado. El parámetro ahora hereda del sistema.' });
   } catch (error: any) {
     console.error('Error eliminando setting:', error);
     return c.json({ error: error.message }, 500);
@@ -342,17 +386,30 @@ export async function getTenantMembers(c: any) {
 
 /**
  * GET /lookup-values/data-types
+ * CORREGIDO: query por lookup_group_key = 'DATA_TYPE' en lugar de lookup_scope = 'DATA_TYPE'
  */
 export async function getDataTypes(c: any) {
   try {
     const supabase = getSupabaseClient();
 
+    // Buscar el grupo DATA_TYPE primero
+    const { data: groupData } = await supabase
+      .from('lookup_groups')
+      .select('id')
+      .eq('lookup_group_key', 'DATA_TYPE')
+      .limit(1)
+      .maybeSingle();
+
+    if (!groupData) {
+      return c.json({ dataTypes: [] });
+    }
+
     const { data, error } = await supabase
       .from('lookup_values')
       .select('id, lookup_key, lookup_label, lookup_short_label')
-      .eq('lookup_scope', 'DATA_TYPE') // ✅ Cambiar lookup_type a lookup_scope
+      .eq('lookup_group_id', groupData.id)
       .eq('is_active', true)
-      .order('lookup_label', { ascending: true });
+      .order('sort_order', { ascending: true });
 
     if (error) throw error;
 
