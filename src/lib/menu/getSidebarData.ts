@@ -1,9 +1,43 @@
 /**
+ * getSidebarData.ts - Turnos Titanium Enterprise
  * Versión simplificada: obtiene sidebar usando get_user_screens() RPC
  * (Compatible con PermissionsContext actual)
  */
+
+import { createClient } from '@supabase/supabase-js';
+import { SCREEN_ROUTE_MAP } from '../auth/role-router';
+
+// ============================================================================
+// TIPOS
+// ============================================================================
+
+export interface SidebarScreen {
+  screenKey: string;
+  screenName: string;
+  screenTranslation: string | null;
+  iconKey: string;
+  routePath: string;
+  sortOrder: number;
+}
+
+export interface SidebarGroup {
+  groupKey: string;
+  groupName: string;
+  groupTranslation: string | null;
+  iconKey: string;
+  screens: SidebarScreen[];
+  sortOrder: number;
+}
+
+// ============================================================================
+// FUNCIÓN PRINCIPAL
+// ============================================================================
+
 export async function getSidebarDataFromRPC(languageCode: string = 'es'): Promise<SidebarGroup[]> {
-  const supabase = createClient();
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
   try {
     // Obtener usuario actual

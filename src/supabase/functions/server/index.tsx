@@ -1,3 +1,10 @@
+import attendanceEventsRoutes from "./attendance-events-routes.tsx";
+import lookupRoutes from "./lookup-routes.tsx";
+import lookupGroupsRoutes from "./lookup-groups-routes.tsx";
+import lookupValuesRoutes from "./lookup-values-routes.tsx";
+import systemSettingsRoutes from "./system-settings-routes.tsx";
+import { ensureSystemSettingsScreen } from "./bootstrap-screens.tsx";
+
 import { Hono } from "npm:hono@4.6.14";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
@@ -161,6 +168,9 @@ app.get("/make-server-e19f2094/bootstrap/ping", (c) => {
 
 // Bootstrap: Asegurar que usuario system.admin existe
 app.post("/make-server-e19f2094/bootstrap/ensure-system-admin", ensureSystemAdmin);
+
+// Bootstrap: Asegurar que pantalla de Parámetros existe
+app.post("/make-server-e19f2094/bootstrap/ensure-system-settings-screen", ensureSystemSettingsScreen);
 
 app.get("/make-server-e19f2094/bootstrap/wizard-state", requireAuth, getWizardState);
 
@@ -774,5 +784,24 @@ app.delete("/make-server-e19f2094/employee-profiles/:id/settings-overrides/:sett
 
 // Verificación del modelo
 app.get("/make-server-e19f2094/settings/verify", verifySettingsModel);
+
+// ============================================================================
+// RUTAS DE ATTENDANCE EVENTS Y LOOKUPS
+// ============================================================================
+
+// Attendance Events
+app.route("/make-server-e19f2094/attendance-events", attendanceEventsRoutes);
+
+// System Settings (Parámetros del Sistema)
+app.route("/make-server-e19f2094/system-settings-management", systemSettingsRoutes);
+
+// Lookup Values (query lookup values)
+app.route("/make-server-e19f2094/lookup-values", lookupRoutes);
+
+// Lookup Groups (CRUD)
+app.route("/make-server-e19f2094/lookup-groups", lookupGroupsRoutes);
+
+// Lookup Values CRUD (by group)
+app.route("/make-server-e19f2094/lookup-values-crud", lookupValuesRoutes);
 
 Deno.serve(app.fetch);

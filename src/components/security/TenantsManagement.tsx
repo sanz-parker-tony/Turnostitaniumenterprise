@@ -33,8 +33,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { supabase } from '../../lib/supabase';
+import { supabase, getValidSession } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
+import { MigrationDiagnostic } from '../admin/MigrationDiagnostic';
 
 interface Tenant {
   id: string;
@@ -100,12 +101,13 @@ interface TenantLanguageSettings {
 }
 
 export default function TenantsManagement() {
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [settings, setSettings] = useState<TenantSetting[]>([]);
   const [members, setMembers] = useState<TenantMember[]>([]);
   const [dataTypes, setDataTypes] = useState<DataType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionError, setSessionError] = useState(false);
   
   // Estados para lenguajes (TAB 4)
   const [systemLanguages, setSystemLanguages] = useState<SystemLanguage[]>([]);
@@ -179,8 +181,17 @@ export default function TenantsManagement() {
 
   const loadDataTypes = async () => {
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // ✅ Obtener sesión actualizada y refrescar el token si es necesario
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session?.access_token) {
+        console.error('❌ No hay sesión válida:', sessionError);
+        toast.error('Sesión expirada. Por favor inicia sesión nuevamente.');
+        setSessionError(true);
+        return;
+      }
+
+      const token = session.access_token;
 
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/lookup-values/data-types`,
@@ -192,9 +203,14 @@ export default function TenantsManagement() {
         }
       );
 
-      if (!response.ok) throw new Error('Error cargando tipos de datos');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        console.error('❌ Error HTTP cargando tipos de datos:', response.status, errorData);
+        throw new Error(`Error cargando tipos de datos: ${errorData.error || response.statusText}`);
+      }
       
       const result = await response.json();
+      console.log('✅ Data types cargados:', result);
       setDataTypes(result.dataTypes || []);
     } catch (error: any) {
       console.error('Error cargando tipos de datos:', error);
@@ -205,8 +221,17 @@ export default function TenantsManagement() {
     if (!tenant?.id) return;
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // ✅ Obtener sesión actualizada y refrescar el token si es necesario
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session?.access_token) {
+        console.error('❌ No hay sesión válida:', sessionError);
+        toast.error('Sesión expirada. Por favor inicia sesión nuevamente.');
+        setSessionError(true);
+        return;
+      }
+
+      const token = session.access_token;
 
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/tenants/${tenant.id}/settings`,
@@ -218,9 +243,20 @@ export default function TenantsManagement() {
         }
       );
 
-      if (!response.ok) throw new Error('Error cargando configuraciones');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        console.error('❌ Error HTTP cargando settings:', response.status, errorData);
+        
+        // Error específico de migración no ejecutada
+        if (errorData.error?.includes('system_settings') && errorData.error?.includes('lookup_values')) {
+          toast.error('⚠️ Error: Migración 003 no ejecutada. Ver componente de diagnóstico arriba.', { duration: 10000 });
+        }
+        
+        throw new Error(`Error cargando configuraciones: ${errorData.error || response.statusText}`);
+      }
       
       const result = await response.json();
+      console.log('✅ Settings cargados:', result);
       setSettings(result.settings || []);
     } catch (error: any) {
       console.error('Error cargando settings:', error);
@@ -231,8 +267,17 @@ export default function TenantsManagement() {
     if (!tenant?.id) return;
 
     try {
-      const session = await supabase.auth.getSession();
-      const token = session.data.session?.access_token;
+      // ✅ Obtener sesión actualizada y refrescar el token si es necesario
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session?.access_token) {
+        console.error('❌ No hay sesión válida:', sessionError);
+        toast.error('Sesión expirada. Por favor inicia sesión nuevamente.');
+        setSessionError(true);
+        return;
+      }
+
+      const token = session.access_token;
 
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/tenants/${tenant.id}/members`,
@@ -244,9 +289,14 @@ export default function TenantsManagement() {
         }
       );
 
-      if (!response.ok) throw new Error('Error cargando miembros');
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Error desconocido' }));
+        console.error('❌ Error HTTP cargando members:', response.status, errorData);
+        throw new Error(`Error cargando miembros: ${errorData.error || response.statusText}`);
+      }
       
       const result = await response.json();
+      console.log('✅ Members cargados:', result);
       setMembers(result.members || []);
     } catch (error: any) {
       console.error('Error cargando members:', error);
@@ -531,6 +581,35 @@ export default function TenantsManagement() {
 
   return (
     <div className="space-y-6">
+      {/* Alerta de Sesión Expirada */}
+      {sessionError && !session && (
+        <Card className="border-red-300 bg-red-50">
+          <CardContent className="pt-6">
+            <div className="flex gap-3">
+              <AlertTriangle className="size-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-red-900 mb-2">
+                  🔒 Sesión Expirada
+                </p>
+                <p className="text-sm text-red-800 mb-4">
+                  Tu sesión ha expirado. Por favor, actualiza la página o vuelve a iniciar sesión para continuar.
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                  size="sm"
+                >
+                  🔄 Actualizar Página
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Componente de Diagnóstico de Migraciones */}
+      <MigrationDiagnostic />
+
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Gestión del Tenant</h1>

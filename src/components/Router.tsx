@@ -11,6 +11,8 @@ import { Dashboard } from './Dashboard';
 
 // Importar todas las pantallas
 import { CatalogManagement } from './screens/maintenance/CatalogManagement';
+import { AttendanceEventsManagement } from './screens/maintenance/AttendanceEventsManagement';
+import { SystemSettingsAdmin } from './screens/config/SystemSettingsAdmin';
 import { TenantSettings } from './screens/config/TenantSettings';
 import { ShiftManagement } from './screens/config/ShiftManagement';
 import { CalendarManagement } from './screens/config/CalendarManagement';
@@ -78,7 +80,9 @@ export function Router() {
   // Mapeo de rutas a componentes
   const routeMap: Record<string, JSX.Element> = {
     '/dashboard': <Dashboard />,
+    '/dashboard/maintenance/parameters': <SystemSettingsAdmin />,
     '/dashboard/maintenance/catalogs': <CatalogManagement />,
+    '/dashboard/maintenance/attendance-events': <AttendanceEventsManagement />,
     '/dashboard/config/tenant-settings': <TenantSettings />,
     '/dashboard/config/shifts': <ShiftManagement />,
     '/dashboard/config/calendars': <CalendarManagement />,

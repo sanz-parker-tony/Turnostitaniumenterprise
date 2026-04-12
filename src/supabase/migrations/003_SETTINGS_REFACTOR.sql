@@ -34,20 +34,36 @@ BEGIN;
 --     Después del SEED, todos los registros tendrán value_type_id NOT NULL.
 --   - default_value usa TEXT para soportar todos los tipos de dato.
 --   - setting_key tiene CHECK de formato consistente con el proyecto.
+--   - Columnas adicionales para control de jerarquía y validación:
+--     * setting_description: descripción del propósito del parámetro
+--     * min_value / max_value: validación de rangos (para numéricos/fecha)
+--     * is_tenant_override / is_company_override / is_profile_override / is_employee_override:
+--       controlan en qué niveles se permite override
+--     * category: agrupación temática (JORNADA, NOMINA, UI, etc.)
+--     * sort_order: orden de presentación en UI
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.system_settings (
-  id                 uuid             NOT NULL DEFAULT gen_random_uuid(),
-  setting_key        character varying NOT NULL,
-  setting_name       character varying NOT NULL,
-  setting_short_key  character varying NOT NULL,
-  value_type_id      uuid,
-  default_value      text,
-  is_active          boolean          NOT NULL DEFAULT true,
-  created_by         character varying NOT NULL DEFAULT 'SYSTEM',
-  created_at         timestamp with time zone NOT NULL DEFAULT now(),
-  updated_by         character varying,
-  updated_at         timestamp with time zone,
+  id                   uuid              NOT NULL DEFAULT gen_random_uuid(),
+  setting_key          character varying NOT NULL,
+  setting_name         character varying NOT NULL,
+  setting_short_key    character varying NOT NULL,
+  setting_description  text,
+  value_type_id        uuid,
+  default_value        text,
+  min_value            text,
+  max_value            text,
+  is_tenant_override   boolean           NOT NULL DEFAULT true,
+  is_company_override  boolean           NOT NULL DEFAULT true,
+  is_profile_override  boolean           NOT NULL DEFAULT true,
+  is_employee_override boolean           NOT NULL DEFAULT false,
+  category             character varying,
+  sort_order           integer           NOT NULL DEFAULT 0,
+  is_active            boolean           NOT NULL DEFAULT true,
+  created_by           character varying NOT NULL DEFAULT 'SYSTEM',
+  created_at           timestamp with time zone NOT NULL DEFAULT now(),
+  updated_by           character varying,
+  updated_at           timestamp with time zone,
   CONSTRAINT system_settings_pkey             PRIMARY KEY (id),
   CONSTRAINT system_settings_setting_key_uq   UNIQUE (setting_key),
   CONSTRAINT system_settings_value_type_fkey  FOREIGN KEY (value_type_id)
@@ -72,17 +88,17 @@ COMMENT ON COLUMN public.system_settings.value_type_id  IS
 -- 2.1 Desde tenant_settings (tiene setting_short_key, fuente primaria)
 INSERT INTO public.system_settings
   (setting_key, setting_name, setting_short_key, value_type_id, default_value, is_active, created_by)
-SELECT DISTINCT ON (setting_key)
-  setting_key,
-  setting_key                             AS setting_name,
-  COALESCE(setting_short_key, setting_key) AS setting_short_key,
-  value_type_id,
-  setting_value                           AS default_value,
+SELECT DISTINCT ON (ts.setting_key)
+  ts.setting_key,
+  ts.setting_key                             AS setting_name,
+  COALESCE(ts.setting_short_key, ts.setting_key) AS setting_short_key,
+  ts.value_type_id,
+  ts.setting_value                           AS default_value,
   true,
   'MIGRATION_003'
-FROM public.tenant_settings
-WHERE setting_key IS NOT NULL
-ORDER BY setting_key, created_at ASC
+FROM public.tenant_settings ts
+WHERE ts.setting_key IS NOT NULL
+ORDER BY ts.setting_key, ts.created_at ASC
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- 2.2 Desde company_settings (parámetros no cubiertos por tenant_settings)
@@ -448,6 +464,49 @@ CREATE INDEX IF NOT EXISTS idx_eps_system_setting_id
   ON public.employee_profile_settings(system_setting_id);
 CREATE INDEX IF NOT EXISTS idx_eps_profile_id
   ON public.employee_profile_settings(employee_profile_id);
+
+-- ============================================================================
+-- FASE 10: CREAR TABLA employee_settings (NIVEL 5 — PRIORIDAD MÁXIMA)
+-- ============================================================================
+-- Tabla de overrides a nivel de empleado individual.
+-- Este nivel tiene la prioridad más alta en la jerarquía de resolución.
+-- Solo se crean registros si el empleado necesita un valor específico que
+-- sobreescribe lo definido en su perfil, compañía, tenant o el default del sistema.
+--
+-- Ejemplo: Juan tiene MAX_WORK_HOURS_PER_DAY = 10, su perfil dice 8.
+-- El valor de Juan tiene precedencia absoluta.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.employee_settings (
+  id                  uuid              NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id           uuid              NOT NULL,
+  employee_id         uuid              NOT NULL,
+  system_setting_id   uuid              NOT NULL,
+  setting_value       text              NOT NULL,
+  is_active           boolean           NOT NULL DEFAULT true,
+  created_by          character varying NOT NULL,
+  created_at          timestamp with time zone NOT NULL DEFAULT now(),
+  updated_by          character varying,
+  updated_at          timestamp with time zone,
+  CONSTRAINT employee_settings_pkey             PRIMARY KEY (id),
+  CONSTRAINT employee_settings_employee_setting_uq UNIQUE (employee_id, system_setting_id),
+  CONSTRAINT employee_settings_tenant_id_fkey   FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+  CONSTRAINT employee_settings_employee_id_fkey FOREIGN KEY (employee_id) REFERENCES public.employees(id),
+  CONSTRAINT employee_settings_system_setting_id_fkey FOREIGN KEY (system_setting_id) REFERENCES public.system_settings(id)
+);
+
+COMMENT ON TABLE  public.employee_settings IS
+  'Override personal de parámetros a nivel empleado individual. Nivel 5 de jerarquía (prioridad máxima). Sobreescribe perfil, compañía, tenant y default del sistema.';
+COMMENT ON COLUMN public.employee_settings.setting_value IS
+  'Valor personalizado del parámetro para este empleado. Solo se crea si difiere de su perfil/compañía/tenant.';
+
+-- Índices para performance
+CREATE INDEX IF NOT EXISTS idx_employee_settings_system_setting_id
+  ON public.employee_settings(system_setting_id);
+CREATE INDEX IF NOT EXISTS idx_employee_settings_employee_id
+  ON public.employee_settings(employee_id);
+CREATE INDEX IF NOT EXISTS idx_employee_settings_tenant_id
+  ON public.employee_settings(tenant_id);
 
 COMMIT;
 

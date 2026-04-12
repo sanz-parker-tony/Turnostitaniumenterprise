@@ -361,16 +361,15 @@ export async function getTenantMembers(c: any) {
     const tenantId = c.req.param('id');
     const supabase = getSupabaseClient();
 
-    // ✅ Simplificar query sin usar foreign key hint específico
+    // ✅ Solo seleccionar columnas que existen en tenant_members
     const { data, error } = await supabase
       .from('tenant_members')
       .select(`
-        *,
-        user:users (
-          id,
-          email,
-          display_name
-        )
+        id,
+        tenant_id,
+        auth_user_id,
+        member_role,
+        created_at
       `)
       .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false });

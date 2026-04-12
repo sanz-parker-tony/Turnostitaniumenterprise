@@ -56,6 +56,47 @@ export const getSession = async () => {
   return { session, error };
 };
 
+// Helper para obtener sesión y refrescarla si está cerca de expirar
+export const getValidSession = async () => {
+  try {
+    // Intentar obtener sesión existente
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    
+    if (sessionError) {
+      console.error('❌ Error obteniendo sesión:', sessionError);
+      return { session: null, error: sessionError };
+    }
+    
+    if (!session) {
+      console.warn('⚠️ No hay sesión activa');
+      return { session: null, error: null };
+    }
+    
+    // Verificar si el token está cerca de expirar (menos de 5 minutos)
+    const expiresAt = session.expires_at;
+    const now = Math.floor(Date.now() / 1000);
+    const timeUntilExpiry = expiresAt ? expiresAt - now : 0;
+    
+    if (timeUntilExpiry < 300) { // Menos de 5 minutos
+      console.log('🔄 Token cerca de expirar, refrescando...');
+      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
+      
+      if (refreshError) {
+        console.error('❌ Error refrescando sesión:', refreshError);
+        return { session: null, error: refreshError };
+      }
+      
+      console.log('✅ Sesión refrescada exitosamente');
+      return { session: refreshedSession, error: null };
+    }
+    
+    return { session, error: null };
+  } catch (err: any) {
+    console.error('💥 Error inesperado obteniendo sesión:', err);
+    return { session: null, error: err };
+  }
+};
+
 // Helper para obtener usuario actual
 export const getUser = async () => {
   const { data: { user }, error } = await supabase.auth.getUser();

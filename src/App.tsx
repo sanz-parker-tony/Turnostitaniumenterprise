@@ -44,6 +44,7 @@ function AppContent() {
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [screenBootstrapDone, setScreenBootstrapDone] = useState(false);
   
   // ✅ Cache del estado del wizard en localStorage
   const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(() => {
@@ -58,12 +59,42 @@ function AppContent() {
         if (session?.access_token) {
           console.log('🔑 Access token obtenido');
           setAccessToken(session.access_token);
+          
+          // 🔧 BOOTSTRAP: Asegurar que pantalla de Parámetros existe (solo una vez)
+          if (!screenBootstrapDone) {
+            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/bootstrap/ensure-system-settings-screen`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            })
+              .then(res => res.json())
+              .then(result => {
+                if (result.success) {
+                  console.log('✅ [BOOTSTRAP] Pantalla de Parámetros verificada:', result.created ? 'creada' : 'ya existe');
+                  setScreenBootstrapDone(true);
+                  
+                  // Si se creó la pantalla, forzar recarga del contexto de permisos
+                  if (result.created) {
+                    console.log('🔄 [BOOTSTRAP] Pantalla creada - Se recargará el menú automáticamente');
+                    // El PermissionsContext se recargará automáticamente cuando detecte el cambio
+                    window.dispatchEvent(new Event('permissions-reload'));
+                  }
+                } else {
+                  console.warn('⚠️ [BOOTSTRAP] Error verificando pantalla de Parámetros:', result.error);
+                }
+              })
+              .catch(err => {
+                console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de pantallas:', err);
+              });
+          }
         }
       });
     } else {
       setAccessToken(null);
+      setScreenBootstrapDone(false);
     }
-  }, [user]);
+  }, [user, screenBootstrapDone]);
 
   // Resetear estados cuando no hay usuario
   useEffect(() => {
@@ -75,69 +106,62 @@ function AppContent() {
     }
   }, [user, isLoading]);
 
-  // ✅ Verificar estado del wizard cuando el usuario está autenticado
+  // ✅ Verificar estado del wizard SOLO UNA VEZ cuando el usuario está autenticado
   useEffect(() => {
-    if (user && profile && !isLoading && accessToken) {
-      console.log('✅ Usuario y perfil cargados');
-      
-      // Si ya sabemos que el wizard está completado, NO mostrar wizard y NO verificar más
-      if (wizardCompleted === true) {
-        console.log('✅ [WIZARD] Ya está completado (cache local) - Saltando verificación');
-        setCheckingWizard(false);
-        setShowWizard(false);
-        return; // ✅ SALIR SIN VERIFICAR - El wizard está completado
-      }
-      
-      let isMounted = true; // ✅ Flag para evitar updates después de desmontar
-      
-      // Verificar estado del wizard en la BD (solo si no está cacheado)
-      const checkWizardStatus = async () => {
-        try {
-          if (!isMounted) return; // ✅ Salir si ya se desmontó
-          
-          setCheckingWizard(true);
-          console.log('🔍 [WIZARD] Verificando estado del onboarding...');
-          console.log('📋 [WIZARD] Tenant ID del usuario:', profile.tenant_id);
-          
-          const { data, error } = await supabase
-            .from('tenant_onboarding')
-            .select('onboarding_status, current_step, completion_percentage')
-            .eq('tenant_id', profile.tenant_id)
-            .limit(1)
-            .single();
-          
-          if (!isMounted) return; // ✅ Salir si se desmontó durante la consulta
-          
-          if (error) {
-            // Si es AbortError, ignorar silenciosamente
-            if (error.message?.includes('AbortError') || error.message?.includes('aborted')) {
-              console.log('🛑 Consulta cancelada (componente desmontado)');
-              return;
-            }
-            
-            // Si no encuentra registro (PGRST116), marcar como completado y NO mostrar wizard
-            if (error.code === 'PGRST116') {
-              console.log('✅ [WIZARD] No hay registro - Marcando como completado');
-              setWizardCompleted(true);
-              localStorage.setItem('wizard_completed', 'true');
-              setShowWizard(false);
-              setCheckingWizard(false);
-              return;
-            }
-            
-            console.error('❌ Error al verificar wizard:', error);
-            // En caso de error, asumir completado para no bloquear
-            setWizardCompleted(true);
-            localStorage.setItem('wizard_completed', 'true');
-            setShowWizard(false);
-            setCheckingWizard(false);
+    // ✅ Guard: Solo ejecutar si hay usuario, perfil, y NO está cargando
+    if (!user || !profile || isLoading || !accessToken) {
+      return;
+    }
+
+    // ✅ Si ya sabemos que el wizard está completado, NO verificar más
+    if (wizardCompleted === true) {
+      console.log('✅ [WIZARD] Ya está completado (cache local) - Saltando verificación');
+      setCheckingWizard(false);
+      setShowWizard(false);
+      return;
+    }
+    
+    // ✅ Si ya se verificó el wizard en esta sesión, NO verificar de nuevo
+    const wizardCheckedKey = `wizard_checked_${profile.id}`;
+    if (sessionStorage.getItem(wizardCheckedKey) === 'true') {
+      console.log('✅ [WIZARD] Ya verificado en esta sesión - Saltando');
+      return;
+    }
+    
+    console.log('✅ Usuario y perfil cargados - Verificando wizard (una sola vez)');
+    
+    let isMounted = true;
+    
+    // Verificar estado del wizard en la BD (solo la primera vez)
+    const checkWizardStatus = async () => {
+      try {
+        if (!isMounted) return;
+        
+        setCheckingWizard(true);
+        console.log('🔍 [WIZARD] Verificando estado del onboarding...');
+        console.log('📋 [WIZARD] Tenant ID del usuario:', profile.tenant_id);
+        
+        const { data, error } = await supabase
+          .from('tenant_onboarding')
+          .select('onboarding_status, current_step, completion_percentage')
+          .eq('tenant_id', profile.tenant_id)
+          .limit(1)
+          .single();
+        
+        if (!isMounted) return;
+        
+        // ✅ Marcar como verificado en esta sesión
+        sessionStorage.setItem(wizardCheckedKey, 'true');
+        
+        if (error) {
+          // Si es AbortError, ignorar silenciosamente
+          if (error.message?.includes('AbortError') || error.message?.includes('aborted')) {
+            console.log('🛑 Consulta cancelada (componente desmontado)');
             return;
           }
           
-          console.log('📊 [WIZARD] Estado actual:', data);
-          
-          if (!data) {
-            // No hay registro de onboarding - marcar como completado
+          // Si no encuentra registro (PGRST116), marcar como completado
+          if (error.code === 'PGRST116') {
             console.log('✅ [WIZARD] No hay registro - Marcando como completado');
             setWizardCompleted(true);
             localStorage.setItem('wizard_completed', 'true');
@@ -146,50 +170,64 @@ function AppContent() {
             return;
           }
           
-          if (data.onboarding_status === 'COMPLETED') {
-            // Wizard completado - marcar como completado y NO mostrar wizard
-            console.log('✅ [WIZARD] COMPLETED detectado - Marcando como completado y ocultando wizard');
-            setWizardCompleted(true);
-            localStorage.setItem('wizard_completed', 'true');
-            setShowWizard(false);
-            setCheckingWizard(false);
-          } else {
-            // Wizard pendiente (IN_PROGRESS o NOT_STARTED) - mostrar wizard
-            console.log('⚠️ [WIZARD] Pendiente (', data.onboarding_status, ') - Mostrando wizard');
-            setWizardCompleted(false);
-            setShowWizard(true);
-            setCheckingWizard(false);
-          }
-        } catch (error: any) {
-          if (!isMounted) return; // ✅ Salir si se desmontó
-          
-          // Ignorar AbortError
-          if (error?.name === 'AbortError' || error?.message?.includes('aborted')) {
-            console.log('🛑 Consulta cancelada (componente desmontado)');
-            return;
-          }
-          
-          console.error('❌ Error verificando wizard:', error);
+          console.error('❌ Error al verificar wizard:', error);
           // En caso de error, asumir completado para no bloquear
           setWizardCompleted(true);
           localStorage.setItem('wizard_completed', 'true');
           setShowWizard(false);
           setCheckingWizard(false);
+          return;
         }
-      };
-      
-      // ✅ Ejecutar con debounce para evitar múltiples verificaciones rápidas
-      const timeoutId = setTimeout(() => {
-        checkWizardStatus();
-      }, 100);
-      
-      // ✅ Cleanup: cancelar timeout y marcar como desmontado
-      return () => {
-        isMounted = false;
-        clearTimeout(timeoutId);
-      };
-    }
-  }, [user, profile, isLoading, accessToken, wizardCompleted]);
+        
+        console.log('📊 [WIZARD] Estado actual:', data);
+        
+        if (!data) {
+          console.log('✅ [WIZARD] No hay registro - Marcando como completado');
+          setWizardCompleted(true);
+          localStorage.setItem('wizard_completed', 'true');
+          setShowWizard(false);
+          setCheckingWizard(false);
+          return;
+        }
+        
+        if (data.onboarding_status === 'COMPLETED') {
+          console.log('✅ [WIZARD] COMPLETED detectado - Marcando como completado');
+          setWizardCompleted(true);
+          localStorage.setItem('wizard_completed', 'true');
+          setShowWizard(false);
+          setCheckingWizard(false);
+        } else {
+          console.log('⚠️ [WIZARD] Pendiente (', data.onboarding_status, ') - Mostrando wizard');
+          setWizardCompleted(false);
+          setShowWizard(true);
+          setCheckingWizard(false);
+        }
+      } catch (error: any) {
+        if (!isMounted) return;
+        
+        // Ignorar AbortError
+        if (error?.name === 'AbortError' || error?.message?.includes('aborted')) {
+          console.log('🛑 Consulta cancelada (componente desmontado)');
+          return;
+        }
+        
+        console.error('❌ Error verificando wizard:', error);
+        // En caso de error, asumir completado para no bloquear
+        setWizardCompleted(true);
+        localStorage.setItem('wizard_completed', 'true');
+        setShowWizard(false);
+        setCheckingWizard(false);
+      }
+    };
+    
+    // ✅ Ejecutar la verificación
+    checkWizardStatus();
+    
+    // ✅ Cleanup
+    return () => {
+      isMounted = false;
+    };
+  }, [user, profile, isLoading, accessToken]); // ✅ REMOVIDO wizardCompleted de dependencias
 
   const handlePasswordChanged = async () => {
     console.log('✅ Contraseña cambiada exitosamente');

@@ -36,8 +36,23 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile } = useAuth();
   const [menuScreens, setMenuScreens] = useState<MenuScreen[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
-  // Cargar menú cuando el usuario/rol cambia
+  // Listener para evento de recarga de permisos
+  useEffect(() => {
+    const handlePermissionsReload = () => {
+      console.log('🔄 [PERMISSIONS] Evento de recarga detectado');
+      setReloadTrigger(prev => prev + 1);
+    };
+
+    window.addEventListener('permissions-reload', handlePermissionsReload);
+    
+    return () => {
+      window.removeEventListener('permissions-reload', handlePermissionsReload);
+    };
+  }, []);
+
+  // Cargar menú cuando el usuario/rol cambia o cuando se dispara recarga
   useEffect(() => {
     let isMounted = true; // ✅ Flag dentro del useEffect
     
@@ -231,7 +246,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       console.log('🧹 Limpiando - componente desmontado');
       isMounted = false;
     };
-  }, [user, profile?.role_key]);
+  }, [user, profile?.role_key, reloadTrigger]);
 
   // Obtener la primera pantalla disponible (ordenada)
   const getFirstAvailableScreen = (): MenuScreen | null => {

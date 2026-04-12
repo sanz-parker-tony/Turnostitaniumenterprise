@@ -69,6 +69,9 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
 
   // ========== MAINTENANCE ==========
   'MAINT_CATALOGS': '/dashboard/maintenance/catalogs',
+  'PARAMETERS_MANAGEMENT': '/dashboard/maintenance/parameters',
+  'CATALOG_MANAGEMENT': '/dashboard/maintenance/catalogs',
+  'ATTENDANCE_EVENTS_MANAGEMENT': '/dashboard/maintenance/attendance-events',
   'MAINT_HOLIDAYS': '/dashboard/maintenance/holidays',
   'MAINT_ATT_MOVEMENTS': '/dashboard/maintenance/attendance-movements',
   'MAINT_ATT_EVENTS': '/dashboard/maintenance/attendance-events',
