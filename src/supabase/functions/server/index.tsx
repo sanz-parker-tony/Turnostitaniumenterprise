@@ -6,7 +6,12 @@ import systemSettingsRoutes from "./system-settings-routes.tsx";
 import rolesRoutes from "./roles-routes.tsx";
 import scopeTypesRoutes from "./scope-types-routes.tsx";
 import usersManagementRoutes from "./users-management-routes.tsx";
-import { ensureSystemSettingsScreen, ensureMaintenanceManagementScreens } from "./bootstrap-screens.tsx";
+import menuGroupsRoutes from "./menu-groups-routes.tsx";
+import screensMgmtRoutes from "./screens-mgmt-routes.tsx";
+import actionsMgmtRoutes from "./actions-mgmt-routes.tsx";
+import screenActionsMgmtRoutes from "./screen-actions-mgmt-routes.tsx";
+import roleScreenActionsMgmtRoutes from "./role-screen-actions-mgmt-routes.tsx";
+import { ensureSystemSettingsScreen, ensureMaintenanceManagementScreens, ensureSecurityManagementScreens } from "./bootstrap-screens.tsx";
 
 import { Hono } from "npm:hono@4.6.14";
 import { cors } from "npm:hono/cors";
@@ -110,11 +115,11 @@ const requireAuth = async (c: any, next: any) => {
   
   console.log("🔐 [requireAuth] Token length:", token.length);
   
-  // ✅ Usar service role para validar el token (admin.getUser es la API correcta para server-side)
+  // ✅ Usar getUser(token) — valida el JWT y retorna el usuario (no admin.getUser que espera un UUID)
   const supabaseAdmin = getSupabaseClient();
   
   try {
-    const { data: { user }, error } = await supabaseAdmin.auth.admin.getUser(token);
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
     
     if (error) {
       console.error("❌ [requireAuth] Error de autenticación:", error.message, error.code);
@@ -178,6 +183,9 @@ app.post("/make-server-e19f2094/bootstrap/ensure-system-settings-screen", ensure
 
 // Bootstrap: Asegurar pantallas de Roles, Alcances y Usuarios
 app.post("/make-server-e19f2094/bootstrap/ensure-maintenance-screens", ensureMaintenanceManagementScreens);
+
+// Bootstrap: Asegurar pantallas del módulo de Seguridad
+app.post("/make-server-e19f2094/bootstrap/ensure-security-screens", ensureSecurityManagementScreens);
 
 app.get("/make-server-e19f2094/bootstrap/wizard-state", requireAuth, getWizardState);
 
@@ -810,6 +818,21 @@ app.route("/make-server-e19f2094/scope-types-management", scopeTypesRoutes);
 
 // Users Management (Mantenimiento → Usuarios)
 app.route("/make-server-e19f2094/users-management", usersManagementRoutes);
+
+// Menu Groups (Seguridad → Grupos de Menú)
+app.route("/make-server-e19f2094/menu-groups-management", menuGroupsRoutes);
+
+// Screens (Seguridad → Pantallas)
+app.route("/make-server-e19f2094/screens-management", screensMgmtRoutes);
+
+// Actions (Seguridad → Acciones)
+app.route("/make-server-e19f2094/actions-management", actionsMgmtRoutes);
+
+// Screen Actions (Seguridad → Acciones de Pantalla)
+app.route("/make-server-e19f2094/screen-actions-management", screenActionsMgmtRoutes);
+
+// Role Screen Actions (Seguridad → Permisos por Rol)
+app.route("/make-server-e19f2094/role-screen-actions-management", roleScreenActionsMgmtRoutes);
 
 // Lookup Values (query lookup values)
 app.route("/make-server-e19f2094/lookup-values", lookupRoutes);

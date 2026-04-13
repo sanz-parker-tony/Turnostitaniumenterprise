@@ -45,7 +45,6 @@ function AppContent() {
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [screenBootstrapDone, setScreenBootstrapDone] = useState(false);
   
   // ✅ Cache del estado del wizard en localStorage
   const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(() => {
@@ -53,73 +52,47 @@ function AppContent() {
     return cached ? cached === 'true' : null;
   });
 
-  // Obtener access token cuando hay usuario
+  // Obtener access token cuando hay usuario y disparar bootstrap UNA SOLA VEZ por sesión
   useEffect(() => {
-    if (user) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.access_token) {
-          console.log('🔑 Access token obtenido');
-          setAccessToken(session.access_token);
-          
-          // 🔧 BOOTSTRAP: Asegurar que pantalla de Parámetros existe (solo una vez)
-          if (!screenBootstrapDone) {
-            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/bootstrap/ensure-system-settings-screen`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${publicAnonKey}`,
-              },
-            })
-              .then(res => res.json())
-              .then(result => {
-                if (result.success) {
-                  console.log('✅ [BOOTSTRAP] Pantalla de Parámetros verificada:', result.created ? 'creada' : 'ya existe');
-                  setScreenBootstrapDone(true);
-                  
-                  // Si se creó la pantalla, forzar recarga del contexto de permisos
-                  if (result.created) {
-                    console.log('🔄 [BOOTSTRAP] Pantalla creada - Se recargará el menú automáticamente');
-                    // El PermissionsContext se recargará automáticamente cuando detecte el cambio
-                    window.dispatchEvent(new Event('permissions-reload'));
-                  }
-                } else {
-                  console.warn('⚠️ [BOOTSTRAP] Error verificando pantalla de Parámetros:', result.error);
-                }
-              })
-              .catch(err => {
-                console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de pantallas:', err);
-              });
-
-            // 🔧 BOOTSTRAP: Asegurar que pantallas de Roles, Alcances y Usuarios existen
-            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/bootstrap/ensure-maintenance-screens`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${publicAnonKey}`,
-              },
-            })
-              .then(res => res.json())
-              .then(result => {
-                if (result.success) {
-                  console.log('✅ [BOOTSTRAP] Pantallas de Mantenimiento verificadas. Creadas:', result.results?.filter((r: any) => r.created).length || 0);
-                  if (result.any_created) {
-                    window.dispatchEvent(new Event('permissions-reload'));
-                  }
-                } else {
-                  console.warn('⚠️ [BOOTSTRAP] Error verificando pantallas de mantenimiento:', result.error);
-                }
-              })
-              .catch(err => {
-                console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de mantenimiento:', err);
-              });
-          }
-        }
-      });
-    } else {
+    if (!user) {
       setAccessToken(null);
-      setScreenBootstrapDone(false);
+      return;
     }
-  }, [user, screenBootstrapDone]);
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.access_token) return;
+      setAccessToken(session.access_token);
+
+      // ✅ sessionStorage evita el loop: no modifica estado React ni re-dispara el effect
+      const BOOTSTRAP_KEY = 'bootstrap_screens_done_v2';
+      if (sessionStorage.getItem(BOOTSTRAP_KEY)) return;
+      sessionStorage.setItem(BOOTSTRAP_KEY, 'true'); // marcar ANTES de los fetch
+
+      const authHeader = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` };
+
+      const endpoints = [
+        'bootstrap/ensure-system-settings-screen',
+        'bootstrap/ensure-maintenance-screens',
+        'bootstrap/ensure-security-screens',
+      ];
+
+      Promise.allSettled(
+        endpoints.map(ep =>
+          fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/${ep}`, {
+            method: 'POST', headers: authHeader,
+          }).then(r => r.json())
+        )
+      ).then(results => {
+        const anyCreated = results.some(r => r.status === 'fulfilled' && r.value?.any_created);
+        console.log('✅ [BOOTSTRAP] Pantallas verificadas. Nuevas creadas:', anyCreated);
+        if (anyCreated) {
+          window.dispatchEvent(new Event('permissions-reload'));
+        }
+      }).catch(err => {
+        console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de pantallas:', err);
+      });
+    });
+  }, [user]); // ← solo depende de user, sin estado adicional
 
   // Resetear estados cuando no hay usuario
   useEffect(() => {

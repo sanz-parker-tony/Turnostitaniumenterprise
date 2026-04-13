@@ -12,6 +12,7 @@ import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
   Shield, Lock, ShieldCheck, ChevronDown, ChevronUp, RefreshCw,
+  Save, Check, ShieldAlert,
 } from 'lucide-react';
 import { projectId, publicAnonKey } from '@/utils/supabase/info';
 import { useAuth } from '@/contexts/AuthContext';
@@ -97,6 +98,15 @@ function getToken(): string {
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/roles-management`;
 
+// ── Tipos para permisos ──────────────────────────────────────────────────────
+interface ScreenActionCatalog {
+  id: string; screen_key: string; screen_name: string;
+  action_key: string; action_name: string; ui_element_key: string | null; label: string;
+}
+
+interface RolePermission {
+  id: string; screen_action_id: string; is_allowed: boolean; is_active: boolean;
+}
 // ============================================================================
 // COMPONENTE PRINCIPAL
 // ============================================================================
@@ -116,11 +126,23 @@ export function RolesManagement() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalTab, setModalTab] = useState<'data' | 'permissions'>('data');
   const [editingRole, setEditingRole] = useState<Role | null>(null);
   const [formData, setFormData] = useState<FormData>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  // ── Permisos (role_screen_actions) ──────────────────────────────────────────
+  const [screenActionsCatalog, setScreenActionsCatalog] = useState<ScreenActionCatalog[]>([]);
+  const [localPerms, setLocalPerms] = useState<Record<string, boolean>>({});
+  const [permsLoading, setPermsLoading] = useState(false);
+  const [permsDirty, setPermsDirty] = useState(false);
+  const [permsSaving, setPermsSaving] = useState(false);
+  const [permsMsg, setPermsMsg] = useState<string | null>(null);
+  const [permsError, setPermsError] = useState<string | null>(null);
+
+  const RSA_API = `https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/role-screen-actions-management`;
 
   // ============================================================================
   // CARGA DE DATOS
@@ -200,6 +222,11 @@ export function RolesManagement() {
     setEditingRole(null);
     setFormData({ ...EMPTY_FORM, tenant_id: tenants[0]?.id || '' });
     setFormErrors({});
+    setModalTab('data');
+    setLocalPerms({});
+    setPermsDirty(false);
+    setPermsMsg(null);
+    setPermsError(null);
     setIsModalOpen(true);
   };
 
@@ -216,6 +243,11 @@ export function RolesManagement() {
       is_active: role.is_active,
     });
     setFormErrors({});
+    setModalTab('data');
+    setLocalPerms({});
+    setPermsDirty(false);
+    setPermsMsg(null);
+    setPermsError(null);
     setIsModalOpen(true);
   };
 
@@ -224,8 +256,59 @@ export function RolesManagement() {
     setEditingRole(null);
     setFormData(EMPTY_FORM);
     setFormErrors({});
+    setLocalPerms({});
+    setPermsDirty(false);
   };
 
+  // Cargar catálogo de screen_actions + permisos actuales del rol
+  const loadPermissions = async (role: Role) => {
+    setPermsLoading(true); setPermsError(null);
+    try {
+      const [saRes, rsaRes] = await Promise.all([
+        fetch(`${RSA_API}/catalogs/screen-actions`, { headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' } }),
+        fetch(`${RSA_API}?tenant_id=${role.tenant_id}&role_id=${role.id}`, { headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' } }),
+      ]);
+      const [saData, rsaData] = await Promise.all([saRes.json(), rsaRes.json()]);
+      setScreenActionsCatalog(saData.screenActions || []);
+
+      const map: Record<string, boolean> = {};
+      (rsaData.permissions || []).forEach((p: RolePermission) => { map[p.screen_action_id] = p.is_allowed; });
+      setLocalPerms(map);
+      setPermsDirty(false);
+    } catch (e: any) { setPermsError(e.message); }
+    finally { setPermsLoading(false); }
+  };
+
+  const savePermissions = async () => {
+    if (!editingRole) return;
+    setPermsSaving(true); setPermsError(null);
+    try {
+      const permsPayload = screenActionsCatalog.map(sa => ({
+        screen_action_id: sa.id,
+        is_allowed: localPerms[sa.id] ?? false,
+      }));
+      const res = await fetch(`${RSA_API}/bulk-upsert`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenant_id: editingRole.tenant_id, role_id: editingRole.id, permissions: permsPayload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error guardando permisos');
+      setPermsMsg(`✅ ${data.updated} actualizados, ${data.created} nuevos`);
+      setPermsDirty(false);
+      setTimeout(() => setPermsMsg(null), 4000);
+      await loadPermissions(editingRole);
+    } catch (e: any) { setPermsError(e.message); }
+    finally { setPermsSaving(false); }
+  };
+
+  // Agrupar screen_actions por pantalla para la vista matricial
+  const groupedSA = screenActionsCatalog.reduce((acc, sa) => {
+    if (!acc[sa.screen_key]) acc[sa.screen_key] = { screen_name: sa.screen_name, items: [] };
+    acc[sa.screen_key].items.push(sa);
+    return acc;
+  }, {} as Record<string, { screen_name: string; items: ScreenActionCatalog[] }>);
+  
   const validate = (): boolean => {
     const errors: Record<string, string> = {};
 
@@ -482,9 +565,9 @@ export function RolesManagement() {
       {/* Modal Create/Edit */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 overflow-hidden">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
             {/* Modal Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 flex-shrink-0">
               <h2 className="text-lg font-semibold text-gray-900" style={{ fontFamily: 'Inter, sans-serif' }}>
                 {editingRole ? 'Editar Rol' : 'Nuevo Rol'}
               </h2>
@@ -493,172 +576,265 @@ export function RolesManagement() {
               </button>
             </div>
 
+            {/* Tabs */}
+            <div className="flex border-b flex-shrink-0">
+              <button onClick={() => setModalTab('data')}
+                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${modalTab === 'data' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                <Shield className="w-4 h-4 inline mr-1.5" />Datos del Rol
+              </button>
+              {editingRole && (
+                <button onClick={() => { setModalTab('permissions'); if (screenActionsCatalog.length === 0 && !permsLoading) loadPermissions(editingRole); }}
+                  className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${modalTab === 'permissions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                  <ShieldCheck className="w-4 h-4 inline mr-1.5" />Permisos
+                  {permsDirty && <span className="ml-1.5 w-2 h-2 bg-amber-500 rounded-full inline-block" />}
+                </button>
+              )}
+            </div>
+
             {/* Modal Body */}
-            <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
-              {formErrors.general && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                  {formErrors.general}
+            <div className="px-6 py-5 overflow-y-auto flex-1">
+
+              {/* ── TAB: Datos ── */}
+              {modalTab === 'data' && (
+                <div className="space-y-4">
+                  {formErrors.general && (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                      {formErrors.general}
+                    </div>
+                  )}
+
+                  {/* Tenant */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tenant <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={formData.tenant_id}
+                      onChange={e => setFormData(f => ({ ...f, tenant_id: e.target.value }))}
+                      disabled={!!editingRole}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                        formErrors.tenant_id ? 'border-red-400' : 'border-gray-300'
+                      } ${editingRole ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="">Seleccionar tenant...</option>
+                      {tenants.map(t => (
+                        <option key={t.id} value={t.id}>{t.tenant_name} ({t.tenant_key})</option>
+                      ))}
+                    </select>
+                    {formErrors.tenant_id && <p className="text-xs text-red-500 mt-1">{formErrors.tenant_id}</p>}
+                  </div>
+
+                  {/* Role Key */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Clave del Rol <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.role_key}
+                      onChange={e => setFormData(f => ({ ...f, role_key: e.target.value.toUpperCase() }))}
+                      disabled={editingRole?.is_system_role}
+                      placeholder="Ej: SUPERVISOR_RRHH"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                        formErrors.role_key ? 'border-red-400' : 'border-gray-300'
+                      } ${editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
+                    />
+                    {formErrors.role_key ? (
+                      <p className="text-xs text-red-500 mt-1">{formErrors.role_key}</p>
+                    ) : (
+                      <p className="text-xs text-gray-400 mt-1">Solo A-Z, 0-9 y guión bajo. Mínimo 2 caracteres.</p>
+                    )}
+                  </div>
+
+                  {/* Role Name */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Nombre del Rol <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.role_name}
+                      onChange={e => setFormData(f => ({ ...f, role_name: e.target.value }))}
+                      disabled={editingRole?.is_system_role}
+                      placeholder="Ej: Supervisor de Recursos Humanos"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                        formErrors.role_name ? 'border-red-400' : 'border-gray-300'
+                      } ${editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
+                    />
+                    {formErrors.role_name && <p className="text-xs text-red-500 mt-1">{formErrors.role_name}</p>}
+                  </div>
+
+                  {/* Row: Role Scope + Data Scope */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Alcance del Rol</label>
+                      <select
+                        value={formData.role_scope}
+                        onChange={e => setFormData(f => ({ ...f, role_scope: e.target.value }))}
+                        disabled={editingRole?.is_system_role}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                          editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        {Object.entries(SCOPE_LABELS).map(([k, v]) => (
+                          <option key={k} value={k}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Alcance de Datos</label>
+                      <select
+                        value={formData.data_scope}
+                        onChange={e => setFormData(f => ({ ...f, data_scope: e.target.value }))}
+                        disabled={editingRole?.is_system_role}
+                        className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                          editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''
+                        }`}
+                      >
+                        {Object.entries(DATA_SCOPE_LABELS).map(([k, v]) => (
+                          <option key={k} value={k}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Rol Base */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Rol Base (heredar de)</label>
+                    <select
+                      value={formData.base_role_id}
+                      onChange={e => setFormData(f => ({ ...f, base_role_id: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
+                    >
+                      <option value="">Sin rol base</option>
+                      {roles
+                        .filter(r => r.id !== editingRole?.id && r.is_active)
+                        .map(r => (
+                          <option key={r.id} value={r.id}>
+                            {r.role_name} ({r.role_key})
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">Opcional. Para herencia de permisos.</p>
+                  </div>
+
+                  {/* Estado */}
+                  <div className="flex items-center gap-3">
+                    <label className="text-sm font-medium text-gray-700">Estado</label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData(f => ({ ...f, is_active: !f.is_active }))}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        formData.is_active ? 'bg-[#2ECC71]' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                        formData.is_active ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                    <span className="text-sm text-gray-600">{formData.is_active ? 'Activo' : 'Inactivo'}</span>
+                  </div>
+
+                  {editingRole?.is_system_role && (
+                    <div className="flex items-center gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+                      <ShieldCheck className="w-4 h-4 text-purple-600 shrink-0" />
+                      <p className="text-xs text-purple-700">
+                        Este es un rol de sistema. Solo se puede cambiar su estado activo/inactivo.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Tenant */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Tenant <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.tenant_id}
-                  onChange={e => setFormData(f => ({ ...f, tenant_id: e.target.value }))}
-                  disabled={!!editingRole}
-                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
-                    formErrors.tenant_id ? 'border-red-400' : 'border-gray-300'
-                  } ${editingRole ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
-                >
-                  <option value="">Seleccionar tenant...</option>
-                  {tenants.map(t => (
-                    <option key={t.id} value={t.id}>{t.tenant_name} ({t.tenant_key})</option>
-                  ))}
-                </select>
-                {formErrors.tenant_id && <p className="text-xs text-red-500 mt-1">{formErrors.tenant_id}</p>}
-              </div>
+              {/* ── TAB: Permisos ── */}
+              {modalTab === 'permissions' && editingRole && (
+                <div className="space-y-3">
+                  {permsError && (
+                    <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0" />{permsError}
+                    </div>
+                  )}
+                  {permsMsg && (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{permsMsg}</div>
+                  )}
 
-              {/* Role Key */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Clave del Rol <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.role_key}
-                  onChange={e => setFormData(f => ({ ...f, role_key: e.target.value.toUpperCase() }))}
-                  disabled={editingRole?.is_system_role}
-                  placeholder="Ej: SUPERVISOR_RRHH"
-                  className={`w-full px-3 py-2 border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
-                    formErrors.role_key ? 'border-red-400' : 'border-gray-300'
-                  } ${editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
-                />
-                {formErrors.role_key ? (
-                  <p className="text-xs text-red-500 mt-1">{formErrors.role_key}</p>
-                ) : (
-                  <p className="text-xs text-gray-400 mt-1">Solo A-Z, 0-9 y guión bajo. Mínimo 2 caracteres.</p>
-                )}
-              </div>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-gray-500">
+                      Configura qué acciones puede ejecutar el rol <strong>{editingRole.role_name}</strong> en cada pantalla.
+                    </p>
+                    <div className="flex gap-2">
+                      <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = true; }); setLocalPerms(u); setPermsDirty(true); }}
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Todo ✓</button>
+                      <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = false; }); setLocalPerms(u); setPermsDirty(true); }}
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Todo ✗</button>
+                    </div>
+                  </div>
 
-              {/* Role Name */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nombre del Rol <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={formData.role_name}
-                  onChange={e => setFormData(f => ({ ...f, role_name: e.target.value }))}
-                  disabled={editingRole?.is_system_role}
-                  placeholder="Ej: Supervisor de Recursos Humanos"
-                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
-                    formErrors.role_name ? 'border-red-400' : 'border-gray-300'
-                  } ${editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''}`}
-                />
-                {formErrors.role_name && <p className="text-xs text-red-500 mt-1">{formErrors.role_name}</p>}
-              </div>
-
-              {/* Row: Role Scope + Data Scope */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Alcance del Rol</label>
-                  <select
-                    value={formData.role_scope}
-                    onChange={e => setFormData(f => ({ ...f, role_scope: e.target.value }))}
-                    disabled={editingRole?.is_system_role}
-                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
-                      editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    {Object.entries(SCOPE_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Alcance de Datos</label>
-                  <select
-                    value={formData.data_scope}
-                    onChange={e => setFormData(f => ({ ...f, data_scope: e.target.value }))}
-                    disabled={editingRole?.is_system_role}
-                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
-                      editingRole?.is_system_role ? 'bg-gray-50 opacity-70 cursor-not-allowed' : ''
-                    }`}
-                  >
-                    {Object.entries(DATA_SCOPE_LABELS).map(([k, v]) => (
-                      <option key={k} value={k}>{v}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Rol Base */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Rol Base (heredar de)</label>
-                <select
-                  value={formData.base_role_id}
-                  onChange={e => setFormData(f => ({ ...f, base_role_id: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
-                >
-                  <option value="">Sin rol base</option>
-                  {roles
-                    .filter(r => r.id !== editingRole?.id && r.is_active)
-                    .map(r => (
-                      <option key={r.id} value={r.id}>
-                        {r.role_name} ({r.role_key})
-                      </option>
-                    ))}
-                </select>
-                <p className="text-xs text-gray-400 mt-1">Opcional. Para herencia de permisos.</p>
-              </div>
-
-              {/* Estado */}
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700">Estado</label>
-                <button
-                  type="button"
-                  onClick={() => setFormData(f => ({ ...f, is_active: !f.is_active }))}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    formData.is_active ? 'bg-[#2ECC71]' : 'bg-gray-300'
-                  }`}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                    formData.is_active ? 'translate-x-6' : 'translate-x-1'
-                  }`} />
-                </button>
-                <span className="text-sm text-gray-600">{formData.is_active ? 'Activo' : 'Inactivo'}</span>
-              </div>
-
-              {editingRole?.is_system_role && (
-                <div className="flex items-center gap-2 p-3 bg-purple-50 border border-purple-200 rounded-lg">
-                  <ShieldCheck className="w-4 h-4 text-purple-600 shrink-0" />
-                  <p className="text-xs text-purple-700">
-                    Este es un rol de sistema. Solo se puede cambiar su estado activo/inactivo.
-                  </p>
+                  {permsLoading ? (
+                    <div className="flex items-center justify-center py-10">
+                      <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : screenActionsCatalog.length === 0 ? (
+                    <div className="text-center py-10 text-gray-400">
+                      <ShieldAlert className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <p className="text-sm">No hay acciones de pantalla configuradas.</p>
+                      <p className="text-xs mt-1">Ve a <strong>Seguridad → Acciones de Pantalla</strong> para crearlas.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {Object.entries(groupedSA).sort(([,a],[,b]) => a.screen_name.localeCompare(b.screen_name)).map(([screenKey, group]) => (
+                        <div key={screenKey} className="border rounded-lg overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b">
+                            <span className="font-medium text-sm text-gray-800">{group.screen_name}</span>
+                            <span className="font-mono text-xs text-gray-400">{screenKey}</span>
+                          </div>
+                          <div className="divide-y divide-gray-50">
+                            {group.items.map(sa => {
+                              const allowed = localPerms[sa.id] ?? false;
+                              return (
+                                <div key={sa.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50">
+                                  <div>
+                                    <span className="text-sm text-gray-800">{sa.action_name}</span>
+                                    <span className="ml-2 font-mono text-xs text-gray-400">{sa.action_key}</span>
+                                    {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">· {sa.ui_element_key}</span>}
+                                  </div>
+                                  <button onClick={() => { setLocalPerms(prev => ({ ...prev, [sa.id]: !prev[sa.id] })); setPermsDirty(true); }}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                      allowed ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                    }`}>
+                                    {allowed ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                                    {allowed ? 'Permitido' : 'Denegado'}
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
             {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-              <button
-                onClick={closeModal}
-                className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100"
-              >
+            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50 flex-shrink-0">
+              <button onClick={closeModal} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 Cancelar
               </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="px-5 py-2 text-sm bg-[#0074D9] text-white rounded-lg font-medium hover:bg-[#005bb5] disabled:opacity-60 transition-colors flex items-center gap-2"
-              >
-                {saving && <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />}
-                {saving ? 'Guardando...' : editingRole ? 'Actualizar' : 'Crear Rol'}
-              </button>
+              {modalTab === 'data' ? (
+                <button onClick={handleSave} disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5] disabled:opacity-60">
+                  {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {saving ? 'Guardando...' : (editingRole ? 'Actualizar' : 'Crear Rol')}
+                </button>
+              ) : (
+                <button onClick={savePermissions} disabled={permsSaving || !permsDirty}
+                  className="flex items-center gap-2 px-4 py-2 bg-[#2ECC71] text-white rounded-lg text-sm font-medium hover:bg-green-600 disabled:opacity-60">
+                  {permsSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  {permsSaving ? 'Guardando...' : 'Guardar Permisos'}
+                </button>
+              )}
             </div>
           </div>
         </div>

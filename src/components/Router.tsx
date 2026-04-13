@@ -24,6 +24,11 @@ import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
 import { OrgStructure } from './screens/org/OrgStructure';
 import TenantsManagement from './security/TenantsManagement';
+import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
+import { ScreensManagement } from './screens/security/ScreensManagement';
+import { ActionsManagement } from './screens/security/ActionsManagement';
+import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
+import { RoleScreenActionsManagement } from './screens/security/RoleScreenActionsManagement';
 
 export function Router() {
   const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
@@ -103,11 +108,16 @@ export function Router() {
     // ── Organización ───────────────────────────────────────────────────────
     '/dashboard/org/companies': <OrgStructure />,
 
-    // ── Seguridad ──────────────────────────────────────────────────────────
-    '/dashboard/security/tenants':        <TenantsManagement />,
-    '/dashboard/security/roles':          <RolesManagement />,
-    '/dashboard/security/scopes':         <ScopeTypesManagement />,
-    '/dashboard/security/tenant-members': <UsersManagement />,
+    // ── Seguridad ──────────────────────────────────────────────────────────────
+    '/dashboard/security/tenants':              <TenantsManagement />,
+    '/dashboard/security/roles':               <RolesManagement />,
+    '/dashboard/security/scopes':              <ScopeTypesManagement />,
+    '/dashboard/security/tenant-members':      <UsersManagement />,
+    '/dashboard/security/menu-groups':         <MenuGroupsManagement />,
+    '/dashboard/security/screens':             <ScreensManagement />,
+    '/dashboard/security/actions':             <ActionsManagement />,
+    '/dashboard/security/screen-actions':      <ScreenActionsManagement />,
+    '/dashboard/security/role-screen-actions': <RoleScreenActionsManagement />,
   };
 
   // Si la ruta existe en el mapa, renderizarla
