@@ -3,7 +3,10 @@ import lookupRoutes from "./lookup-routes.tsx";
 import lookupGroupsRoutes from "./lookup-groups-routes.tsx";
 import lookupValuesRoutes from "./lookup-values-routes.tsx";
 import systemSettingsRoutes from "./system-settings-routes.tsx";
-import { ensureSystemSettingsScreen } from "./bootstrap-screens.tsx";
+import rolesRoutes from "./roles-routes.tsx";
+import scopeTypesRoutes from "./scope-types-routes.tsx";
+import usersManagementRoutes from "./users-management-routes.tsx";
+import { ensureSystemSettingsScreen, ensureMaintenanceManagementScreens } from "./bootstrap-screens.tsx";
 
 import { Hono } from "npm:hono@4.6.14";
 import { cors } from "npm:hono/cors";
@@ -107,10 +110,11 @@ const requireAuth = async (c: any, next: any) => {
   
   console.log("🔐 [requireAuth] Token length:", token.length);
   
-  const supabaseAnon = getSupabaseAnonClient();
+  // ✅ Usar service role para validar el token (admin.getUser es la API correcta para server-side)
+  const supabaseAdmin = getSupabaseClient();
   
   try {
-    const { data: { user }, error } = await supabaseAnon.auth.getUser(token);
+    const { data: { user }, error } = await supabaseAdmin.auth.admin.getUser(token);
     
     if (error) {
       console.error("❌ [requireAuth] Error de autenticación:", error.message, error.code);
@@ -171,6 +175,9 @@ app.post("/make-server-e19f2094/bootstrap/ensure-system-admin", ensureSystemAdmi
 
 // Bootstrap: Asegurar que pantalla de Parámetros existe
 app.post("/make-server-e19f2094/bootstrap/ensure-system-settings-screen", ensureSystemSettingsScreen);
+
+// Bootstrap: Asegurar pantallas de Roles, Alcances y Usuarios
+app.post("/make-server-e19f2094/bootstrap/ensure-maintenance-screens", ensureMaintenanceManagementScreens);
 
 app.get("/make-server-e19f2094/bootstrap/wizard-state", requireAuth, getWizardState);
 
@@ -794,6 +801,15 @@ app.route("/make-server-e19f2094/attendance-events", attendanceEventsRoutes);
 
 // System Settings (Parámetros del Sistema)
 app.route("/make-server-e19f2094/system-settings-management", systemSettingsRoutes);
+
+// Roles (Mantenimiento → Roles)
+app.route("/make-server-e19f2094/roles-management", rolesRoutes);
+
+// Scope Types (Mantenimiento → Alcances)
+app.route("/make-server-e19f2094/scope-types-management", scopeTypesRoutes);
+
+// Users Management (Mantenimiento → Usuarios)
+app.route("/make-server-e19f2094/users-management", usersManagementRoutes);
 
 // Lookup Values (query lookup values)
 app.route("/make-server-e19f2094/lookup-values", lookupRoutes);

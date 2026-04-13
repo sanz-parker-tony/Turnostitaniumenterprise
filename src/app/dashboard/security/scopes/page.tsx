@@ -1,25 +1,12 @@
 /**
- * Security > Scopes
- * Gestión de alcances de acceso
+ * Security > Gestión de Tipos de Alcance
+ * Redirige al componente completo de ScopeTypesManagement
  */
 
 'use client';
 
-import ScreenPageShell from '@/components/ScreenPageShell';
-import UnderConstruction from '@/components/UnderConstruction';
+import ScopeTypesManagement from '@/components/screens/maintenance/ScopeTypesManagement';
 
 export default function SecurityScopesPage() {
-  return (
-    <ScreenPageShell
-      screenKey="SEC_SCOPES"
-      title="Scopes"
-      description="Gestión de alcances de acceso (empresas, departamentos, etc.)"
-    >
-      <UnderConstruction
-        screenName="Gestión de Scopes"
-        screenKey="SEC_SCOPES"
-        description="Esta pantalla permitirá definir y gestionar los tipos de alcance (scope_types) que determinan el nivel de acceso a datos: SYSTEM (todo), TENANT (tenant completo), COMPANY (empresa), DEPARTMENT (departamento), etc."
-      />
-    </ScreenPageShell>
-  );
+  return <ScopeTypesManagement />;
 }

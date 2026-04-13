@@ -12,6 +12,7 @@ import ChangePasswordModal from './components/ChangePasswordModal';
 import TenantSetupWizard from './components/TenantSetupWizard';
 import { DashboardLayout } from './components/DashboardLayout';
 import { projectId } from './utils/supabase/info';
+import { publicAnonKey } from './utils/supabase/info';
 import { Toaster } from 'sonner';
 import { supabase } from './lib/supabase';
 
@@ -66,6 +67,7 @@ function AppContent() {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${publicAnonKey}`,
               },
             })
               .then(res => res.json())
@@ -86,6 +88,29 @@ function AppContent() {
               })
               .catch(err => {
                 console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de pantallas:', err);
+              });
+
+            // 🔧 BOOTSTRAP: Asegurar que pantallas de Roles, Alcances y Usuarios existen
+            fetch(`https://${projectId}.supabase.co/functions/v1/make-server-e19f2094/bootstrap/ensure-maintenance-screens`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${publicAnonKey}`,
+              },
+            })
+              .then(res => res.json())
+              .then(result => {
+                if (result.success) {
+                  console.log('✅ [BOOTSTRAP] Pantallas de Mantenimiento verificadas. Creadas:', result.results?.filter((r: any) => r.created).length || 0);
+                  if (result.any_created) {
+                    window.dispatchEvent(new Event('permissions-reload'));
+                  }
+                } else {
+                  console.warn('⚠️ [BOOTSTRAP] Error verificando pantallas de mantenimiento:', result.error);
+                }
+              })
+              .catch(err => {
+                console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de mantenimiento:', err);
               });
           }
         }

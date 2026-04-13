@@ -12,6 +12,10 @@ import { Dashboard } from './Dashboard';
 // Importar todas las pantallas
 import { CatalogManagement } from './screens/maintenance/CatalogManagement';
 import { AttendanceEventsManagement } from './screens/maintenance/AttendanceEventsManagement';
+import { SystemSettingsManagement } from './screens/maintenance/SystemSettingsManagement';
+import { RolesManagement } from './screens/maintenance/RolesManagement';
+import { ScopeTypesManagement } from './screens/maintenance/ScopeTypesManagement';
+import { UsersManagement } from './screens/maintenance/UsersManagement';
 import { SystemSettingsAdmin } from './screens/config/SystemSettingsAdmin';
 import { TenantSettings } from './screens/config/TenantSettings';
 import { ShiftManagement } from './screens/config/ShiftManagement';
@@ -80,16 +84,30 @@ export function Router() {
   // Mapeo de rutas a componentes
   const routeMap: Record<string, JSX.Element> = {
     '/dashboard': <Dashboard />,
-    '/dashboard/maintenance/parameters': <SystemSettingsAdmin />,
-    '/dashboard/maintenance/catalogs': <CatalogManagement />,
+
+    // ── Mantenimiento ──────────────────────────────────────────────────────
+    '/dashboard/maintenance/parameters':      <SystemSettingsManagement />,
+    '/dashboard/maintenance/catalogs':        <CatalogManagement />,
     '/dashboard/maintenance/attendance-events': <AttendanceEventsManagement />,
+    '/dashboard/maintenance/roles':           <RolesManagement />,
+    '/dashboard/maintenance/scopes':          <ScopeTypesManagement />,
+    '/dashboard/maintenance/users':           <UsersManagement />,
+
+    // ── Configuración ──────────────────────────────────────────────────────
     '/dashboard/config/tenant-settings': <TenantSettings />,
-    '/dashboard/config/shifts': <ShiftManagement />,
-    '/dashboard/config/calendars': <CalendarManagement />,
-    '/dashboard/config/devices': <DeviceManagement />,
-    '/dashboard/config/payroll': <PayrollIntegration />,
+    '/dashboard/config/shifts':          <ShiftManagement />,
+    '/dashboard/config/calendars':       <CalendarManagement />,
+    '/dashboard/config/devices':         <DeviceManagement />,
+    '/dashboard/config/payroll':         <PayrollIntegration />,
+
+    // ── Organización ───────────────────────────────────────────────────────
     '/dashboard/org/companies': <OrgStructure />,
-    '/dashboard/security/tenants': <TenantsManagement />,
+
+    // ── Seguridad ──────────────────────────────────────────────────────────
+    '/dashboard/security/tenants':        <TenantsManagement />,
+    '/dashboard/security/roles':          <RolesManagement />,
+    '/dashboard/security/scopes':         <ScopeTypesManagement />,
+    '/dashboard/security/tenant-members': <UsersManagement />,
   };
 
   // Si la ruta existe en el mapa, renderizarla
