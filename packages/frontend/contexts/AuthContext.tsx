@@ -391,7 +391,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           throw error;
         }
 
+        if (data.session) {
+          setSession(data.session);
+        }
+
         if (data.user) {
+          setUser(data.user);
           setAuthStatusMessage('Login correcto. Cargando perfil...');
           console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
           await loadProfile(data.user);

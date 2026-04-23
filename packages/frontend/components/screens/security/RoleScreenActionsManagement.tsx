@@ -11,7 +11,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { ShieldCheck, RefreshCw, Save, AlertCircle, Filter, Search, Check, X, ChevronDown } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 
-const API = `http://localhost:3001/make-server-e19f2094/role-screen-actions-management`;
+const API = `http://localhost:3001/role-screen-actions-management`;
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
 
 interface Permission {

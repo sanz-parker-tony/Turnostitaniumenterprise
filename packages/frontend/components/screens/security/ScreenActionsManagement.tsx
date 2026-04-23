@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link2, Plus, Edit2, Power, PowerOff, Search, X, RefreshCw, ChevronUp, ChevronDown, Save, AlertCircle } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 
-const API = `http://localhost:3001/make-server-e19f2094/screen-actions-management`;
+const API = `http://localhost:3001/screen-actions-management`;
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
 
 interface ScreenAction {

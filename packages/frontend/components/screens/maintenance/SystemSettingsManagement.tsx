@@ -137,7 +137,7 @@ export function SystemSettingsManagement() {
     try {
       const token = localStorage.getItem('tt-access-token');
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/system-settings-management`,
+        `http://localhost:3001/system-settings-management`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -167,7 +167,7 @@ export function SystemSettingsManagement() {
     try {
       const token = localStorage.getItem('tt-access-token');
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/system-settings-management/catalogs/value-types`,
+        `http://localhost:3001/system-settings-management/catalogs/value-types`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -194,7 +194,7 @@ export function SystemSettingsManagement() {
     try {
       const token = localStorage.getItem('tt-access-token');
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/system-settings-management/catalogs/lookup-groups`,
+        `http://localhost:3001/system-settings-management/catalogs/lookup-groups`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -254,8 +254,8 @@ export function SystemSettingsManagement() {
     try {
       const token = localStorage.getItem('tt-access-token');
       const url = editingId
-        ? `http://localhost:3001/make-server-e19f2094/system-settings-management/${editingId}`
-        : `http://localhost:3001/make-server-e19f2094/system-settings-management`;
+        ? `http://localhost:3001/system-settings-management/${editingId}`
+        : `http://localhost:3001/system-settings-management`;
       
       const method = editingId ? 'PUT' : 'POST';
 
@@ -301,7 +301,7 @@ export function SystemSettingsManagement() {
     try {
       const token = localStorage.getItem('tt-access-token');
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/system-settings-management/${id}/status`,
+        `http://localhost:3001/system-settings-management/${id}/status`,
         {
           method: 'PATCH',
           headers: {

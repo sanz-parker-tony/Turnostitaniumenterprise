@@ -48,7 +48,7 @@ export default function ChangePasswordModal({ isOpen, onClose, onPasswordChanged
 
       // Actualizar contraseña en ApiClient Auth
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/users/change-password`,
+        `http://localhost:3001/users/change-password`,
         {
           method: 'POST',
           headers: {

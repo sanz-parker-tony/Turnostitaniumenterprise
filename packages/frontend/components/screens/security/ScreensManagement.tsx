@@ -11,8 +11,8 @@ import {
 } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 
-const API = `http://localhost:3001/make-server-e19f2094/screens-management`;
-const SA_API = `http://localhost:3001/make-server-e19f2094/screen-actions-management`;
+const API = `http://localhost:3001/screens-management`;
+const SA_API = `http://localhost:3001/screen-actions-management`;
 
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
 

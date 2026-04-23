@@ -47,7 +47,7 @@ function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-const API_BASE = `http://localhost:3001/make-server-e19f2094/scope-types-management`;
+const API_BASE = `http://localhost:3001/scope-types-management`;
 
 // ============================================================================
 // COMPONENTE PRINCIPAL

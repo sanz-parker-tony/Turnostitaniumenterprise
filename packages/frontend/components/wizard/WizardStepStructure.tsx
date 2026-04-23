@@ -80,7 +80,7 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
     try {
       console.log('🔐 [Step3] Cargando bootstrap token...');
       
-      const urlDirect = `http://localhost:3001/make-server-e19f2094/bootstrap/token-direct`;
+      const urlDirect = `http://localhost:3001/bootstrap/token-direct`;
       
       let response = await fetch(urlDirect, {
         headers: {
@@ -90,7 +90,7 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
 
       if (!response.ok) {
         console.log('⚠️ [Step3] Endpoint directo falló, intentando con módulo bootstrap...');
-        const urlModule = `http://localhost:3001/make-server-e19f2094/bootstrap/token`;
+        const urlModule = `http://localhost:3001/bootstrap/token`;
         response = await fetch(urlModule, {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -178,7 +178,7 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
 
       // Obtener tenant_id (y company_id si es necesario)
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/tenant-info`,
+        `http://localhost:3001/bootstrap/tenant-info`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -349,7 +349,7 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
       
       // Enviar al servidor
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/${endpoint}`,
+        `http://localhost:3001/${endpoint}`,
         {
           method: 'POST',
           headers: {
@@ -493,7 +493,7 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
       
       // Enviar al servidor
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/step3-structure/work-locations`,
+        `http://localhost:3001/bootstrap/step3-structure/work-locations`,
         {
           method: 'POST',
           headers: {

@@ -94,7 +94,7 @@ function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-const API_BASE = `http://localhost:3001/make-server-e19f2094/users-management`;
+const API_BASE = `http://localhost:3001/users-management`;
 
 const SCOPE_COLORS: Record<string, string> = {
   SYSTEM: 'bg-purple-100 text-purple-700',

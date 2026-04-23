@@ -96,7 +96,7 @@ function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-const API_BASE = `http://localhost:3001/make-server-e19f2094/roles-management`;
+const API_BASE = `http://localhost:3001/roles-management`;
 
 // ── Tipos para permisos ──────────────────────────────────────────────────────
 interface ScreenActionCatalog {
@@ -142,7 +142,7 @@ export function RolesManagement() {
   const [permsMsg, setPermsMsg] = useState<string | null>(null);
   const [permsError, setPermsError] = useState<string | null>(null);
 
-  const RSA_API = `http://localhost:3001/make-server-e19f2094/role-screen-actions-management`;
+  const RSA_API = `http://localhost:3001/role-screen-actions-management`;
 
   // ============================================================================
   // CARGA DE DATOS

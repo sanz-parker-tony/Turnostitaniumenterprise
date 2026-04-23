@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 
-const API = `http://localhost:3001/make-server-e19f2094/menu-groups-management`;
+const API = `http://localhost:3001/menu-groups-management`;
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || publicApiToken;
@@ -168,7 +168,7 @@ export function MenuGroupsManagement() {
     setLoadingScreens(true);
     try {
       const res = await fetch(
-        `http://localhost:3001/make-server-e19f2094/screens-management`,
+        `http://localhost:3001/screens-management`,
         { headers: headers() }
       );
       const data = await res.json();

@@ -50,7 +50,7 @@ app.use((req, res, next) => {
 app.use('/', mainRouter);
 
 // Rutas legacy (para compatibilidad con paths legacy)
-app.use('/make-server-e19f2094', mainRouter);
+//app.use('/make-server-e19f2094', mainRouter);
 
 // ============================================================================
 // ERROR HANDLING Y 404
@@ -98,7 +98,7 @@ app.listen(PORT, () => {
 ║    GET  /tenant/settings             → Parámetros sistema
 ║    
 ║  Nota: Las rutas también están disponibles bajo:
-║    /make-server-e19f2094/* (para compatibilidad)
+║    /* (para compatibilidad)
 ║
 ╚════════════════════════════════════════════════════╝
   `);

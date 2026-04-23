@@ -33,7 +33,7 @@ export function TenantSettings() {
     try {
       setLoading(true);
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenant/settings`,
+        `http://localhost:3001/tenant/settings`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -66,7 +66,7 @@ export function TenantSettings() {
     try {
       setSaving(true);
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenant/settings`,
+        `http://localhost:3001/tenant/settings`,
         {
           method: 'PUT',
           headers: {

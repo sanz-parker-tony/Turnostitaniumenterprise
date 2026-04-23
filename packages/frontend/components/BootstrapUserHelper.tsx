@@ -33,7 +33,7 @@ export default function BootstrapUserHelper() {
       // PASO 1: Verificar conectividad con endpoint /ping
       console.log('🏓 [BOOTSTRAP] PASO 1: Verificando conectividad...');
       
-      const pingUrl = `http://localhost:3001/make-server-e19f2094/bootstrap/ping`;
+      const pingUrl = `http://localhost:3001/bootstrap/ping`;
       console.log('🏓 [BOOTSTRAP] URL:', pingUrl);
       
       try {

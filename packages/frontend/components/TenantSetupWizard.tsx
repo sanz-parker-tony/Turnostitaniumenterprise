@@ -43,38 +43,30 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Verificar si el wizard está IN_PROGRESS al cargar
+  // Verificar estado del wizard al cargar sin cerrarlo automaticamente
   useEffect(() => {
-    let isMounted = true; // ✅ Flag para evitar updates después de desmontar
-    
+    let isMounted = true;
+
     const checkWizardState = async () => {
       try {
         if (!isMounted) return;
-        
-        console.log('🔍 Verificando estado del wizard al cargar...');
-        
+
+        console.log('[WIZARD] Verificando estado del onboarding al cargar...');
+
         if (!session) {
-          console.warn('⚠️ No hay sesión disponible, cerrando wizard');
-          if (isMounted) {
-            setCheckingState(false);
-            onComplete();
-          }
+          console.warn('[WIZARD] No hay sesion disponible. Manteniendo wizard abierto.');
           return;
         }
-        
-        console.log('✅ Sesión disponible, consultando estado del wizard desde BD');
-        
+
+        console.log('[WIZARD] Sesion disponible, consultando estado en BD');
+
         // Obtener el perfil del usuario para tener el tenant_id
         const { data: { user } } = await ApiClient.auth.getUser();
-        
+
         if (!isMounted) return;
-        
+
         if (!user) {
-          console.warn('⚠️ No hay usuario, cerrando wizard');
-          if (isMounted) {
-            setCheckingState(false);
-            onComplete();
-          }
+          console.warn('[WIZARD] No hay usuario auth. Manteniendo wizard abierto.');
           return;
         }
 
@@ -91,18 +83,14 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
         if (profileError || !profile) {
           // Ignorar AbortError
           if (profileError?.message?.includes('AbortError') || profileError?.message?.includes('aborted')) {
-            console.log('🛑 Consulta cancelada (componente desmontado)');
+            console.log('[WIZARD] Consulta cancelada (componente desmontado)');
             return;
           }
-          console.error('❌ Error obteniendo perfil:', profileError);
-          if (isMounted) {
-            setCheckingState(false);
-            onComplete();
-          }
+          console.warn('[WIZARD] Error obteniendo perfil. Se mantiene wizard abierto:', profileError);
           return;
         }
 
-        console.log('📋 Tenant ID del usuario:', profile.tenant_id);
+        console.log('[WIZARD] Tenant ID del usuario:', profile.tenant_id);
 
         // Consultar estado del onboarding
         const { data: onboarding, error: onboardingError } = await ApiClient
@@ -117,44 +105,32 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
         if (onboardingError) {
           // Ignorar AbortError
           if (onboardingError?.message?.includes('AbortError') || onboardingError?.message?.includes('aborted')) {
-            console.log('🛑 Consulta cancelada (componente desmontado)');
+            console.log('[WIZARD] Consulta cancelada (componente desmontado)');
             return;
           }
-          
-          // Si no encuentra registro, cerrar wizard completando
+
+          // Sin registro aun: iniciar desde paso 1 (no cerrar wizard)
           if (onboardingError.code === 'PGRST116') {
-            console.log('✅ No hay registro de onboarding - Finalizando wizard');
-            if (isMounted) {
-              setCheckingState(false);
-              onComplete(); // ✅ Ejecutar onComplete para finalizar correctamente
-            }
+            console.log('[WIZARD] No hay registro de onboarding. Iniciando wizard en paso 1.');
             return;
           }
-          
-          console.error('❌ Error obteniendo estado del wizard:', onboardingError);
-          if (isMounted) {
-            setCheckingState(false);
-            onComplete();
-          }
+
+          console.warn('[WIZARD] Error obteniendo estado. Se mantiene wizard abierto:', onboardingError);
           return;
         }
 
-        console.log('📊 Estado del wizard:', onboarding);
-        
-        // ✅ CRÍTICO: Si está COMPLETED, cerrar el wizard ejecutando onComplete
+        console.log('[WIZARD] Estado del wizard:', onboarding);
+
+        // Si ya esta completado, no forzar cierre desde aqui
         if (!onboarding || onboarding.onboarding_status === 'COMPLETED') {
-          console.log('✅ Onboarding COMPLETED - Finalizando wizard');
-          if (isMounted) {
-            setCheckingState(false);
-            onComplete(); // ✅ Ejecutar onComplete para finalizar correctamente
-          }
+          console.log('[WIZARD] Onboarding COMPLETED. Sin cierre automatico desde el wizard.');
           return;
         }
-        
-        // Si está IN_PROGRESS, verificar si ya existe tenant
+
+        // Si esta IN_PROGRESS, verificar si ya existe tenant para prellenar/saltar
         if (onboarding.onboarding_status === 'IN_PROGRESS') {
-          console.log('⚠️ Wizard IN_PROGRESS detectado, verificando datos del tenant...');
-          
+          console.log('[WIZARD] IN_PROGRESS detectado, verificando datos del tenant...');
+
           // Obtener datos del tenant
           const { data: tenant, error: tenantError } = await ApiClient
             .from('tenants')
@@ -168,13 +144,13 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
           if (tenantError) {
             // Ignorar AbortError
             if (tenantError?.message?.includes('AbortError') || tenantError?.message?.includes('aborted')) {
-              console.log('🛑 Consulta cancelada (componente desmontado)');
+              console.log('[WIZARD] Consulta cancelada (componente desmontado)');
               return;
             }
-            console.error('❌ Error obteniendo tenant:', tenantError);
+            console.warn('[WIZARD] Error obteniendo tenant:', tenantError);
           } else if (tenant && tenant.tenant_key && tenant.tenant_key !== 'SYSTEM') {
             // Si el tenant ya existe y NO es SYSTEM, pre-llenar datos
-            console.log('📋 Info del tenant:', tenant);
+            console.log('[WIZARD] Info del tenant:', tenant);
             if (isMounted) {
               setTenantData({
                 tenant_key: tenant.tenant_key,
@@ -183,13 +159,13 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
               });
               
               // Saltar directo al PASO 2
-              console.log('⏭️ Saltando directo al PASO 2 (crear admin)');
+              console.log('[WIZARD] Saltando al PASO 2 (crear admin)');
               setCurrentStep(2);
               toast.info('Continuando con la creación del administrador');
             }
           } else {
             // Tenant es SYSTEM - pre-llenar con SYSTEM
-            console.log('📝 Tenant SYSTEM detectado - Pre-llenando formulario');
+            console.log('[WIZARD] Tenant SYSTEM detectado. Prellenando formulario.');
             if (isMounted && tenant) {
               setTenantData({
                 tenant_key: 'SYSTEM',
@@ -199,26 +175,19 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
             }
           }
         } else {
-          // NOT_STARTED o cualquier otro estado - cerrar wizard
-          console.log('ℹ️ Estado del wizard:', onboarding?.onboarding_status, '- Cerrando wizard');
-          if (isMounted) {
-            onComplete();
-          }
+          // NOT_STARTED u otro estado pendiente: mantener abierto en paso 1
+          console.log('[WIZARD] Estado pendiente:', onboarding?.onboarding_status, '- Manteniendo wizard abierto');
         }
       } catch (error: any) {
         if (!isMounted) return;
-        
+
         // Ignorar AbortError
         if (error?.name === 'AbortError' || error?.message?.includes('aborted')) {
-          console.log('🛑 Consulta cancelada (componente desmontado)');
+          console.log('[WIZARD] Consulta cancelada (componente desmontado)');
           return;
         }
-        
-        console.warn('⚠️ Error verificando estado del wizard:', error);
-        // En caso de error, cerrar el wizard para no bloquear al usuario
-        if (isMounted) {
-          onComplete();
-        }
+
+        console.warn('[WIZARD] Error verificando estado. Se mantiene wizard abierto:', error);
       } finally {
         if (isMounted) {
           setCheckingState(false);
@@ -227,12 +196,12 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
     };
     
     checkWizardState();
-    
-    // ✅ Cleanup: marcar como desmontado
+
+    // Cleanup
     return () => {
       isMounted = false;
     };
-  }, [session]); // ✅ QUITAR onComplete de las dependencias - causa bucle infinito
+  }, [session]);
 
   const steps = [
     { id: 1, name: 'Configurar Tenant', icon: Building2 },
@@ -259,7 +228,7 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
       console.log('🔧 Tenant key sanitizado:', sanitizedTenantKey);
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/step1-tenant`,
+        `http://localhost:3001/bootstrap/step1-tenant`,
         {
           method: 'POST',
           headers: {
@@ -368,7 +337,7 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
       });
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/step2-admin`,
+        `http://localhost:3001/bootstrap/step2-admin`,
         {
           method: 'POST',
           headers: {

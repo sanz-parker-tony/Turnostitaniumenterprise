@@ -70,7 +70,7 @@ export default function ConfigurationWizard({ onComplete }: ConfigurationWizardP
       
       // ✅ SIMPLIFICADO: Solo intentar cargar el estado, sin auto-redirect
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/wizard-state`,
+        `http://localhost:3001/bootstrap/wizard-state`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -198,7 +198,7 @@ export default function ConfigurationWizard({ onComplete }: ConfigurationWizardP
         try {
           console.log('📡 Marcando setup como completado en backend...');
           const response = await fetch(
-            `http://localhost:3001/make-server-e19f2094/setup/complete`,
+            `http://localhost:3001/setup/complete`,
             {
               method: 'POST',
               headers: {

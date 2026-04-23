@@ -39,7 +39,7 @@ export default function WizardStepCompany({ onComplete, onGoBack }: WizardStepCo
     try {
       console.log('🔐 [Step2] Cargando bootstrap token...');
       
-      const urlDirect = `http://localhost:3001/make-server-e19f2094/bootstrap/token-direct`;
+      const urlDirect = `http://localhost:3001/bootstrap/token-direct`;
       
       let response = await fetch(urlDirect, {
         headers: {
@@ -49,7 +49,7 @@ export default function WizardStepCompany({ onComplete, onGoBack }: WizardStepCo
 
       if (!response.ok) {
         console.log('⚠️ [Step2] Endpoint directo falló, intentando con módulo bootstrap...');
-        const urlModule = `http://localhost:3001/make-server-e19f2094/bootstrap/token`;
+        const urlModule = `http://localhost:3001/bootstrap/token`;
         response = await fetch(urlModule, {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -101,7 +101,7 @@ export default function WizardStepCompany({ onComplete, onGoBack }: WizardStepCo
       });
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/step2-company`,
+        `http://localhost:3001/bootstrap/step2-company`,
         {
           method: 'POST',
           headers: {

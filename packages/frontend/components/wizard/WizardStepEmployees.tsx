@@ -59,7 +59,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
         
         try {
           const tokenResponse = await fetch(
-            `http://localhost:3001/make-server-e19f2094/bootstrap/token-direct`,
+            `http://localhost:3001/bootstrap/token-direct`,
             {
               headers: {
                 'Authorization': `Bearer ${publicApiToken}`
@@ -85,7 +85,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
       // Llamada paralela a ambos endpoints
       const [catalogsResponse, tenantInfoResponse] = await Promise.all([
         fetch(
-          `http://localhost:3001/make-server-e19f2094/bootstrap/catalogs`,
+          `http://localhost:3001/bootstrap/catalogs`,
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -94,7 +94,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
           }
         ),
         fetch(
-          `http://localhost:3001/make-server-e19f2094/bootstrap/tenant-info`,
+          `http://localhost:3001/bootstrap/tenant-info`,
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -261,7 +261,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
       const bootstrapToken = localStorage.getItem('bootstrapToken') || '';
       
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/employees`,
+        `http://localhost:3001/bootstrap/employees`,
         {
           method: 'POST',
           headers: {
@@ -334,7 +334,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
 
       // ✅ ACTUALIZAR tenant_onboarding: Paso 4 completado
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/update-step`,
+        `http://localhost:3001/bootstrap/update-step`,
         {
           method: 'POST',
           headers: {

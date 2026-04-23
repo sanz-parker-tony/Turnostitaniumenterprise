@@ -146,7 +146,7 @@ export function AttendanceEventsManagement() {
   const loadEvents = async () => {
     try {
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/attendance-events`,
+        `http://localhost:3001/attendance-events`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -171,7 +171,7 @@ export function AttendanceEventsManagement() {
     try {
       // Cargar Transaction Directions
       const trxRes = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values?group=ATTENDANCE_TRANSACTION_DIRECTION`,
+        `http://localhost:3001/lookup-values?group=ATTENDANCE_TRANSACTION_DIRECTION`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -193,7 +193,7 @@ export function AttendanceEventsManagement() {
 
       // Cargar Event Types
       const evtRes = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values?group=ATTENDANCE_EVENT_TYPE`,
+        `http://localhost:3001/lookup-values?group=ATTENDANCE_EVENT_TYPE`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -215,7 +215,7 @@ export function AttendanceEventsManagement() {
 
       // Cargar Calculation Methods
       const calcRes = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values?group=ATTENDANCE_CALCULATION_METHOD`,
+        `http://localhost:3001/lookup-values?group=ATTENDANCE_CALCULATION_METHOD`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -237,7 +237,7 @@ export function AttendanceEventsManagement() {
 
       // Cargar Movements
       const movRes = await fetch(
-        `http://localhost:3001/make-server-e19f2094/attendance-events/catalogs/movements`,
+        `http://localhost:3001/attendance-events/catalogs/movements`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -446,8 +446,8 @@ export function AttendanceEventsManagement() {
 
     try {
       const url = editingEvent
-        ? `http://localhost:3001/make-server-e19f2094/attendance-events/${editingEvent.id}`
-        : `http://localhost:3001/make-server-e19f2094/attendance-events`;
+        ? `http://localhost:3001/attendance-events/${editingEvent.id}`
+        : `http://localhost:3001/attendance-events`;
 
       const method = editingEvent ? 'PUT' : 'POST';
 
@@ -499,7 +499,7 @@ export function AttendanceEventsManagement() {
   const handleToggleStatus = async (event: AttendanceEvent) => {
     try {
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/attendance-events/${event.id}/status`,
+        `http://localhost:3001/attendance-events/${event.id}/status`,
         {
           method: 'PATCH',
           headers: {

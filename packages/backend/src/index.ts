@@ -754,6 +754,7 @@ router.put('/tenant/settings', updateSystemTenantSettings);
 
 // Actions Management
 router.use('/actions', requireAuth, actionsRouter);
+router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 
 // Attendance Events
 router.use('/attendance-events', requireAuth, attendanceRouter);
@@ -768,27 +769,34 @@ router.use('/lookup-values', requireAuth, lookupValuesRouter);
 
 // Menu Groups
 router.use('/menu-groups', requireAuth, menuGroupsRouter);
+router.use('/menu-groups-management', requireAuth, menuGroupsRouter); // Legacy alias
 
 // Role-Screen Actions
 router.use('/role-screen-actions', requireAuth, roleScreenActionsRouter);
+router.use('/role-screen-actions-management', requireAuth, roleScreenActionsRouter); // Legacy alias
 
 // Roles
 router.use('/roles', requireAuth, rolesRouter);
+router.use('/roles-management', requireAuth, rolesRouter); // Legacy alias
 
 // Scope Types
 router.use('/scope-types', requireAuth, scopeTypesRouter);
+router.use('/scope-types-management', requireAuth, scopeTypesRouter); // Legacy alias
 
 // Screen Actions
 router.use('/screen-actions', requireAuth, screenActionsRouter);
+router.use('/screen-actions-management', requireAuth, screenActionsRouter); // Legacy alias
 
 // Screens
 router.use('/screens', requireAuth, screensRouter);
+router.use('/screens-management', requireAuth, screensRouter); // Legacy alias
 
 // Settings (General)
 router.use('/settings', requireAuth, settingsRouter);
 
 // System Settings
 router.use('/system-settings', requireAuth, systemSettingsRouter);
+router.use('/system-settings-management', requireAuth, systemSettingsRouter); // Legacy alias
 
 // Users Management
 router.use('/users-management', requireAuth, usersRouter);

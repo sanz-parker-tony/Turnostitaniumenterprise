@@ -194,7 +194,7 @@ export default function TenantsManagement() {
       const token = session.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values/data-types`,
+        `http://localhost:3001/lookup-values/data-types`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -234,7 +234,7 @@ export default function TenantsManagement() {
       const token = session.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/settings`,
+        `http://localhost:3001/tenants/${tenant.id}/settings`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -280,7 +280,7 @@ export default function TenantsManagement() {
       const token = session.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/members`,
+        `http://localhost:3001/tenants/${tenant.id}/members`,
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -359,7 +359,7 @@ export default function TenantsManagement() {
       const token = session.data.session?.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}`,
+        `http://localhost:3001/tenants/${tenant.id}`,
         {
           method: 'PUT',
           headers: {
@@ -416,8 +416,8 @@ export default function TenantsManagement() {
       const token = session.data.session?.access_token;
 
       const url = editingSetting
-        ? `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/settings/${editingSetting.id}`
-        : `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/settings`;
+        ? `http://localhost:3001/tenants/${tenant.id}/settings/${editingSetting.id}`
+        : `http://localhost:3001/tenants/${tenant.id}/settings`;
 
       const body = editingSetting
         ? { ...settingForm, updated_by: profile?.email || 'system.admin' }
@@ -451,7 +451,7 @@ export default function TenantsManagement() {
       const token = session.data.session?.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/settings/${setting.id}`,
+        `http://localhost:3001/tenants/${tenant.id}/settings/${setting.id}`,
         {
           method: 'DELETE',
           headers: {
@@ -490,7 +490,7 @@ export default function TenantsManagement() {
       const token = session.data.session?.access_token;
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/tenants/${tenant.id}/languages`,
+        `http://localhost:3001/tenants/${tenant.id}/languages`,
         {
           method: 'PUT',
           headers: {

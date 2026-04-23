@@ -20,7 +20,7 @@ export default function AdminPasswordReset() {
       console.log('🔐 Reseteando contraseña del administrador...');
       
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/auth/reset-system-admin-password`,
+        `http://localhost:3001/auth/reset-system-admin-password`,
         {
           method: 'POST',
           headers: {

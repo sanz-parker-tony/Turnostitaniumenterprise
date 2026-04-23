@@ -60,7 +60,7 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
       try {
         const bootstrapToken = localStorage.getItem('bootstrapToken') || '';
         const response = await fetch(
-          `http://localhost:3001/make-server-e19f2094/bootstrap/tenant-info`,
+          `http://localhost:3001/bootstrap/tenant-info`,
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -156,7 +156,7 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
       // 3. ENVIAR REQUEST (formato v1.0)
       // ========================================
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/complete`,
+        `http://localhost:3001/bootstrap/complete`,
         {
           method: 'POST',
           headers: {

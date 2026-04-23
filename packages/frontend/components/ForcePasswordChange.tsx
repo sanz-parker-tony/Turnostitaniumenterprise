@@ -46,7 +46,7 @@ export function ForcePasswordChange() {
       const user = userData?.user;
 
       if (user?.id) {
-        await fetch('http://localhost:3001/make-server-e19f2094/users/update-password-flag', {
+        await fetch('http://localhost:3001/users/update-password-flag', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

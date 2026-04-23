@@ -99,7 +99,7 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
       console.log('🔑 Using publicApiToken:', publicApiToken ? 'Present' : 'Missing');
       
       // Primero intentar con el endpoint directo (más confiable)
-      const urlDirect = `http://localhost:3001/make-server-e19f2094/bootstrap/token-direct`;
+      const urlDirect = `http://localhost:3001/bootstrap/token-direct`;
       console.log('🔗 Intentando endpoint directo:', urlDirect);
       
       // IMPORTANTE: ApiClient Edge Functions requiere Authorization header
@@ -115,7 +115,7 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
       // Si el endpoint directo falla, intentar con el del módulo
       if (!response.ok) {
         console.log('⚠️ Endpoint directo falló, intentando con módulo bootstrap...');
-        const urlModule = `http://localhost:3001/make-server-e19f2094/bootstrap/token`;
+        const urlModule = `http://localhost:3001/bootstrap/token`;
         console.log('🔗 Intentando endpoint módulo:', urlModule);
         
         response = await fetch(urlModule, {
@@ -184,7 +184,7 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
       console.log('🌐 Cargando idiomas del sistema...');
       
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/languages`,
+        `http://localhost:3001/bootstrap/languages`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -339,7 +339,7 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
       });
 
       const response = await fetch(
-        `http://localhost:3001/make-server-e19f2094/bootstrap/step1-tenant`,
+        `http://localhost:3001/bootstrap/step1-tenant`,
         {
           method: 'POST',
           headers: {

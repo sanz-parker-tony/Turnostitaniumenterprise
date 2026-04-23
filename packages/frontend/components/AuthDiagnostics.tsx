@@ -21,7 +21,7 @@ export function AuthDiagnostics() {
     setError('');
 
     try {
-      const url = `http://localhost:3001/make-server-e19f2094/auth/diagnostics`;
+      const url = `http://localhost:3001/auth/diagnostics`;
       
       const response = await fetch(url, {
         headers: {

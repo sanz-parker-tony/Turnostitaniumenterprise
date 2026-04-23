@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Zap, Plus, Edit2, Power, PowerOff, Search, X, RefreshCw, ChevronUp, ChevronDown, Save, AlertCircle } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 
-const API = `http://localhost:3001/make-server-e19f2094/actions-management`;
+const API = `http://localhost:3001/actions-management`;
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
 
 interface Action { id: string; action_key: string; action_name: string; is_active: boolean; created_by: string; created_at: string; updated_at: string | null; }

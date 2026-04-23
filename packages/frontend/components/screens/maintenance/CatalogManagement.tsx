@@ -118,7 +118,7 @@ export function CatalogManagement() {
 
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-groups`,
+        `http://localhost:3001/lookup-groups`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -145,7 +145,7 @@ export function CatalogManagement() {
     try {
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values-crud?group_id=${groupId}`,
+        `http://localhost:3001/lookup-values-crud?group_id=${groupId}`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -185,8 +185,8 @@ export function CatalogManagement() {
 
       const token = localStorage.getItem('access_token');
       const url = editingGroup
-        ? `http://localhost:3001/make-server-e19f2094/lookup-groups/${editingGroup.id}`
-        : `http://localhost:3001/make-server-e19f2094/lookup-groups`;
+        ? `http://localhost:3001/lookup-groups/${editingGroup.id}`
+        : `http://localhost:3001/lookup-groups`;
 
       const method = editingGroup ? 'PUT' : 'POST';
 
@@ -240,8 +240,8 @@ export function CatalogManagement() {
 
       const token = localStorage.getItem('access_token');
       const url = editingValue
-        ? `http://localhost:3001/make-server-e19f2094/lookup-values-crud/${editingValue.id}`
-        : `http://localhost:3001/make-server-e19f2094/lookup-values-crud`;
+        ? `http://localhost:3001/lookup-values-crud/${editingValue.id}`
+        : `http://localhost:3001/lookup-values-crud`;
 
       const method = editingValue ? 'PUT' : 'POST';
 
@@ -276,7 +276,7 @@ export function CatalogManagement() {
     try {
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:3001/make-server-e19f2094/lookup-values-crud/${value.id}/toggle`,
+        `http://localhost:3001/lookup-values-crud/${value.id}/toggle`,
         {
           method: 'PATCH',
           headers: {

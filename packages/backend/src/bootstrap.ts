@@ -29,7 +29,7 @@ function getPostgresAnonClient() {
 }
 
 // ============================================================================
-// POST /make-server-e19f2094/bootstrap/ensure-system-admin
+// POST /bootstrap/ensure-system-admin
 // ============================================================================
 
 export async function ensureSystemAdmin(req: Request, res: Response) {

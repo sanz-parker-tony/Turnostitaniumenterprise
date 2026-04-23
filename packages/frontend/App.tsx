@@ -1,10 +1,9 @@
 /**
  * App.tsx - Turnos Titanium Enterprise
- * Flujo: Login → Wizard (si necesita) → Dashboard
- * Build: v2.0.0 - Simplified
+ * Flujo: Login -> Wizard si esta pendiente -> Dashboard
  */
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PermissionsProvider } from './contexts/PermissionsContext';
 import Login from './components/Login';
@@ -14,262 +13,199 @@ import { DashboardLayout } from './components/DashboardLayout';
 import { Toaster } from 'sonner';
 import { ApiClient } from './lib/api-client';
 
-// Suprimir AbortError en consola
-const originalConsoleError = console.error;
-const originalConsoleWarn = console.warn;
-
-console.error = (...args) => {
-  const errorString = String(args[0]);
-  const ignoredPatterns = ['AbortError', 'signal is aborted', 'user aborted', 'The user aborted', 'cancelled'];
-  const shouldIgnore = ignoredPatterns.some(pattern => 
-    errorString.toLowerCase().includes(pattern.toLowerCase()) ||
-    args[0]?.name?.toLowerCase().includes(pattern.toLowerCase()) ||
-    args[0]?.message?.toLowerCase().includes(pattern.toLowerCase())
-  );
-  if (!shouldIgnore) originalConsoleError.apply(console, args);
-};
-
-console.warn = (...args) => {
-  const warnString = String(args[0]);
-  if (!warnString.toLowerCase().includes('aborterror') && 
-      !warnString.toLowerCase().includes('signal is aborted')) {
-    originalConsoleWarn.apply(console, args);
-  }
-};
-
 function AppContent() {
-  const { user, profile, isLoading, signOut } = useAuth();
+  const { user, session, profile, isLoading } = useAuth();
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  
-  // ✅ Cache del estado del wizard en localStorage
-  const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(() => {
-    const cached = localStorage.getItem('wizard_completed');
-    return cached ? cached === 'true' : null;
-  });
+  const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(null);
 
-  // Obtener access token cuando hay usuario y disparar bootstrap UNA SOLA VEZ por sesión
   useEffect(() => {
-    if (!user) {
-      setAccessToken(null);
-      return;
-    }
+    if (!user || !session?.access_token) return;
 
-    ApiClient.auth.getSession().then(({ data: { session } }) => {
-      if (!session?.access_token) return;
-      setAccessToken(session.access_token);
+    const bootstrapKey = 'bootstrap_screens_done_v2';
+    if (sessionStorage.getItem(bootstrapKey)) return;
+    sessionStorage.setItem(bootstrapKey, 'true');
 
-      // ✅ sessionStorage evita el loop: no modifica estado React ni re-dispara el effect
-      const BOOTSTRAP_KEY = 'bootstrap_screens_done_v2';
-      if (sessionStorage.getItem(BOOTSTRAP_KEY)) return;
-      sessionStorage.setItem(BOOTSTRAP_KEY, 'true'); // marcar ANTES de los fetch
+    const authHeader = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.access_token}`,
+    };
 
-      const authHeader = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}` };
+    const endpoints = [
+      'bootstrap/ensure-system-settings-screen',
+      'bootstrap/ensure-maintenance-screens',
+      'bootstrap/ensure-security-screens',
+    ];
 
-      const endpoints = [
-        'bootstrap/ensure-system-settings-screen',
-        'bootstrap/ensure-maintenance-screens',
-        'bootstrap/ensure-security-screens',
-      ];
-
-      Promise.allSettled(
-        endpoints.map(ep =>
-          fetch(`http://localhost:3001/make-server-e19f2094/${ep}`, {
-            method: 'POST', headers: authHeader,
-          }).then(r => r.json())
-        )
-      ).then(results => {
-        const anyCreated = results.some(r => r.status === 'fulfilled' && r.value?.any_created);
-        console.log('✅ [BOOTSTRAP] Pantallas verificadas. Nuevas creadas:', anyCreated);
+    Promise.allSettled(
+      endpoints.map((endpoint) =>
+        fetch(`http://localhost:3001/${endpoint}`, {
+          method: 'POST',
+          headers: authHeader,
+        }).then((response) => response.json())
+      )
+    )
+      .then((results) => {
+        const anyCreated = results.some(
+          (result) => result.status === 'fulfilled' && result.value?.any_created
+        );
+        console.log('[BOOTSTRAP] Pantallas verificadas. Nuevas creadas:', anyCreated);
         if (anyCreated) {
           window.dispatchEvent(new Event('permissions-reload'));
         }
-      }).catch(err => {
-        console.warn('⚠️ [BOOTSTRAP] Error en bootstrap de pantallas:', err);
+      })
+      .catch((error) => {
+        console.warn('[BOOTSTRAP] Error en bootstrap de pantallas:', error);
       });
-    });
-  }, [user]); // ← solo depende de user, sin estado adicional
+  }, [user, session?.access_token]);
 
-  // Resetear estados cuando no hay usuario
   useEffect(() => {
     if (!user && !isLoading) {
-      console.log('🔄 No hay usuario - reseteando estados');
+      console.log('[APP] No hay usuario - reseteando estados');
       setCheckingWizard(false);
       setShowWizard(false);
       setMustChangePassword(false);
+      setWizardCompleted(null);
     }
   }, [user, isLoading]);
 
-  // ✅ Verificar estado del wizard SOLO UNA VEZ cuando el usuario está autenticado
   useEffect(() => {
-    // ✅ Guard: Solo ejecutar si hay usuario, perfil, y NO está cargando
-    if (!user || !profile || isLoading || !accessToken) {
+    if (!user || isLoading || !session?.access_token) {
+      console.log('[WIZARD] Esperando datos antes de verificar:', {
+        hasUser: !!user,
+        hasProfile: !!profile,
+        isLoading,
+        hasAccessToken: !!session?.access_token,
+      });
       return;
     }
 
-    // ✅ Si ya sabemos que el wizard está completado, NO verificar más
-    if (wizardCompleted === true) {
-      console.log('✅ [WIZARD] Ya está completado (cache local) - Saltando verificación');
-      setCheckingWizard(false);
-      setShowWizard(false);
-      return;
-    }
-    
-    // ✅ Si ya se verificó el wizard en esta sesión, NO verificar de nuevo
-    const wizardCheckedKey = `wizard_checked_${profile.id}`;
-    if (sessionStorage.getItem(wizardCheckedKey) === 'true') {
-      console.log('✅ [WIZARD] Ya verificado en esta sesión - Saltando');
-      return;
-    }
-    
-    console.log('✅ Usuario y perfil cargados - Verificando wizard (una sola vez)');
-    
     let isMounted = true;
-    
-    // Verificar estado del wizard en la BD (solo la primera vez)
+
+    const resolveTenantId = async (): Promise<string | null> => {
+      if (profile?.tenant_id) {
+        return profile.tenant_id;
+      }
+
+      const cachedProfile = localStorage.getItem('user_profile');
+      if (cachedProfile) {
+        try {
+          const parsed = JSON.parse(cachedProfile);
+          if (parsed?.tenant_id) {
+            console.log('[WIZARD] tenant_id recuperado desde cache local.');
+            return parsed.tenant_id;
+          }
+        } catch (error) {
+          console.warn('[WIZARD] user_profile invalido en localStorage:', error);
+        }
+      }
+
+      const { data, error } = await ApiClient
+        .from('users_with_primary_role')
+        .select('tenant_id')
+        .eq('auth_user_id', user.id)
+        .limit(1)
+        .single();
+
+      if (error) {
+        console.warn('[WIZARD] No se pudo resolver tenant_id por auth_user_id:', error);
+        return null;
+      }
+
+      return data?.tenant_id ?? null;
+    };
+
     const checkWizardStatus = async () => {
       try {
-        if (!isMounted) return;
-        
         setCheckingWizard(true);
-        console.log('🔍 [WIZARD] Verificando estado del onboarding...');
-        console.log('📋 [WIZARD] Tenant ID del usuario:', profile.tenant_id);
-        
+        console.log('[WIZARD] Verificando estado del onboarding...');
+        const tenantId = await resolveTenantId();
+        if (!tenantId) {
+          console.warn('[WIZARD] tenant_id no disponible. Mostrando wizard por seguridad.');
+          setWizardCompleted(false);
+          setShowWizard(true);
+          return;
+        }
+
+        console.log('[WIZARD] Tenant ID del usuario:', tenantId);
+
         const { data, error } = await ApiClient
           .from('tenant_onboarding')
           .select('onboarding_status, current_step, completion_percentage')
-          .eq('tenant_id', profile.tenant_id)
+          .eq('tenant_id', tenantId)
           .limit(1)
           .single();
-        
+
         if (!isMounted) return;
-        
-        // ✅ Marcar como verificado en esta sesión
-        sessionStorage.setItem(wizardCheckedKey, 'true');
-        
+
         if (error) {
-          // Si es AbortError, ignorar silenciosamente
-          if (error.message?.includes('AbortError') || error.message?.includes('aborted')) {
-            console.log('🛑 Consulta cancelada (componente desmontado)');
-            return;
-          }
-          
-          // Si no encuentra registro (PGRST116), marcar como completado
           if (error.code === 'PGRST116') {
-            console.log('✅ [WIZARD] No hay registro - Marcando como completado');
-            setWizardCompleted(true);
-            localStorage.setItem('wizard_completed', 'true');
-            setShowWizard(false);
-            setCheckingWizard(false);
+            console.log('[WIZARD] No hay registro de onboarding. Mostrando wizard.');
+            setWizardCompleted(false);
+            setShowWizard(true);
             return;
           }
-          
-          console.error('❌ Error al verificar wizard:', error);
-          // En caso de error, asumir completado para no bloquear
-          setWizardCompleted(true);
-          localStorage.setItem('wizard_completed', 'true');
-          setShowWizard(false);
-          setCheckingWizard(false);
-          return;
-        }
-        
-        console.log('📊 [WIZARD] Estado actual:', data);
-        
-        if (!data) {
-          console.log('✅ [WIZARD] No hay registro - Marcando como completado');
-          setWizardCompleted(true);
-          localStorage.setItem('wizard_completed', 'true');
-          setShowWizard(false);
-          setCheckingWizard(false);
-          return;
-        }
-        
-        if (data.onboarding_status === 'COMPLETED') {
-          console.log('✅ [WIZARD] COMPLETED detectado - Marcando como completado');
-          setWizardCompleted(true);
-          localStorage.setItem('wizard_completed', 'true');
-          setShowWizard(false);
-          setCheckingWizard(false);
-        } else {
-          console.log('⚠️ [WIZARD] Pendiente (', data.onboarding_status, ') - Mostrando wizard');
+
+          console.error('[WIZARD] Error al verificar wizard:', error);
           setWizardCompleted(false);
           setShowWizard(true);
-          setCheckingWizard(false);
-        }
-      } catch (error: any) {
-        if (!isMounted) return;
-        
-        // Ignorar AbortError
-        if (error?.name === 'AbortError' || error?.message?.includes('aborted')) {
-          console.log('🛑 Consulta cancelada (componente desmontado)');
           return;
         }
-        
-        console.error('❌ Error verificando wizard:', error);
-        // En caso de error, asumir completado para no bloquear
-        setWizardCompleted(true);
-        localStorage.setItem('wizard_completed', 'true');
-        setShowWizard(false);
-        setCheckingWizard(false);
+
+        console.log('[WIZARD] Estado actual:', data);
+
+        const completed = data?.onboarding_status === 'COMPLETED';
+        setWizardCompleted(completed);
+        setShowWizard(!completed);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error('[WIZARD] Error verificando wizard:', error);
+        setWizardCompleted(false);
+        setShowWizard(true);
+      } finally {
+        if (isMounted) {
+          setCheckingWizard(false);
+        }
       }
     };
-    
-    // ✅ Ejecutar la verificación
+
     checkWizardStatus();
-    
-    // ✅ Cleanup
+
     return () => {
       isMounted = false;
     };
-  }, [user, profile, isLoading, accessToken]); // ✅ REMOVIDO wizardCompleted de dependencias
+  }, [user, profile?.tenant_id, isLoading, session?.access_token]);
 
   const handlePasswordChanged = async () => {
-    console.log('✅ Contraseña cambiada exitosamente');
     setMustChangePassword(false);
-    setCheckingWizard(false); // Ir directo al dashboard
+    setCheckingWizard(false);
   };
 
-  const handleWizardComplete = async () => {
-    console.log('✅ Wizard completado exitosamente');
-    
-    // ✅ CRÍTICO: Marcar wizard como completado en cache local
+  const handleWizardComplete = () => {
     setWizardCompleted(true);
-    localStorage.setItem('wizard_completed', 'true');
-    
     setShowWizard(false);
-    await signOut();
   };
 
-  // Spinner de carga
   if (isLoading || checkingWizard) {
-    // ✅ DEBUG: Log detallado para identificar por qué está cargando
-    console.log('🔄 [APP] LOADING STATE:', { isLoading, checkingWizard, hasUser: !!user, hasProfile: !!profile });
-    
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Cargando...</p>
-          {/* Debug info en desarrollo */}
           <p className="text-xs text-gray-400 mt-2">
-            {isLoading ? 'Auth...' : checkingWizard ? 'Wizard...' : 'Inicializando...'}
+            {isLoading ? 'Auth...' : 'Wizard...'}
           </p>
         </div>
       </div>
     );
   }
 
-  // Si no hay usuario, mostrar login
   if (!user) {
-    console.log('🔓 [APP] No hay usuario, mostrando Login');
     return <Login />;
   }
 
-  // Modal de cambio de contraseña
   if (mustChangePassword) {
-    console.log('🔐 [APP] Mostrando cambio de contraseña');
     return (
       <>
         <Login />
@@ -282,14 +218,10 @@ function AppContent() {
     );
   }
 
-  // Wizard de configuración
-  if (showWizard) {
-    console.log('🧙 [APP] Mostrando wizard');
+  if (showWizard || wizardCompleted === false) {
     return <TenantSetupWizard onComplete={handleWizardComplete} />;
   }
 
-  // Dashboard
-  console.log('📊 [APP] Mostrando Dashboard');
   return <DashboardLayout />;
 }
 
