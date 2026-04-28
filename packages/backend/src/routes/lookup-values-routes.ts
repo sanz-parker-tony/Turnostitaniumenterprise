@@ -2,7 +2,7 @@
  * lookup-values-routes.ts
  * Turnos Titanium Enterprise
  * 
- * Rutas para gesti√≥n de Valores de Cat√°logo (lookup_values)
+ * Rutas para gestiÛn de Valores de Cat·logo (lookup_values)
  */
 
 import { Router, Request, Response } from 'express';
@@ -16,16 +16,43 @@ const router = Router();
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const groupId = req.query.group_id as string;
+    let groupId = req.query.group_id as string | undefined;
+    const groupKey = req.query.group as string | undefined;
 
-    if (!groupId) {
-      return res.status(400).json({ error: 'El par√°metro group_id es obligatorio' });
-    }
 
     const Postgres = createDbClient(
       process.env.Postgres_URL || '',
       process.env.Postgres_SERVICE_ROLE_KEY || ''
     );
+
+    // Compatibilidad: permitir group=<LOOKUP_GROUP_KEY> adem·s de group_id=<uuid>
+    if (!groupId && groupKey) {
+      const { data: lookupGroup, error: groupError } = await Postgres
+        .from('lookup_groups')
+        .select('id')
+        .eq('lookup_group_key', groupKey)
+        .maybeSingle();
+
+      if (groupError) {
+        console.error('[LOOKUP-VALUES] Error buscando grupo:', groupError);
+        return res.status(500).json({ error: groupError.message });
+      }
+
+      if (!lookupGroup) {
+        return res.status(200).json({
+          success: true,
+          values: [],
+          count: 0,
+          message: `Grupo ${groupKey} no encontrado`,
+        });
+      }
+
+      groupId = lookupGroup.id;
+    }
+
+    if (!groupId) {
+      return res.status(400).json({ error: 'Debe enviar group_id o group' });
+    }
 
     const { data: values, error } = await Postgres
       .from('lookup_values')
@@ -50,6 +77,8 @@ router.get('/', async (req: Request, res: Response) => {
       success: true,
       values: values || [],
       count: (values || []).length,
+      group: groupKey || null,
+      group_id: groupId,
     });
 
   } catch (err) {
@@ -59,7 +88,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// GET /lookup-values/:id - Obtener un valor espec√≠fico
+// GET /lookup-values/:id - Obtener un valor especÌfico
 // ============================================================================
 
 router.get('/:id', async (req: Request, res: Response) => {
@@ -147,7 +176,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Validar formato de clave
     if (!/^[A-Z0-9_]+$/.test(lookup_key) || lookup_key.length < 2) {
       return res.status(400).json({ 
-        error: 'La clave debe contener solo letras may√∫sculas, n√∫meros y guiones bajos (m√≠nimo 2 caracteres)' 
+        error: 'La clave debe contener solo letras may˙sculas, n˙meros y guiones bajos (mÌnimo 2 caracteres)' 
       });
     }
 

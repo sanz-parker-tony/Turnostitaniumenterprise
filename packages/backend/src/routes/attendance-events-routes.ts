@@ -65,6 +65,44 @@ router.get('/', async (req: Request, res: Response) => {
 // GET /attendance-events/:id - Obtener una novedad específica
 // ============================================================================
 
+// ============================================================================
+// GET /attendance-events/catalogs/movements - Catalogo de movimientos
+// ============================================================================
+
+router.get('/catalogs/movements', async (req: Request, res: Response) => {
+  try {
+    const Postgres = createDbClient(
+      process.env.Postgres_URL || '',
+      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    );
+
+    let query = Postgres
+      .from('attendance_movements')
+      .select('id, tenant_id, movement_short_name, movement_name, start_key, end_key, is_active')
+      .order('movement_short_name', { ascending: true });
+
+    const tenantId = req.query.tenant_id as string | undefined;
+    if (tenantId) {
+      query = query.eq('tenant_id', tenantId);
+    }
+
+    const { data: movements, error } = await query;
+
+    if (error) {
+      console.error('[ATTENDANCE-EVENTS] Error cargando catalogo de movements:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    return res.status(200).json({
+      success: true,
+      movements: movements || [],
+      count: (movements || []).length,
+    });
+  } catch (err) {
+    console.error('[ATTENDANCE-EVENTS] Error en GET /catalogs/movements:', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
@@ -350,4 +388,5 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 });
 
 export default router;
+
 

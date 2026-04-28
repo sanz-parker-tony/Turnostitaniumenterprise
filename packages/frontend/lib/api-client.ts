@@ -83,6 +83,11 @@ async function callBackend<T = any>(
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 401 && !init.skipAuth) {
+      // Token inválido/expirado: limpiar sesión local para forzar nuevo login.
+      storeSession(null);
+      emit('SIGNED_OUT', null);
+    }
     return {
       data: null,
       error: payload?.error || payload || { message: `HTTP ${response.status}` },

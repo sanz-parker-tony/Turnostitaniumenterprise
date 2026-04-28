@@ -69,64 +69,53 @@ function getPostgresAnonClient() {
 }
 
 // ============================================================================
-// MIDDLEWARE DE AUTENTICACIÓN
+// MIDDLEWARE DE AUTENTICACI?N
 // ============================================================================
-
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-
-  console.log('🔐 [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
-
+  console.log('[requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
   if (!authHeader?.startsWith('Bearer ')) {
-    console.error('❌ [requireAuth] Missing or invalid Authorization header');
+    console.error('? [requireAuth] Missing or invalid Authorization header');
     return res.status(401).json({
       code: 401,
       error: 'Authorization header missing or invalid',
       message: 'Missing authorization header',
     });
   }
-
   const token = authHeader.split(' ')[1];
-
   if (!token || token.length < 20) {
-    console.error('❌ [requireAuth] Token vacío o muy corto');
+    console.error('? [requireAuth] Token vac?o o muy corto');
     return res.status(401).json({
       code: 401,
       error: 'Invalid token',
       message: 'Token is empty or malformed',
     });
   }
-
-  console.log('🔐 [requireAuth] Token length:', token.length);
-
+  console.log('?? [requireAuth] Token length:', token.length);
   const PostgresAdmin = getPostgresClient();
-
   try {
     const { data: { user }, error } = await PostgresAdmin.auth.getUser(token);
-
     if (error) {
-      console.error('❌ [requireAuth] Error de autenticación:', error.message);
+      console.error('? [requireAuth] Error de autenticaci?n:', error.message);
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
         message: error.message,
       });
     }
-
     if (!user) {
-      console.error('❌ [requireAuth] Usuario no encontrado en el token');
+      console.error('? [requireAuth] Usuario no encontrado en el token');
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
         message: 'User not found',
       });
     }
-
-    console.log('✅ [requireAuth] Usuario autenticado:', user.email);
+    console.log('? [requireAuth] Usuario autenticado:', user.email);
     (req as any).user = user;
     next();
   } catch (err: any) {
-    console.error('💥 [requireAuth] Error inesperado:', err);
+    console.error('?? [requireAuth] Error inesperado:', err);
     return res.status(500).json({
       code: 500,
       error: 'Internal server error',
@@ -134,7 +123,23 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     });
   }
 };
-
+// Variante para endpoints que permiten token p?blico local (sin sesi?n de usuario).
+const requireAuthOrPublicToken = async (req: Request, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+  const publicToken = process.env.Postgres_ANON_KEY || '';
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1] || '';
+    if (publicToken && token === publicToken) {
+      (req as any).user = {
+        id: 'public-api',
+        email: 'public@local',
+        user_metadata: { role: 'PUBLIC' },
+      };
+      return next();
+    }
+  }
+  return requireAuth(req, res, next);
+};
 // ============================================================================
 // HEALTH CHECK
 // ============================================================================
@@ -757,7 +762,7 @@ router.use('/actions', requireAuth, actionsRouter);
 router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 
 // Attendance Events
-router.use('/attendance-events', requireAuth, attendanceRouter);
+router.use('/attendance-events', attendanceRouter);
 
 // Bootstrap Screens
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
@@ -765,7 +770,7 @@ router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSyst
 // Lookups
 router.use('/lookup-groups', requireAuth, lookupGroupsRouter);
 router.use('/lookup-routes', requireAuth, lookupRouter);
-router.use('/lookup-values', requireAuth, lookupValuesRouter);
+router.use('/lookup-values', lookupValuesRouter);
 
 // Menu Groups
 router.use('/menu-groups', requireAuth, menuGroupsRouter);
@@ -833,5 +838,10 @@ router.use((req: Request, res: Response) => {
 });
 
 export default router;
+
+
+
+
+
 
 
