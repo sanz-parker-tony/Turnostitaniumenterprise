@@ -171,7 +171,7 @@ export function AttendanceEventsManagement() {
     try {
       // Cargar Transaction Directions
       const trxRes = await fetch(
-        `http://localhost:3001/lookup-values?group=ATTENDANCE_TRANSACTION_DIRECTION`,
+        `http://localhost:3001/lookup-values?group=TRANSACTION_DIRECTION`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -193,7 +193,7 @@ export function AttendanceEventsManagement() {
 
       // Cargar Event Types
       const evtRes = await fetch(
-        `http://localhost:3001/lookup-values?group=ATTENDANCE_EVENT_TYPE`,
+        `http://localhost:3001/lookup-values?group=EVENT_TYPE`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -215,7 +215,7 @@ export function AttendanceEventsManagement() {
 
       // Cargar Calculation Methods
       const calcRes = await fetch(
-        `http://localhost:3001/lookup-values?group=ATTENDANCE_CALCULATION_METHOD`,
+        `http://localhost:3001/lookup-values?group=CALCULATION_METHOD`,
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
