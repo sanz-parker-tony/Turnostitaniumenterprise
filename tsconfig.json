@@ -15,6 +15,6 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["packages/backend/src/**/*.ts", "packages/frontend/src/**/*.ts"],
+  "include": ["packages/backend/**/*.ts", "packages/frontend/**/*.ts", "packages/frontend/**/*.tsx"],
   "exclude": ["node_modules", "dist", "build"]
 }
