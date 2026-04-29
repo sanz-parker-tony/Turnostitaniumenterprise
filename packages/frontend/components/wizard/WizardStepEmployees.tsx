@@ -8,14 +8,24 @@ import { Users, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight
 import { projectId, publicApiToken } from '../../utils/backend/info';
 import { downloadTemplate } from '../../utils/excel-templates';
 import { generateEmployeesExcelWithDropdowns, type BootstrapCatalogs } from '../../utils/excel-dropdowns';
+import { Input } from '../ui/input';
+import { toast } from 'sonner';
+import { ApiClient } from '../../lib/api-client';
+import { hasDuplicateCodes, normalizeRows, resolveOrganizationTenantContext } from './organization-wizard-api';
+import OrganizationEmployeesExcelStep from './OrganizationEmployeesExcelStep';
 
 interface WizardStepEmployeesProps {
   onComplete: (data: any) => void;
   // ELIMINADO: onCompleteLater - el wizard es BLOQUEANTE
   onGoBack?: () => void;
+  mode?: 'bootstrap' | 'organization';
 }
 
-export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStepEmployeesProps) {
+export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'bootstrap' }: WizardStepEmployeesProps) {
+  if (mode === 'organization') {
+    return <OrganizationEmployeesExcelStep onComplete={onComplete} onGoBack={onGoBack} />;
+  }
+
   const [catalogs, setCatalogs] = useState<BootstrapCatalogs | null>(null);
   const [loadingCatalogs, setLoadingCatalogs] = useState(true);
   const [tenantInfo, setTenantInfo] = useState<{ tenantName: string; companyName: string } | null>(null);
@@ -548,6 +558,159 @@ export default function WizardStepEmployees({ onComplete, onGoBack }: WizardStep
         >
           Continuar
           <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type EmployeeProfileRow = {
+  name: string;
+  shortName: string;
+  code: string;
+};
+
+function OrganizationProfilesStep({ onComplete, onGoBack }: Pick<WizardStepEmployeesProps, 'onComplete' | 'onGoBack'>) {
+  const [profiles, setProfiles] = useState<EmployeeProfileRow[]>([
+    { name: '', shortName: '', code: '' },
+  ]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const addProfileRow = () => {
+    setProfiles((prev) => [...prev, { name: '', shortName: '', code: '' }]);
+  };
+
+  const updateProfileRow = (index: number, key: keyof EmployeeProfileRow, value: string) => {
+    setProfiles((prev) => prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+  };
+
+  const removeProfileRow = (index: number) => {
+    setProfiles((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const handleFinish = async () => {
+    const validProfiles = normalizeRows(
+      profiles,
+      (row) => !!row.name.trim() && !!row.shortName.trim() && !!row.code.trim()
+    );
+
+    if (validProfiles.length === 0) {
+      toast.error('Debe registrar al menos un perfil de empleado');
+      return;
+    }
+
+    if (hasDuplicateCodes(validProfiles)) {
+      toast.error('Hay codigos de perfil duplicados');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const context = await resolveOrganizationTenantContext();
+      const { error } = await ApiClient
+        .from('employee_profiles')
+        .insert(
+          validProfiles.map((row) => ({
+            tenant_id: context.tenantId,
+            profile_name: row.name.trim(),
+            profile_short_name: row.shortName.trim(),
+            employee_profile_code: row.code.trim().toUpperCase(),
+            created_by: context.createdBy,
+          }))
+        );
+
+      if (error) {
+        throw new Error(error.message || 'Error guardando perfiles de empleado');
+      }
+
+      toast.success('Perfiles de empleado guardados correctamente');
+      onComplete({ insertedProfiles: validProfiles.length });
+    } catch (error: any) {
+      console.error('Error guardando perfiles:', error);
+      toast.error(error?.message || 'No se pudieron guardar los perfiles');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 bg-[#0074D9] rounded-lg flex items-center justify-center">
+            <Users className="w-5 h-5 text-white" />
+          </div>
+          <h2 className="text-2xl font-semibold text-gray-900">Perfiles de Empleado</h2>
+        </div>
+        <p className="text-gray-600">
+          Registre los perfiles de empleado que utilizara la organizacion para clasificar personal.
+        </p>
+      </div>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Perfiles</h3>
+          <button
+            type="button"
+            onClick={addProfileRow}
+            className="px-3 py-1 text-sm border rounded hover:bg-gray-50"
+          >
+            Agregar
+          </button>
+        </div>
+
+        {profiles.map((profile, index) => (
+          <div key={`profile-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input
+              className="col-span-5"
+              placeholder="Nombre del perfil"
+              value={profile.name}
+              onChange={(e) => updateProfileRow(index, 'name', e.target.value)}
+            />
+            <Input
+              className="col-span-3"
+              placeholder="Nombre corto"
+              value={profile.shortName}
+              onChange={(e) => updateProfileRow(index, 'shortName', e.target.value)}
+            />
+            <Input
+              className="col-span-3"
+              placeholder="Codigo"
+              value={profile.code}
+              onChange={(e) => updateProfileRow(index, 'code', e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => removeProfileRow(index)}
+              disabled={profiles.length === 1}
+              className="col-span-1 px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40"
+            >
+              X
+            </button>
+          </div>
+        ))}
+      </section>
+
+      <div className="flex gap-3 pt-6 border-t border-gray-200">
+        {onGoBack && (
+          <button
+            type="button"
+            onClick={onGoBack}
+            disabled={isSubmitting}
+            className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Volver
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleFinish}
+          disabled={isSubmitting}
+          className="flex-1 bg-[#0074D9] text-white px-6 py-2.5 rounded-lg hover:bg-[#0066C0] transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {isSubmitting ? 'Guardando...' : 'Finalizar'}
+          {!isSubmitting && <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
     </div>

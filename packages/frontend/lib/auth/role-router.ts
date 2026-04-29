@@ -96,6 +96,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'ORG_PAYROLL_GROUPS': '/dashboard/org/payroll-groups',
   'ORG_JOB_TITLES': '/dashboard/org/job-titles',
   'ORG_COST_CENTERS': '/dashboard/org/cost-centers',
+  'ORG_MAINTENANCE': '/dashboard/org/maintenance',
 
   // ========== EMPLOYEES ==========
   'EMPL_LIST': '/dashboard/employees',

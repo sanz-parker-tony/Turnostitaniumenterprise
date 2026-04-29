@@ -3,10 +3,14 @@
  * Paso 3: Estructura Organizacional (Carga Masiva)
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { Building2, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Download, MapPin, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId, publicApiToken } from '../../utils/backend/info';
+import { ApiClient } from '../../lib/api-client';
+import { hasDuplicateCodes, normalizeRows, resolveOrganizationTenantContext } from './organization-wizard-api';
+import { Input } from '../ui/input';
+import OrganizationStructureExcelStep from './OrganizationStructureExcelStep';
 import { 
   generateWorkLocationsTemplate, 
   parseWorkLocationsFile,
@@ -32,6 +36,7 @@ interface WizardStepStructureProps {
   onComplete: (data: any) => void;
   // ELIMINADO: onCompleteLater - el wizard es BLOQUEANTE
   onGoBack?: () => void;
+  mode?: 'bootstrap' | 'organization';
 }
 
 type EntityType = 'workLocations' | 'departments' | 'areas' | 'costCenters' | 'positions' | 'payRoles' | 'groups' | 'employeeProfiles';
@@ -50,7 +55,11 @@ interface UploadProgress {
   entityName: string;
 }
 
-export default function WizardStepStructure({ onComplete, onGoBack }: WizardStepStructureProps) {
+export default function WizardStepStructure({ onComplete, onGoBack, mode = 'bootstrap' }: WizardStepStructureProps) {
+  if (mode === 'organization') {
+    return <OrganizationStructureExcelStep onComplete={onComplete} onGoBack={onGoBack} />;
+  }
+
   const [entityStatus, setEntityStatus] = useState<Record<EntityType, EntityStatus>>({
     workLocations: { uploaded: false, fileName: '', recordCount: 0, errors: [] },
     employeeProfiles: { uploaded: false, fileName: '', recordCount: 0, errors: [] },
@@ -813,6 +822,358 @@ export default function WizardStepStructure({ onComplete, onGoBack }: WizardStep
         >
           Continuar
           <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type OrganizationStructureRow = {
+  name: string;
+  shortName: string;
+  code: string;
+  payrollGroupCode?: string;
+  homologationCode?: string;
+  glAccountCode?: string;
+};
+
+const emptyStructureRow = (): OrganizationStructureRow => ({
+  name: '',
+  shortName: '',
+  code: '',
+});
+
+function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStructureProps, 'onComplete' | 'onGoBack'>) {
+  const [departments, setDepartments] = useState<OrganizationStructureRow[]>([emptyStructureRow()]);
+  const [areas, setAreas] = useState<OrganizationStructureRow[]>([emptyStructureRow()]);
+  const [costCenters, setCostCenters] = useState<OrganizationStructureRow[]>([emptyStructureRow()]);
+  const [payrollGroups, setPayrollGroups] = useState<OrganizationStructureRow[]>([]);
+  const [workGroups, setWorkGroups] = useState<OrganizationStructureRow[]>([emptyStructureRow()]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const addRow = (
+    setter: Dispatch<SetStateAction<OrganizationStructureRow[]>>,
+    withPayrollGroup = false,
+    withCostFields = false
+  ) => {
+    setter((prev) => [
+      ...prev,
+      {
+        ...emptyStructureRow(),
+        ...(withPayrollGroup ? { payrollGroupCode: '' } : {}),
+        ...(withCostFields ? { homologationCode: '', glAccountCode: '' } : {}),
+      },
+    ]);
+  };
+
+  const removeRow = (
+    setter: Dispatch<SetStateAction<OrganizationStructureRow[]>>,
+    index: number
+  ) => {
+    setter((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const updateRow = (
+    setter: Dispatch<SetStateAction<OrganizationStructureRow[]>>,
+    index: number,
+    key: keyof OrganizationStructureRow,
+    value: string
+  ) => {
+    setter((prev) => prev.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+  };
+
+  const validateNamedRows = (rows: OrganizationStructureRow[]) =>
+    normalizeRows(rows, (row) => !!row.name.trim() && !!row.shortName.trim() && !!row.code.trim());
+
+  const handleSubmit = async () => {
+    const validDepartments = validateNamedRows(departments);
+    const validAreas = validateNamedRows(areas);
+    const validCostCenters = validateNamedRows(costCenters);
+    const validPayrollGroups = validateNamedRows(payrollGroups);
+    const validWorkGroups = validateNamedRows(workGroups);
+
+    if (validDepartments.length === 0) {
+      toast.error('Debe registrar al menos un departamento');
+      return;
+    }
+
+    if (validAreas.length === 0) {
+      toast.error('Debe registrar al menos un area');
+      return;
+    }
+
+    if (validCostCenters.length === 0) {
+      toast.error('Debe registrar al menos un centro de costo');
+      return;
+    }
+
+    if (validWorkGroups.length === 0) {
+      toast.error('Debe registrar al menos un grupo de trabajo');
+      return;
+    }
+
+    if (
+      hasDuplicateCodes(validDepartments) ||
+      hasDuplicateCodes(validAreas) ||
+      hasDuplicateCodes(validCostCenters) ||
+      hasDuplicateCodes(validPayrollGroups) ||
+      hasDuplicateCodes(validWorkGroups)
+    ) {
+      toast.error('Hay codigos duplicados en la estructura');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const context = await resolveOrganizationTenantContext();
+
+      const payrollPayload = validPayrollGroups.map((row) => ({
+        tenant_id: context.tenantId,
+        payroll_group_name: row.name.trim(),
+        payroll_group_short_name: row.shortName.trim(),
+        payroll_group_code: row.code.trim().toUpperCase(),
+        created_by: context.createdBy,
+      }));
+
+      let payrollCodeMap = new Map<string, string>();
+      if (payrollPayload.length > 0) {
+        const { data: insertedPayroll, error: payrollError } = await ApiClient
+          .from('payroll_groups')
+          .insert(payrollPayload)
+          .select('id, payroll_group_code');
+
+        if (payrollError) {
+          throw new Error(payrollError.message || 'Error guardando grupos de nomina');
+        }
+
+        payrollCodeMap = new Map(
+          (insertedPayroll || []).map((item: any) => [String(item.payroll_group_code).toUpperCase(), item.id])
+        );
+      }
+
+      const { error: departmentsError } = await ApiClient
+        .from('departments')
+        .insert(
+          validDepartments.map((row) => ({
+            tenant_id: context.tenantId,
+            department_name: row.name.trim(),
+            department_short_name: row.shortName.trim(),
+            department_code: row.code.trim().toUpperCase(),
+            created_by: context.createdBy,
+          }))
+        );
+
+      if (departmentsError) {
+        throw new Error(departmentsError.message || 'Error guardando departamentos');
+      }
+
+      const { error: areasError } = await ApiClient
+        .from('areas')
+        .insert(
+          validAreas.map((row) => ({
+            tenant_id: context.tenantId,
+            area_name: row.name.trim(),
+            area_short_name: row.shortName.trim(),
+            area_code: row.code.trim().toUpperCase(),
+            payroll_group_id: row.payrollGroupCode?.trim()
+              ? payrollCodeMap.get(row.payrollGroupCode.trim().toUpperCase()) || null
+              : null,
+            created_by: context.createdBy,
+          }))
+        );
+
+      if (areasError) {
+        throw new Error(areasError.message || 'Error guardando areas');
+      }
+
+      const { error: costCentersError } = await ApiClient
+        .from('cost_centers')
+        .insert(
+          validCostCenters.map((row) => ({
+            tenant_id: context.tenantId,
+            cost_center_name: row.name.trim(),
+            cost_center_short_name: row.shortName.trim(),
+            cost_center_code: row.code.trim().toUpperCase(),
+            homologation_code: row.homologationCode?.trim() || null,
+            gl_account_code: row.glAccountCode?.trim() || null,
+            created_by: context.createdBy,
+          }))
+        );
+
+      if (costCentersError) {
+        throw new Error(costCentersError.message || 'Error guardando centros de costo');
+      }
+
+      const { error: workGroupsError } = await ApiClient
+        .from('work_groups')
+        .insert(
+          validWorkGroups.map((row) => ({
+            tenant_id: context.tenantId,
+            work_group_name: row.name.trim(),
+            work_group_short_name: row.shortName.trim(),
+            work_group_code: row.code.trim().toUpperCase(),
+            payroll_group_id: row.payrollGroupCode?.trim()
+              ? payrollCodeMap.get(row.payrollGroupCode.trim().toUpperCase()) || null
+              : null,
+            created_by: context.createdBy,
+          }))
+        );
+
+      if (workGroupsError) {
+        throw new Error(workGroupsError.message || 'Error guardando grupos de trabajo');
+      }
+
+      toast.success('Estructura organizacional guardada correctamente');
+      onComplete({
+        inserted: {
+          departments: validDepartments.length,
+          areas: validAreas.length,
+          costCenters: validCostCenters.length,
+          payrollGroups: validPayrollGroups.length,
+          workGroups: validWorkGroups.length,
+        },
+      });
+    } catch (error: any) {
+      console.error('Error guardando estructura:', error);
+      toast.error(error?.message || 'No se pudo guardar la estructura');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const renderRowActions = (
+    setter: Dispatch<SetStateAction<OrganizationStructureRow[]>>,
+    rows: OrganizationStructureRow[],
+    index: number
+  ) => (
+    <button
+      type="button"
+      onClick={() => removeRow(setter, index)}
+      disabled={rows.length === 1}
+      className="px-2 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-40"
+    >
+      Quitar
+    </button>
+  );
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 bg-[#0074D9] rounded-lg flex items-center justify-center">
+            <Building2 className="w-5 h-5 text-white" />
+          </div>
+          <h2 className="text-2xl font-semibold text-gray-900">Estructura Organizacional</h2>
+        </div>
+        <p className="text-gray-600">
+          Registre departamentos, areas, centros de costo, grupos de nomina y grupos de trabajo.
+        </p>
+      </div>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Departamentos (Nivel 1)</h3>
+          <button type="button" onClick={() => addRow(setDepartments)} className="px-3 py-1 text-sm border rounded">
+            Agregar
+          </button>
+        </div>
+        {departments.map((row, index) => (
+          <div key={`dept-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input className="col-span-4" placeholder="Nombre" value={row.name} onChange={(e) => updateRow(setDepartments, index, 'name', e.target.value)} />
+            <Input className="col-span-3" placeholder="Nombre corto" value={row.shortName} onChange={(e) => updateRow(setDepartments, index, 'shortName', e.target.value)} />
+            <Input className="col-span-3" placeholder="Codigo" value={row.code} onChange={(e) => updateRow(setDepartments, index, 'code', e.target.value)} />
+            <div className="col-span-2">{renderRowActions(setDepartments, departments, index)}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold">Grupos de Nomina (Opcional)</h3>
+          <button type="button" onClick={() => addRow(setPayrollGroups)} className="px-3 py-1 text-sm border rounded">
+            Agregar
+          </button>
+        </div>
+        {payrollGroups.length === 0 && <p className="text-sm text-gray-500">Si no aplica, puede dejar esta seccion vacia.</p>}
+        {payrollGroups.map((row, index) => (
+          <div key={`pay-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input className="col-span-4" placeholder="Nombre" value={row.name} onChange={(e) => updateRow(setPayrollGroups, index, 'name', e.target.value)} />
+            <Input className="col-span-3" placeholder="Nombre corto" value={row.shortName} onChange={(e) => updateRow(setPayrollGroups, index, 'shortName', e.target.value)} />
+            <Input className="col-span-3" placeholder="Codigo" value={row.code} onChange={(e) => updateRow(setPayrollGroups, index, 'code', e.target.value)} />
+            <div className="col-span-2">{renderRowActions(setPayrollGroups, payrollGroups, index)}</div>
+          </div>
+        ))}
+      </section>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <h3 className="font-semibold">Areas (Nivel 2)</h3>
+        {areas.map((row, index) => (
+          <div key={`area-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input className="col-span-3" placeholder="Nombre" value={row.name} onChange={(e) => updateRow(setAreas, index, 'name', e.target.value)} />
+            <Input className="col-span-3" placeholder="Nombre corto" value={row.shortName} onChange={(e) => updateRow(setAreas, index, 'shortName', e.target.value)} />
+            <Input className="col-span-2" placeholder="Codigo" value={row.code} onChange={(e) => updateRow(setAreas, index, 'code', e.target.value)} />
+            <Input className="col-span-2" placeholder="Cod. nomina" value={row.payrollGroupCode || ''} onChange={(e) => updateRow(setAreas, index, 'payrollGroupCode', e.target.value)} />
+            <div className="col-span-2">{renderRowActions(setAreas, areas, index)}</div>
+          </div>
+        ))}
+        <button type="button" onClick={() => addRow(setAreas, true)} className="px-3 py-1 text-sm border rounded">
+          Agregar area
+        </button>
+      </section>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <h3 className="font-semibold">Centros de Costo</h3>
+        {costCenters.map((row, index) => (
+          <div key={`cc-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input className="col-span-3" placeholder="Nombre" value={row.name} onChange={(e) => updateRow(setCostCenters, index, 'name', e.target.value)} />
+            <Input className="col-span-2" placeholder="Nombre corto" value={row.shortName} onChange={(e) => updateRow(setCostCenters, index, 'shortName', e.target.value)} />
+            <Input className="col-span-2" placeholder="Codigo" value={row.code} onChange={(e) => updateRow(setCostCenters, index, 'code', e.target.value)} />
+            <Input className="col-span-2" placeholder="Cod. homologacion" value={row.homologationCode || ''} onChange={(e) => updateRow(setCostCenters, index, 'homologationCode', e.target.value)} />
+            <Input className="col-span-2" placeholder="Cuenta GL" value={row.glAccountCode || ''} onChange={(e) => updateRow(setCostCenters, index, 'glAccountCode', e.target.value)} />
+            <div className="col-span-1">{renderRowActions(setCostCenters, costCenters, index)}</div>
+          </div>
+        ))}
+        <button type="button" onClick={() => addRow(setCostCenters, false, true)} className="px-3 py-1 text-sm border rounded">
+          Agregar centro
+        </button>
+      </section>
+
+      <section className="rounded-lg border p-4 space-y-3">
+        <h3 className="font-semibold">Grupos de Trabajo</h3>
+        {workGroups.map((row, index) => (
+          <div key={`wg-${index}`} className="grid grid-cols-12 gap-2 items-end">
+            <Input className="col-span-3" placeholder="Nombre" value={row.name} onChange={(e) => updateRow(setWorkGroups, index, 'name', e.target.value)} />
+            <Input className="col-span-3" placeholder="Nombre corto" value={row.shortName} onChange={(e) => updateRow(setWorkGroups, index, 'shortName', e.target.value)} />
+            <Input className="col-span-2" placeholder="Codigo" value={row.code} onChange={(e) => updateRow(setWorkGroups, index, 'code', e.target.value)} />
+            <Input className="col-span-2" placeholder="Cod. nomina" value={row.payrollGroupCode || ''} onChange={(e) => updateRow(setWorkGroups, index, 'payrollGroupCode', e.target.value)} />
+            <div className="col-span-2">{renderRowActions(setWorkGroups, workGroups, index)}</div>
+          </div>
+        ))}
+        <button type="button" onClick={() => addRow(setWorkGroups, true)} className="px-3 py-1 text-sm border rounded">
+          Agregar grupo
+        </button>
+      </section>
+
+      <div className="flex gap-3 pt-6 border-t border-gray-200">
+        {onGoBack && (
+          <button
+            type="button"
+            onClick={onGoBack}
+            disabled={isSubmitting}
+            className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            Volver
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          className="flex-1 bg-[#0074D9] text-white px-6 py-2.5 rounded-lg hover:bg-[#0066C0] transition-colors font-medium flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          {isSubmitting ? 'Guardando...' : 'Continuar'}
+          {!isSubmitting && <ChevronRight className="w-4 h-4" />}
         </button>
       </div>
     </div>

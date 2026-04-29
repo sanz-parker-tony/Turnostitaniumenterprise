@@ -38,11 +38,17 @@ import {
 // Importar routers de mantenimiento
 import actionsRouter from './routes/actions-mgmt-routes';
 import attendanceRouter from './routes/attendance-events-routes';
-import { ensureSystemSettingsScreen } from './routes/bootstrap-screens';
+import {
+  ensureSystemSettingsScreen,
+  ensureMaintenanceManagementScreens,
+  ensureSecurityManagementScreens,
+  ensureOrgMaintenanceScreen,
+} from './routes/bootstrap-screens';
 import lookupGroupsRouter from './routes/lookup-groups-routes';
 import lookupRouter from './routes/lookup-routes';
 import lookupValuesRouter from './routes/lookup-values-routes';
 import menuGroupsRouter from './routes/menu-groups-routes';
+import organizationRouter from './routes/organization-routes';
 import roleScreenActionsRouter from './routes/role-screen-actions-mgmt-routes';
 import rolesRouter from './routes/roles-routes';
 import scopeTypesRouter from './routes/scope-types-routes';
@@ -69,53 +75,64 @@ function getPostgresAnonClient() {
 }
 
 // ============================================================================
-// MIDDLEWARE DE AUTENTICACI?N
+// MIDDLEWARE DE AUTENTICACIÃ“N
 // ============================================================================
+
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  console.log('[requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
+
+  console.log('ðŸ” [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
+
   if (!authHeader?.startsWith('Bearer ')) {
-    console.error('? [requireAuth] Missing or invalid Authorization header');
+    console.error('âŒ [requireAuth] Missing or invalid Authorization header');
     return res.status(401).json({
       code: 401,
       error: 'Authorization header missing or invalid',
       message: 'Missing authorization header',
     });
   }
+
   const token = authHeader.split(' ')[1];
+
   if (!token || token.length < 20) {
-    console.error('? [requireAuth] Token vac?o o muy corto');
+    console.error('âŒ [requireAuth] Token vacÃ­o o muy corto');
     return res.status(401).json({
       code: 401,
       error: 'Invalid token',
       message: 'Token is empty or malformed',
     });
   }
-  console.log('?? [requireAuth] Token length:', token.length);
+
+  console.log('ðŸ” [requireAuth] Token length:', token.length);
+
   const PostgresAdmin = getPostgresClient();
+
   try {
     const { data: { user }, error } = await PostgresAdmin.auth.getUser(token);
+
     if (error) {
-      console.error('? [requireAuth] Error de autenticaci?n:', error.message);
+      console.error('âŒ [requireAuth] Error de autenticaciÃ³n:', error.message);
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
         message: error.message,
       });
     }
+
     if (!user) {
-      console.error('? [requireAuth] Usuario no encontrado en el token');
+      console.error('âŒ [requireAuth] Usuario no encontrado en el token');
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
         message: 'User not found',
       });
     }
-    console.log('? [requireAuth] Usuario autenticado:', user.email);
+
+    console.log('âœ… [requireAuth] Usuario autenticado:', user.email);
     (req as any).user = user;
     next();
   } catch (err: any) {
-    console.error('?? [requireAuth] Error inesperado:', err);
+    console.error('ðŸ’¥ [requireAuth] Error inesperado:', err);
     return res.status(500).json({
       code: 500,
       error: 'Internal server error',
@@ -123,23 +140,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     });
   }
 };
-// Variante para endpoints que permiten token p?blico local (sin sesi?n de usuario).
-const requireAuthOrPublicToken = async (req: Request, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  const publicToken = process.env.Postgres_ANON_KEY || '';
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1] || '';
-    if (publicToken && token === publicToken) {
-      (req as any).user = {
-        id: 'public-api',
-        email: 'public@local',
-        user_metadata: { role: 'PUBLIC' },
-      };
-      return next();
-    }
-  }
-  return requireAuth(req, res, next);
-};
+
 // ============================================================================
 // HEALTH CHECK
 // ============================================================================
@@ -156,7 +157,7 @@ router.get('/health', (req: Request, res: Response) => {
 });
 
 router.get('/bootstrap/ping', (req: Request, res: Response) => {
-  console.log('🏓 [PING] Endpoint alcanzado correctamente');
+  console.log('ðŸ“ [PING] Endpoint alcanzado correctamente');
   return res.json({
     success: true,
     message: 'Bootstrap endpoint is reachable',
@@ -331,7 +332,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     const { data, error } = await authLogin(String(email), String(password));
     if (error || !data?.session) {
       return res.status(401).json({
-        error: error?.message || 'Credenciales inv�lidas',
+        error: error?.message || 'Credenciales inválidas',
       });
     }
 
@@ -366,7 +367,7 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
     if (authError) {
       console.error('Error listando usuarios de auth:', authError);
       return res.status(500).json({
-        error: 'Error al listar usuarios de autenticación',
+        error: 'Error al listar usuarios de autenticaciÃ³n',
         details: authError.message,
       });
     }
@@ -377,9 +378,9 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
       .limit(100);
 
     if (publicError) {
-      console.error('Error listando usuarios públicos:', publicError);
+      console.error('Error listando usuarios pÃºblicos:', publicError);
       return res.status(500).json({
-        error: 'Error al listar usuarios públicos',
+        error: 'Error al listar usuarios pÃºblicos',
         details: publicError.message,
       });
     }
@@ -418,9 +419,9 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
         : null,
     });
   } catch (error: any) {
-    console.error('Error en diagnóstico:', error);
+    console.error('Error en diagnÃ³stico:', error);
     return res.status(500).json({
-      error: 'Error interno en diagnóstico',
+      error: 'Error interno en diagnÃ³stico',
       details: error.message,
     });
   }
@@ -435,10 +436,10 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     const password = body.password || 'Titanium2026!';
     const displayName = body.displayName || 'System Administrator';
 
-    console.log(`🔧 Intentando crear usuario ${email}...`);
+    console.log(`ðŸ”§ Intentando crear usuario ${email}...`);
 
     // Verificar que tenant SYSTEM existe
-    console.log('🔍 Verificando tenant SYSTEM...');
+    console.log('ðŸ” Verificando tenant SYSTEM...');
     const { data: systemTenant, error: tenantCheckError } = await Postgres
       .from('tenants')
       .select('id, tenant_key')
@@ -446,23 +447,23 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (tenantCheckError || !systemTenant) {
-      console.error('❌ ERROR CRÍTICO: Tenant SYSTEM no existe');
+      console.error('âŒ ERROR CRÃTICO: Tenant SYSTEM no existe');
       return res.status(500).json({
         error: 'SETUP INCOMPLETO: Tenant SYSTEM no encontrado',
-        details: 'Debes ejecutar los scripts SQL de migración primero',
+        details: 'Debes ejecutar los scripts SQL de migraciÃ³n primero',
         solution: 'Ejecuta los scripts SQL en tu PostgreSQL y ejecuta los archivos en /Postgres/migrations/ en orden',
         requiredFiles: ['001_INITIAL_SCHEMA.sql', '002_SEED_COMPLETE.sql'],
       });
     }
 
-    console.log(`✅ Tenant SYSTEM encontrado (id: ${systemTenant.id})`);
+    console.log(`âœ… Tenant SYSTEM encontrado (id: ${systemTenant.id})`);
 
     // Verificar si ya existe
     const { data: existingUser } = await Postgres.auth.admin.listUsers();
     const userExists = existingUser?.users?.find(u => u.email === email);
 
     if (userExists) {
-      console.log(`⏭️ Usuario ${email} ya existe (id: ${userExists.id})`);
+      console.log(`â­ï¸ Usuario ${email} ya existe (id: ${userExists.id})`);
 
       return res.json({
         success: true,
@@ -477,7 +478,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     }
 
     // Crear usuario
-    console.log('🔧 Creando usuario con admin.createUser...');
+    console.log('ðŸ”§ Creando usuario con admin.createUser...');
 
     const { data: newUser, error: createError } = await Postgres.auth.admin.createUser({
       email: email,
@@ -489,7 +490,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     });
 
     if (createError) {
-      console.error('❌ Error creando usuario:', createError);
+      console.error('âŒ Error creando usuario:', createError);
       return res.status(500).json({
         error: 'No se pudo crear el usuario',
         details: createError.message,
@@ -500,16 +501,16 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     const userId = newUser?.user?.id;
 
     if (!userId) {
-      console.error('❌ No se obtuvo ID de usuario');
+      console.error('âŒ No se obtuvo ID de usuario');
       return res.status(500).json({
-        error: 'Error al obtener ID de usuario después de creación',
+        error: 'Error al obtener ID de usuario despuÃ©s de creaciÃ³n',
       });
     }
 
-    console.log(`✅ Usuario creado en auth.users (id: ${userId})`);
+    console.log(`âœ… Usuario creado en auth.users (id: ${userId})`);
 
     // Crear en public.users
-    console.log('🔧 Creando/actualizando usuario en public.users...');
+    console.log('ðŸ”§ Creando/actualizando usuario en public.users...');
     const { data: publicUser, error: publicError } = await Postgres
       .from('users')
       .upsert(
@@ -531,7 +532,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (publicError) {
-      console.error('❌ Error creando/actualizando usuario en public.users:', publicError);
+      console.error('âŒ Error creando/actualizando usuario en public.users:', publicError);
       return res.status(500).json({
         error: 'Error al crear perfil de usuario',
         details: publicError.message,
@@ -543,15 +544,15 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     });
     if (syncPasswordError) {
       return res.status(500).json({
-        error: 'Error al sincronizar contraseña del usuario',
+        error: 'Error al sincronizar contraseÃ±a del usuario',
         details: syncPasswordError.message,
       });
     }
 
-    console.log(`✅ Usuario creado/actualizado en public.users (id: ${publicUser.id})`);
+    console.log(`âœ… Usuario creado/actualizado en public.users (id: ${publicUser.id})`);
 
     // Obtener rol SYSTEM_ADMIN
-    console.log('🔍 Buscando rol SYSTEM_ADMIN...');
+    console.log('ðŸ” Buscando rol SYSTEM_ADMIN...');
     const { data: systemAdminRole, error: roleError } = await Postgres
       .from('roles')
       .select('id')
@@ -560,19 +561,19 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (roleError || !systemAdminRole) {
-      console.error('❌ ERROR CRÍTICO: Rol SYSTEM_ADMIN no existe');
+      console.error('âŒ ERROR CRÃTICO: Rol SYSTEM_ADMIN no existe');
       return res.status(500).json({
         error: 'SETUP INCOMPLETO: Rol SYSTEM_ADMIN no encontrado',
-        details: 'Debes ejecutar los scripts SQL de migración primero',
+        details: 'Debes ejecutar los scripts SQL de migraciÃ³n primero',
         solution: 'Ejecuta los scripts SQL en tu PostgreSQL y ejecuta los archivos en /Postgres/migrations/ en orden',
         requiredFiles: ['001_INITIAL_SCHEMA.sql', '002_SEED_COMPLETE.sql'],
       });
     }
 
-    console.log(`✅ Rol SYSTEM_ADMIN encontrado (id: ${systemAdminRole.id})`);
+    console.log(`âœ… Rol SYSTEM_ADMIN encontrado (id: ${systemAdminRole.id})`);
 
     // Asignar rol
-    console.log('🔧 Asignando rol SYSTEM_ADMIN al usuario...');
+    console.log('ðŸ”§ Asignando rol SYSTEM_ADMIN al usuario...');
     const { error: roleAssignError } = await Postgres
       .from('user_roles')
       .insert({
@@ -584,14 +585,14 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       });
 
     if (roleAssignError) {
-      console.error('❌ Error asignando rol:', roleAssignError);
+      console.error('âŒ Error asignando rol:', roleAssignError);
       return res.status(500).json({
         error: 'Error al asignar rol',
         details: roleAssignError.message,
       });
     }
 
-    console.log(`✅ Rol SYSTEM_ADMIN asignado al usuario`);
+    console.log(`âœ… Rol SYSTEM_ADMIN asignado al usuario`);
 
     return res.json({
       success: true,
@@ -604,16 +605,16 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       credentials: {
         email: email,
         password: password,
-        note: '⚠️ IMPORTANTE: Cambia esta contraseña después del primer login',
+        note: 'âš ï¸ IMPORTANTE: Cambia esta contraseÃ±a despuÃ©s del primer login',
       },
       nextSteps: [
-        '1. Inicia sesión con las credenciales proporcionadas',
-        '2. Cambia la contraseña inmediatamente',
-        '3. Completa el wizard de configuración inicial',
+        '1. Inicia sesiÃ³n con las credenciales proporcionadas',
+        '2. Cambia la contraseÃ±a inmediatamente',
+        '3. Completa el wizard de configuraciÃ³n inicial',
       ],
     });
   } catch (error: any) {
-    console.error('💥 Error creando usuario system.admin:', error);
+    console.error('ðŸ’¥ Error creando usuario system.admin:', error);
     return res.status(500).json({
       error: 'Error interno al crear usuario',
       details: error.message,
@@ -762,15 +763,18 @@ router.use('/actions', requireAuth, actionsRouter);
 router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 
 // Attendance Events
-router.use('/attendance-events', attendanceRouter);
+router.use('/attendance-events', requireAuth, attendanceRouter);
 
 // Bootstrap Screens
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
+router.post('/bootstrap/ensure-maintenance-screens', requireAuth, ensureMaintenanceManagementScreens);
+router.post('/bootstrap/ensure-security-screens', requireAuth, ensureSecurityManagementScreens);
+router.post('/bootstrap/ensure-org-maintenance-screen', requireAuth, ensureOrgMaintenanceScreen);
 
 // Lookups
 router.use('/lookup-groups', requireAuth, lookupGroupsRouter);
 router.use('/lookup-routes', requireAuth, lookupRouter);
-router.use('/lookup-values', lookupValuesRouter);
+router.use('/lookup-values', requireAuth, lookupValuesRouter);
 
 // Menu Groups
 router.use('/menu-groups', requireAuth, menuGroupsRouter);
@@ -806,6 +810,9 @@ router.use('/system-settings-management', requireAuth, systemSettingsRouter); //
 // Users Management
 router.use('/users-management', requireAuth, usersRouter);
 
+// Organization Management
+router.use('/organization', requireAuth, organizationRouter);
+
 // ============================================================================
 // HEALTH & STATUS
 // ============================================================================
@@ -838,10 +845,6 @@ router.use((req: Request, res: Response) => {
 });
 
 export default router;
-
-
-
-
 
 
 

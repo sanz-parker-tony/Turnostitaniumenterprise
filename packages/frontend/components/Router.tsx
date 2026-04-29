@@ -23,6 +23,7 @@ import { CalendarManagement } from './screens/config/CalendarManagement';
 import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
 import { OrgStructure } from './screens/org/OrgStructure';
+import { OrgMaintenance } from './screens/org/OrgMaintenance';
 import TenantsManagement from './security/TenantsManagement';
 import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
 import { ScreensManagement } from './screens/security/ScreensManagement';
@@ -107,6 +108,7 @@ export function Router() {
 
     // ── Organización ───────────────────────────────────────────────────────
     '/dashboard/org/companies': <OrgStructure />,
+    '/dashboard/org/maintenance': <OrgMaintenance />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

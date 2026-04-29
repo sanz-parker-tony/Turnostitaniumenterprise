@@ -524,3 +524,398 @@ export async function ensureSecurityManagementScreens(req: Request, res: Respons
   }
 }
 
+
+/**
+ * POST /bootstrap/ensure-org-maintenance-screen
+ * Crea pantalla de Mantenimiento Organizacional al mismo nivel de Estructura
+ */
+export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
+  try {
+    console.log('🔧 [BOOTSTRAP] Iniciando ensure-org-maintenance-screen...');
+
+    const PostgresUrl = process.env.Postgres_URL;
+    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
+
+    if (!PostgresUrl || !PostgresServiceKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'Missing required environment variables',
+      });
+    }
+
+    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    const { data: orgMenuGroup, error: orgMenuGroupError } = await Postgres
+      .from('system_menu_groups')
+      .select('id')
+      .eq('menu_group_key', 'ORG')
+      .single();
+
+    if (orgMenuGroupError || !orgMenuGroup) {
+      return res.status(500).json({
+        success: false,
+        error: 'Menu group ORG not found',
+        details: orgMenuGroupError?.message,
+      });
+    }
+
+    const screensToEnsure = [
+      {
+        screen_key: 'ORG_STRUCTURE',
+        screen_name: 'Estructura Organizacional',
+        menu_label: 'Estructura',
+        route_path: '/dashboard/org/companies',
+        icon_key: 'Building2',
+        sort_order: 40,
+      },
+      {
+        screen_key: 'ORG_WORK_LOCATIONS',
+        screen_name: 'Localizaciones de Trabajo',
+        menu_label: 'Localizaciones',
+        route_path: '/dashboard/org/work-locations',
+        icon_key: 'MapPin',
+        sort_order: 45,
+      },
+      {
+        screen_key: 'ORG_DEPARTMENTS',
+        screen_name: 'Departamentos',
+        menu_label: 'Departamentos',
+        route_path: '/dashboard/org/departments',
+        icon_key: 'Building',
+        sort_order: 50,
+      },
+      {
+        screen_key: 'ORG_AREAS',
+        screen_name: 'Áreas',
+        menu_label: 'Áreas',
+        route_path: '/dashboard/org/areas',
+        icon_key: 'Grid3X3',
+        sort_order: 55,
+      },
+      {
+        screen_key: 'ORG_WORK_GROUPS',
+        screen_name: 'Grupos de Trabajo',
+        menu_label: 'Grupos Trabajo',
+        route_path: '/dashboard/org/work-groups',
+        icon_key: 'Users',
+        sort_order: 60,
+      },
+      {
+        screen_key: 'ORG_PAYROLL_GROUPS',
+        screen_name: 'Grupos de Nómina',
+        menu_label: 'Grupos Nómina',
+        route_path: '/dashboard/org/payroll-groups',
+        icon_key: 'Wallet',
+        sort_order: 65,
+      },
+      {
+        screen_key: 'ORG_JOB_TITLES',
+        screen_name: 'Cargos',
+        menu_label: 'Cargos',
+        route_path: '/dashboard/org/job-titles',
+        icon_key: 'Briefcase',
+        sort_order: 70,
+      },
+      {
+        screen_key: 'ORG_COST_CENTERS',
+        screen_name: 'Centros de Costo',
+        menu_label: 'Centros Costo',
+        route_path: '/dashboard/org/cost-centers',
+        icon_key: 'Landmark',
+        sort_order: 75,
+      },
+      {
+        screen_key: 'ORG_MAINTENANCE',
+        screen_name: 'Mantenimiento Organizacional',
+        menu_label: 'Mantenimiento',
+        route_path: '/dashboard/org/maintenance',
+        icon_key: 'Database',
+        sort_order: 80,
+      },
+    ];
+
+    const ensuredScreens: Array<{ screen_key: string; screen_id: string; created: boolean }> = [];
+
+    for (const screenDef of screensToEnsure) {
+      const { data: existingScreen, error: existingScreenError } = await Postgres
+        .from('screens')
+        .select('id')
+        .eq('screen_key', screenDef.screen_key)
+        .maybeSingle();
+
+      if (existingScreenError) {
+        return res.status(500).json({
+          success: false,
+          error: `Error loading screen ${screenDef.screen_key}`,
+          details: existingScreenError.message,
+        });
+      }
+
+      if (existingScreen?.id) {
+        const { error: updateScreenError } = await Postgres
+          .from('screens')
+          .update({
+            screen_name: screenDef.screen_name,
+            menu_label: screenDef.menu_label,
+            menu_group_id: orgMenuGroup.id,
+            route_path: screenDef.route_path,
+            icon_key: screenDef.icon_key,
+            sort_order: screenDef.sort_order,
+            is_active: true,
+          })
+          .eq('id', existingScreen.id);
+
+        if (updateScreenError) {
+          return res.status(500).json({
+            success: false,
+            error: `Error updating screen ${screenDef.screen_key}`,
+            details: updateScreenError.message,
+          });
+        }
+
+        ensuredScreens.push({
+          screen_key: screenDef.screen_key,
+          screen_id: existingScreen.id,
+          created: false,
+        });
+        continue;
+      }
+
+      const { data: newScreen, error: newScreenError } = await Postgres
+        .from('screens')
+        .insert({
+          screen_key: screenDef.screen_key,
+          screen_name: screenDef.screen_name,
+          menu_label: screenDef.menu_label,
+          menu_group_id: orgMenuGroup.id,
+          route_path: screenDef.route_path,
+          icon_key: screenDef.icon_key,
+          sort_order: screenDef.sort_order,
+          is_active: true,
+          created_by: 'SYSTEM',
+        })
+        .select('id')
+        .single();
+
+      if (newScreenError || !newScreen?.id) {
+        return res.status(500).json({
+          success: false,
+          error: `Error creating screen ${screenDef.screen_key}`,
+          details: newScreenError?.message,
+        });
+      }
+
+      ensuredScreens.push({
+        screen_key: screenDef.screen_key,
+        screen_id: newScreen.id,
+        created: true,
+      });
+    }
+
+    const requiredActionKeys = ['VIEW', 'CREATE', 'EDIT', 'DELETE'];
+    const actionMap = new Map<string, string>();
+
+    for (const actionKey of requiredActionKeys) {
+      const { data: action, error: actionError } = await Postgres
+        .from('actions')
+        .select('id, action_key')
+        .eq('action_key', actionKey)
+        .maybeSingle();
+
+      if (actionError || !action?.id) {
+        return res.status(500).json({
+          success: false,
+          error: `Action ${actionKey} not found`,
+          details: actionError?.message,
+        });
+      }
+
+      actionMap.set(actionKey, action.id);
+    }
+
+    const screenActionIds: string[] = [];
+    let screenActionsCreated = 0;
+
+    for (const screen of ensuredScreens) {
+      for (const actionKey of requiredActionKeys) {
+        const actionId = actionMap.get(actionKey)!;
+
+        const { data: existingScreenAction, error: existingScreenActionError } = await Postgres
+          .from('screen_actions')
+          .select('id')
+          .eq('screen_id', screen.screen_id)
+          .eq('action_id', actionId)
+          .maybeSingle();
+
+        if (existingScreenActionError) {
+          return res.status(500).json({
+            success: false,
+            error: `Error checking screen_action for ${screen.screen_key}:${actionKey}`,
+            details: existingScreenActionError.message,
+          });
+        }
+
+        if (existingScreenAction?.id) {
+          screenActionIds.push(existingScreenAction.id);
+          continue;
+        }
+
+        const { data: newScreenAction, error: newScreenActionError } = await Postgres
+          .from('screen_actions')
+          .insert({
+            screen_id: screen.screen_id,
+            action_id: actionId,
+            is_active: true,
+            created_by: 'SYSTEM',
+          })
+          .select('id')
+          .single();
+
+        if (newScreenActionError || !newScreenAction?.id) {
+          return res.status(500).json({
+            success: false,
+            error: `Error creating screen_action for ${screen.screen_key}:${actionKey}`,
+            details: newScreenActionError?.message,
+          });
+        }
+
+        screenActionIds.push(newScreenAction.id);
+        screenActionsCreated += 1;
+      }
+    }
+
+    const { data: tenantAdminRoles, error: tenantAdminRolesError } = await Postgres
+      .from('roles')
+      .select('id, tenant_id, role_key, is_active')
+      .eq('role_key', 'TENANT_ADMIN')
+      .eq('is_active', true);
+
+    if (tenantAdminRolesError) {
+      return res.status(500).json({
+        success: false,
+        error: 'Error loading TENANT_ADMIN roles',
+        details: tenantAdminRolesError.message,
+      });
+    }
+
+    const { data: supervisorRoles, error: supervisorRolesError } = await Postgres
+      .from('roles')
+      .select('id, tenant_id, role_key, is_active')
+      .eq('role_key', 'SUPERVISOR')
+      .eq('is_active', true);
+
+    if (supervisorRolesError) {
+      return res.status(500).json({
+        success: false,
+        error: 'Error loading SUPERVISOR roles',
+        details: supervisorRolesError.message,
+      });
+    }
+
+    let roleScreenActionsCreated = 0;
+    let supervisorPermissionsDisabled = 0;
+
+    for (const role of tenantAdminRoles || []) {
+      for (const screenActionId of screenActionIds) {
+        const { data: existingRoleScreenAction } = await Postgres
+          .from('role_screen_actions')
+          .select('id')
+          .eq('tenant_id', role.tenant_id)
+          .eq('role_id', role.id)
+          .eq('screen_action_id', screenActionId)
+          .maybeSingle();
+
+        if (existingRoleScreenAction?.id) {
+          await Postgres
+            .from('role_screen_actions')
+            .update({ is_allowed: true, is_active: true })
+            .eq('id', existingRoleScreenAction.id);
+          continue;
+        }
+
+        const { error: roleScreenActionError } = await Postgres
+          .from('role_screen_actions')
+          .insert({
+            tenant_id: role.tenant_id,
+            role_id: role.id,
+            screen_action_id: screenActionId,
+            is_allowed: true,
+            is_active: true,
+            created_by: 'SYSTEM',
+          });
+
+        if (roleScreenActionError) {
+          return res.status(500).json({
+            success: false,
+            error: 'Error assigning role_screen_action to TENANT_ADMIN',
+            details: roleScreenActionError.message,
+          });
+        }
+
+        roleScreenActionsCreated += 1;
+      }
+    }
+
+    for (const role of supervisorRoles || []) {
+      for (const screenActionId of screenActionIds) {
+        const { data: supervisorPermission, error: supervisorPermissionError } = await Postgres
+          .from('role_screen_actions')
+          .select('id, is_allowed, is_active')
+          .eq('tenant_id', role.tenant_id)
+          .eq('role_id', role.id)
+          .eq('screen_action_id', screenActionId)
+          .maybeSingle();
+
+        if (supervisorPermissionError) {
+          return res.status(500).json({
+            success: false,
+            error: 'Error checking SUPERVISOR role_screen_action',
+            details: supervisorPermissionError.message,
+          });
+        }
+
+        if (!supervisorPermission?.id) continue;
+
+        const { error: disableSupervisorPermissionError } = await Postgres
+          .from('role_screen_actions')
+          .update({
+            is_allowed: false,
+            is_active: false,
+          })
+          .eq('id', supervisorPermission.id);
+
+        if (disableSupervisorPermissionError) {
+          return res.status(500).json({
+            success: false,
+            error: 'Error disabling SUPERVISOR role_screen_action',
+            details: disableSupervisorPermissionError.message,
+          });
+        }
+
+        supervisorPermissionsDisabled += 1;
+      }
+    }
+
+    const screensCreated = ensuredScreens.filter((item) => item.created).length;
+
+    return res.status(200).json({
+      success: true,
+      message: 'ORG screens, screen_actions and TENANT_ADMIN role_screen_actions ensured',
+      screens_ensured: ensuredScreens,
+      screens_created: screensCreated,
+      screen_actions_created: screenActionsCreated,
+      role_screen_actions_created: roleScreenActionsCreated,
+      supervisor_permissions_disabled: supervisorPermissionsDisabled,
+      any_created: screensCreated > 0 || screenActionsCreated > 0 || roleScreenActionsCreated > 0,
+    });
+  } catch (error: any) {
+    console.error('❌ [BOOTSTRAP] Error ensure-org-maintenance-screen:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Unexpected error during bootstrap',
+      details: error instanceof Error ? error.message : String(error),
+    });
+  }
+}

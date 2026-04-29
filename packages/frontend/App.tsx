@@ -36,6 +36,7 @@ function AppContent() {
       'bootstrap/ensure-system-settings-screen',
       'bootstrap/ensure-maintenance-screens',
       'bootstrap/ensure-security-screens',
+      'bootstrap/ensure-org-maintenance-screen',
     ];
 
     Promise.allSettled(
