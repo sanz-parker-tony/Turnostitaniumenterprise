@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, RefreshCw, Plus, Save, X, Pencil, Power } from 'lucide-react';
+import { Building2, RefreshCw, Plus, Save, X, Pencil, Power, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 
 type EntityKey =
@@ -209,6 +209,7 @@ export function OrgMaintenance({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const config = useMemo(
     () => ENTITY_CONFIGS.find((entry) => entry.key === entity) || ENTITY_CONFIGS[0],
@@ -269,7 +270,19 @@ export function OrgMaintenance({
     setShowForm(false);
     setEditingId(null);
     setFormData({});
+    setSearchTerm('');
   }, [entity]);
+
+  const filteredItems = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return items;
+
+    return items.filter((item) =>
+      config.tableColumns.some((column) =>
+        String(item[column] ?? '').toLowerCase().includes(q)
+      )
+    );
+  }, [items, config.tableColumns, searchTerm]);
 
   const openCreate = () => {
     const initial: Record<string, any> = {};
@@ -491,6 +504,21 @@ export function OrgMaintenance({
           </div>
         )}
 
+        <div className="flex items-center justify-between gap-3">
+          <div className="relative w-full max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Buscar..."
+              className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <span className="text-sm text-gray-500">
+            {filteredItems.length} de {items.length}
+          </span>
+        </div>
+
         <div className="overflow-auto border rounded-md">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
@@ -510,14 +538,14 @@ export function OrgMaintenance({
                     Cargando...
                   </td>
                 </tr>
-              ) : items.length === 0 ? (
+              ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
-                    Sin registros
+                    {searchTerm ? 'No hay resultados' : 'Sin registros'}
                   </td>
                 </tr>
               ) : (
-                items.map((item) => (
+                filteredItems.map((item) => (
                   <tr key={item.id} className="hover:bg-gray-50">
                     {config.tableColumns.map((column) => (
                       <td key={column} className="px-3 py-2 border-b text-gray-700">
