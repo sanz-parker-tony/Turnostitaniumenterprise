@@ -772,7 +772,7 @@ router.post('/bootstrap/ensure-security-screens', requireAuth, ensureSecurityMan
 router.post('/bootstrap/ensure-org-maintenance-screen', requireAuth, ensureOrgMaintenanceScreen);
 
 // Lookups
-router.use('/lookup-groups', requireAuth, lookupGroupsRouter);
+router.use('/lookup-groups', lookupGroupsRouter);
 router.use('/lookup-routes', requireAuth, lookupRouter);
 router.use('/lookup-values', lookupValuesRouter);
 

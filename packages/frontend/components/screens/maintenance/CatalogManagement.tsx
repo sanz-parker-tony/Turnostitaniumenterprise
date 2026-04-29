@@ -145,7 +145,7 @@ export function CatalogManagement() {
     try {
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:3001/lookup-values-crud?group_id=${groupId}`,
+        `http://localhost:3001/lookup-values?group_id=${groupId}`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
@@ -240,8 +240,8 @@ export function CatalogManagement() {
 
       const token = localStorage.getItem('access_token');
       const url = editingValue
-        ? `http://localhost:3001/lookup-values-crud/${editingValue.id}`
-        : `http://localhost:3001/lookup-values-crud`;
+        ? `http://localhost:3001/lookup-values/${editingValue.id}`
+        : `http://localhost:3001/lookup-values`;
 
       const method = editingValue ? 'PUT' : 'POST';
 
@@ -276,13 +276,21 @@ export function CatalogManagement() {
     try {
       const token = localStorage.getItem('access_token');
       const res = await fetch(
-        `http://localhost:3001/lookup-values-crud/${value.id}/toggle`,
+        `http://localhost:3001/lookup-values/${value.id}`,
         {
-          method: 'PATCH',
+          method: 'PUT',
           headers: {
             'Authorization': `Bearer ${token || publicApiToken}`,
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({
+            lookup_label: value.lookup_label,
+            lookup_short_label: value.lookup_short_label,
+            lookup_scope: value.lookup_scope,
+            sort_order: value.sort_order,
+            is_active: !value.is_active,
+            translations: value.lookup_value_translations || []
+          })
         }
       );
 
