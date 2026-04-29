@@ -763,7 +763,7 @@ router.use('/actions', requireAuth, actionsRouter);
 router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 
 // Attendance Events
-router.use('/attendance-events', requireAuth, attendanceRouter);
+router.use('/attendance-events', attendanceRouter);
 
 // Bootstrap Screens
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
@@ -774,7 +774,7 @@ router.post('/bootstrap/ensure-org-maintenance-screen', requireAuth, ensureOrgMa
 // Lookups
 router.use('/lookup-groups', requireAuth, lookupGroupsRouter);
 router.use('/lookup-routes', requireAuth, lookupRouter);
-router.use('/lookup-values', requireAuth, lookupValuesRouter);
+router.use('/lookup-values', lookupValuesRouter);
 
 // Menu Groups
 router.use('/menu-groups', requireAuth, menuGroupsRouter);
