@@ -88,6 +88,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'CONF_TENANT_SETTINGS': '/dashboard/config/tenant-settings',
 
   // ========== ORGANIZATION ==========
+  'ORG_STRUCTURE': '/dashboard/org/structure',
   'ORG_COMPANIES': '/dashboard/org/companies',
   'ORG_WORK_LOCATIONS': '/dashboard/org/work-locations',
   'ORG_DEPARTMENTS': '/dashboard/org/departments',
@@ -96,7 +97,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'ORG_PAYROLL_GROUPS': '/dashboard/org/payroll-groups',
   'ORG_JOB_TITLES': '/dashboard/org/job-titles',
   'ORG_COST_CENTERS': '/dashboard/org/cost-centers',
-  'ORG_MAINTENANCE': '/dashboard/org/maintenance',
+  'ORG_EMPLOYEE_COMPANIES': '/dashboard/org/employee-companies',
 
   // ========== EMPLOYEES ==========
   'EMPL_LIST': '/dashboard/employees',

@@ -12,8 +12,16 @@ type EntityKey =
   | 'cost-centers'
   | 'payroll-groups'
   | 'employee-profiles'
+  | 'job-titles'
   | 'work-groups'
   | 'employee-companies';
+
+interface OrgMaintenanceProps {
+  initialEntity?: EntityKey;
+  hideEntityTabs?: boolean;
+  pageTitle?: string;
+  pageDescription?: string;
+}
 
 type FieldType = 'text' | 'number' | 'date' | 'boolean' | 'select';
 
@@ -137,6 +145,18 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     tableColumns: ['employee_profile_code', 'profile_name', 'profile_short_name', 'is_active'],
   },
   {
+    key: 'job-titles',
+    title: 'Job Titles',
+    description: 'Cargos organizacionales',
+    fields: [
+      { key: 'job_title_name', label: 'Nombre', type: 'text', required: true },
+      { key: 'job_title_short_name', label: 'Nombre corto', type: 'text', required: true },
+      { key: 'job_title_code', label: 'Código', type: 'text', required: true },
+      { key: 'is_active', label: 'Activo', type: 'boolean' },
+    ],
+    tableColumns: ['job_title_code', 'job_title_name', 'job_title_short_name', 'is_active'],
+  },
+  {
     key: 'work-groups',
     title: 'Work Groups',
     description: 'Grupos de trabajo',
@@ -174,8 +194,13 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
 ];
 
-export function OrgMaintenance() {
-  const [entity, setEntity] = useState<EntityKey>('companies');
+export function OrgMaintenance({
+  initialEntity = 'companies',
+  hideEntityTabs = false,
+  pageTitle,
+  pageDescription,
+}: OrgMaintenanceProps) {
+  const [entity, setEntity] = useState<EntityKey>(initialEntity);
   const [items, setItems] = useState<any[]>([]);
   const [catalogs, setCatalogs] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(false);
@@ -189,6 +214,10 @@ export function OrgMaintenance() {
     () => ENTITY_CONFIGS.find((entry) => entry.key === entity) || ENTITY_CONFIGS[0],
     [entity]
   );
+
+  useEffect(() => {
+    setEntity(initialEntity);
+  }, [initialEntity]);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -337,9 +366,9 @@ export function OrgMaintenance() {
     <div className="space-y-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Mantenimiento Organizacional</h1>
+          <h1 className="text-3xl font-bold tracking-tight">{pageTitle || config.title}</h1>
           <p className="text-muted-foreground mt-1">
-            CRUD de companies, work_locations, departments, areas, cost_centers, payroll_groups, employee_profiles, work_groups y employee_companies.
+            {pageDescription || config.description}
           </p>
         </div>
         <button
@@ -351,21 +380,23 @@ export function OrgMaintenance() {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {ENTITY_CONFIGS.map((entry) => (
-          <button
-            key={entry.key}
-            onClick={() => setEntity(entry.key)}
-            className={`px-3 py-1.5 rounded-md text-sm border ${
-              entity === entry.key
-                ? 'bg-[#0074D9] text-white border-[#0074D9]'
-                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-            }`}
-          >
-            {entry.title}
-          </button>
-        ))}
-      </div>
+      {!hideEntityTabs && (
+        <div className="flex flex-wrap gap-2">
+          {ENTITY_CONFIGS.map((entry) => (
+            <button
+              key={entry.key}
+              onClick={() => setEntity(entry.key)}
+              className={`px-3 py-1.5 rounded-md text-sm border ${
+                entity === entry.key
+                  ? 'bg-[#0074D9] text-white border-[#0074D9]'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {entry.title}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="rounded-lg border bg-white p-4 space-y-4">
         <div className="flex items-center justify-between">

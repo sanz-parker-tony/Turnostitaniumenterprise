@@ -107,8 +107,16 @@ export function Router() {
     '/dashboard/config/payroll':         <PayrollIntegration />,
 
     // ── Organización ───────────────────────────────────────────────────────
-    '/dashboard/org/companies': <OrgStructure />,
-    '/dashboard/org/maintenance': <OrgMaintenance />,
+    '/dashboard/org/structure': <OrgStructure />,
+    '/dashboard/org/companies': <OrgMaintenance initialEntity="companies" hideEntityTabs pageTitle="Empresas" pageDescription="Gestión de empresas del tenant" />,
+    '/dashboard/org/work-locations': <OrgMaintenance initialEntity="work-locations" hideEntityTabs pageTitle="Localizaciones" pageDescription="Gestión de localizaciones de trabajo" />,
+    '/dashboard/org/departments': <OrgMaintenance initialEntity="departments" hideEntityTabs pageTitle="Departamentos" pageDescription="Gestión de departamentos organizacionales" />,
+    '/dashboard/org/areas': <OrgMaintenance initialEntity="areas" hideEntityTabs pageTitle="Áreas" pageDescription="Gestión de áreas organizacionales" />,
+    '/dashboard/org/work-groups': <OrgMaintenance initialEntity="work-groups" hideEntityTabs pageTitle="Grupos de Trabajo" pageDescription="Gestión de grupos de trabajo" />,
+    '/dashboard/org/payroll-groups': <OrgMaintenance initialEntity="payroll-groups" hideEntityTabs pageTitle="Grupos de Nómina" pageDescription="Gestión de grupos de nómina" />,
+    '/dashboard/org/job-titles': <OrgMaintenance initialEntity="job-titles" hideEntityTabs pageTitle="Cargos" pageDescription="Gestión de cargos organizacionales" />,
+    '/dashboard/org/cost-centers': <OrgMaintenance initialEntity="cost-centers" hideEntityTabs pageTitle="Centros de Costo" pageDescription="Gestión de centros de costo" />,
+    '/dashboard/org/employee-companies': <OrgMaintenance initialEntity="employee-companies" hideEntityTabs pageTitle="Empleado por Empresas" pageDescription="Gestión de asignaciones laborales por empresa" />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

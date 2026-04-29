@@ -9,6 +9,7 @@ type EntityKey =
   | 'cost-centers'
   | 'payroll-groups'
   | 'employee-profiles'
+  | 'job-titles'
   | 'work-groups'
   | 'employee-companies';
 
@@ -77,6 +78,14 @@ const ENTITY_CONFIG: Record<EntityKey, EntityConfig> = {
     hasIsActive: true,
     codeField: 'employee_profile_code',
     nameField: 'profile_name',
+  },
+  'job-titles': {
+    table: 'job_titles',
+    requiredOnCreate: ['job_title_name', 'job_title_short_name', 'job_title_code'],
+    defaultSort: 'job_title_name',
+    hasIsActive: true,
+    codeField: 'job_title_code',
+    nameField: 'job_title_name',
   },
   'work-groups': {
     table: 'work_groups',

@@ -527,7 +527,7 @@ export async function ensureSecurityManagementScreens(req: Request, res: Respons
 
 /**
  * POST /bootstrap/ensure-org-maintenance-screen
- * Crea pantalla de Mantenimiento Organizacional al mismo nivel de Estructura
+ * Asegura pantallas ORG individuales para CRUD por entidad
  */
 export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
   try {
@@ -566,9 +566,17 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         screen_key: 'ORG_STRUCTURE',
         screen_name: 'Estructura Organizacional',
         menu_label: 'Estructura',
-        route_path: '/dashboard/org/companies',
+        route_path: '/dashboard/org/structure',
         icon_key: 'Building2',
         sort_order: 40,
+      },
+      {
+        screen_key: 'ORG_COMPANIES',
+        screen_name: 'Empresas',
+        menu_label: 'Empresa',
+        route_path: '/dashboard/org/companies',
+        icon_key: 'Building2',
+        sort_order: 45,
       },
       {
         screen_key: 'ORG_WORK_LOCATIONS',
@@ -576,7 +584,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Localizaciones',
         route_path: '/dashboard/org/work-locations',
         icon_key: 'MapPin',
-        sort_order: 45,
+        sort_order: 50,
       },
       {
         screen_key: 'ORG_DEPARTMENTS',
@@ -584,7 +592,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Departamentos',
         route_path: '/dashboard/org/departments',
         icon_key: 'Building',
-        sort_order: 50,
+        sort_order: 55,
       },
       {
         screen_key: 'ORG_AREAS',
@@ -592,7 +600,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Áreas',
         route_path: '/dashboard/org/areas',
         icon_key: 'Grid3X3',
-        sort_order: 55,
+        sort_order: 60,
       },
       {
         screen_key: 'ORG_WORK_GROUPS',
@@ -600,7 +608,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Grupos Trabajo',
         route_path: '/dashboard/org/work-groups',
         icon_key: 'Users',
-        sort_order: 60,
+        sort_order: 65,
       },
       {
         screen_key: 'ORG_PAYROLL_GROUPS',
@@ -608,7 +616,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Grupos Nómina',
         route_path: '/dashboard/org/payroll-groups',
         icon_key: 'Wallet',
-        sort_order: 65,
+        sort_order: 70,
       },
       {
         screen_key: 'ORG_JOB_TITLES',
@@ -616,7 +624,7 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Cargos',
         route_path: '/dashboard/org/job-titles',
         icon_key: 'Briefcase',
-        sort_order: 70,
+        sort_order: 75,
       },
       {
         screen_key: 'ORG_COST_CENTERS',
@@ -624,15 +632,15 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         menu_label: 'Centros Costo',
         route_path: '/dashboard/org/cost-centers',
         icon_key: 'Landmark',
-        sort_order: 75,
+        sort_order: 80,
       },
       {
-        screen_key: 'ORG_MAINTENANCE',
-        screen_name: 'Mantenimiento Organizacional',
-        menu_label: 'Mantenimiento',
-        route_path: '/dashboard/org/maintenance',
-        icon_key: 'Database',
-        sort_order: 80,
+        screen_key: 'ORG_EMPLOYEE_COMPANIES',
+        screen_name: 'Empleado por Empresas',
+        menu_label: 'Empleado por Empresas',
+        route_path: '/dashboard/org/employee-companies',
+        icon_key: 'UsersRound',
+        sort_order: 85,
       },
     ];
 
@@ -712,6 +720,55 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         screen_id: newScreen.id,
         created: true,
       });
+    }
+
+    // Retirar la pantalla ORG_MAINTENANCE del menu (deprecada)
+    let deprecatedOrgMaintenanceDisabled = false;
+    const { data: deprecatedOrgMaintenance } = await Postgres
+      .from('screens')
+      .select('id, is_active')
+      .eq('screen_key', 'ORG_MAINTENANCE')
+      .maybeSingle();
+
+    if (deprecatedOrgMaintenance?.id) {
+      await Postgres
+        .from('screens')
+        .update({
+          is_active: false,
+          updated_by: 'SYSTEM',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', deprecatedOrgMaintenance.id);
+
+      const { data: deprecatedScreenActions } = await Postgres
+        .from('screen_actions')
+        .select('id')
+        .eq('screen_id', deprecatedOrgMaintenance.id);
+
+      const deprecatedScreenActionIds = (deprecatedScreenActions || []).map((row: any) => row.id);
+
+      if (deprecatedScreenActionIds.length > 0) {
+        await Postgres
+          .from('screen_actions')
+          .update({
+            is_active: false,
+            updated_by: 'SYSTEM',
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', deprecatedScreenActionIds);
+
+        await Postgres
+          .from('role_screen_actions')
+          .update({
+            is_allowed: false,
+            is_active: false,
+            updated_by: 'SYSTEM',
+            updated_at: new Date().toISOString(),
+          })
+          .in('screen_action_id', deprecatedScreenActionIds);
+      }
+
+      deprecatedOrgMaintenanceDisabled = true;
     }
 
     const requiredActionKeys = ['VIEW', 'CREATE', 'EDIT', 'DELETE'];
@@ -908,7 +965,8 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
       screen_actions_created: screenActionsCreated,
       role_screen_actions_created: roleScreenActionsCreated,
       supervisor_permissions_disabled: supervisorPermissionsDisabled,
-      any_created: screensCreated > 0 || screenActionsCreated > 0 || roleScreenActionsCreated > 0,
+      deprecated_org_maintenance_disabled: deprecatedOrgMaintenanceDisabled,
+      any_created: screensCreated > 0 || screenActionsCreated > 0 || roleScreenActionsCreated > 0 || deprecatedOrgMaintenanceDisabled,
     });
   } catch (error: any) {
     console.error('❌ [BOOTSTRAP] Error ensure-org-maintenance-screen:', error);

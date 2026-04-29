@@ -23,7 +23,7 @@ function AppContent() {
   useEffect(() => {
     if (!user || !session?.access_token) return;
 
-    const bootstrapKey = 'bootstrap_screens_done_v2';
+    const bootstrapKey = 'bootstrap_screens_done_v4';
     if (sessionStorage.getItem(bootstrapKey)) return;
     sessionStorage.setItem(bootstrapKey, 'true');
 
