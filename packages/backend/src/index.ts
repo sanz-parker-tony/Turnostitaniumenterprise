@@ -306,6 +306,8 @@ router.get('/users/menu-screens', requireAuth, async (req: Request, res: Respons
          AND smg.is_active = TRUE
         WHERE u.auth_user_id = $1
           AND u.is_active = TRUE
+          AND COALESCE(s.route_path, '') <> '/dashboard/org/employees'
+          AND s.screen_key <> 'ORG_EMPLOYEES'
         ORDER BY smg.sort_order, s.sort_order
       `,
       [authUserId]

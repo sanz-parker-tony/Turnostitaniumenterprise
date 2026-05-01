@@ -30,6 +30,8 @@ interface PermissionsContextType {
 }
 
 const PermissionsContext = createContext<PermissionsContextType | undefined>(undefined);
+const EXCLUDED_MENU_ROUTES = new Set(['/dashboard/org/employees']);
+const EXCLUDED_SCREEN_KEYS = new Set(['ORG_EMPLOYEES']);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile, session } = useAuth();
@@ -98,11 +100,16 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
           }
           return a.screen_sort_order - b.screen_sort_order;
         });
+        const filteredScreens = sortedScreens.filter(
+          (screen: MenuScreen) =>
+            !EXCLUDED_MENU_ROUTES.has(screen.route_path) &&
+            !EXCLUDED_SCREEN_KEYS.has(screen.screen_key)
+        );
 
         if (isMounted) {
-          setMenuScreens(sortedScreens);
-          console.log('✅ Pantallas cargadas y ordenadas:', sortedScreens.length);
-          console.log('📋 Pantallas:', sortedScreens);
+          setMenuScreens(filteredScreens);
+          console.log('✅ Pantallas cargadas y ordenadas:', filteredScreens.length);
+          console.log('📋 Pantallas:', filteredScreens);
         }
       } catch (error: any) {
         // ✅ Ignorar AbortError - es normal cuando se desmonta el componente

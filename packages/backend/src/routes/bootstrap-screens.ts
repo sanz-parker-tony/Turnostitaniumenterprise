@@ -635,12 +635,20 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
         sort_order: 80,
       },
       {
+        screen_key: 'ORG_EMPLOYEE_PROFILES',
+        screen_name: 'Perfiles de Empleado',
+        menu_label: 'Perfiles',
+        route_path: '/dashboard/org/employee-profiles',
+        icon_key: 'IdCard',
+        sort_order: 85,
+      },
+      {
         screen_key: 'ORG_EMPLOYEE_COMPANIES',
         screen_name: 'Empleado por Empresas',
         menu_label: 'Empleado por Empresas',
         route_path: '/dashboard/org/employee-companies',
         icon_key: 'UsersRound',
-        sort_order: 85,
+        sort_order: 90,
       },
     ];
 

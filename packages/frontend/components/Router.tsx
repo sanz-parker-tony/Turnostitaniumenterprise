@@ -24,6 +24,8 @@ import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
 import { OrgStructure } from './screens/org/OrgStructure';
 import { OrgMaintenance } from './screens/org/OrgMaintenance';
+import { EmployeeCompaniesManagement } from './screens/org/EmployeeCompaniesManagement';
+import { EmployeeProfilesManagement } from './screens/org/EmployeeProfilesManagement';
 import TenantsManagement from './security/TenantsManagement';
 import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
 import { ScreensManagement } from './screens/security/ScreensManagement';
@@ -116,7 +118,8 @@ export function Router() {
     '/dashboard/org/payroll-groups': <OrgMaintenance initialEntity="payroll-groups" hideEntityTabs pageTitle="Grupos de Nómina" pageDescription="Gestión de grupos de nómina" />,
     '/dashboard/org/job-titles': <OrgMaintenance initialEntity="job-titles" hideEntityTabs pageTitle="Cargos" pageDescription="Gestión de cargos organizacionales" />,
     '/dashboard/org/cost-centers': <OrgMaintenance initialEntity="cost-centers" hideEntityTabs pageTitle="Centros de Costo" pageDescription="Gestión de centros de costo" />,
-    '/dashboard/org/employee-companies': <OrgMaintenance initialEntity="employee-companies" hideEntityTabs pageTitle="Empleado por Empresas" pageDescription="Gestión de asignaciones laborales por empresa" />,
+    '/dashboard/org/employee-profiles': <EmployeeProfilesManagement />,
+    '/dashboard/org/employee-companies': <EmployeeCompaniesManagement />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

@@ -6,7 +6,7 @@
 'use client';
 
 import ScreenPageShell from '@/components/ScreenPageShell';
-import UnderConstruction from '@/components/UnderConstruction';
+import { ShiftManagement } from '@/components/screens/config/ShiftManagement';
 
 export default function ConfigShiftsPage() {
   return (
@@ -15,11 +15,7 @@ export default function ConfigShiftsPage() {
       title="Horarios y Turnos"
       description="Gestión de horarios y turnos de trabajo"
     >
-      <UnderConstruction
-        screenName="Gestión de Horarios y Turnos"
-        screenKey="SCHEDULE_MANAGEMENT"
-        description="Esta pantalla permitirá crear y configurar los horarios de trabajo: turnos rotativos, turnos fijos, horarios flexibles, tolerancias de entrada/salida, breaks, comidas, y horas extras."
-      />
+      <ShiftManagement showHeader={false} />
     </ScreenPageShell>
   );
 }
