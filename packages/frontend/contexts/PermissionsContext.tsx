@@ -30,8 +30,8 @@ interface PermissionsContextType {
 }
 
 const PermissionsContext = createContext<PermissionsContextType | undefined>(undefined);
-const EXCLUDED_MENU_ROUTES = new Set(['/dashboard/org/employees']);
-const EXCLUDED_SCREEN_KEYS = new Set(['ORG_EMPLOYEES']);
+const EXCLUDED_MENU_ROUTES = new Set(['/dashboard/org/employees', '/dashboard/config/shifts']);
+const EXCLUDED_SCREEN_KEYS = new Set(['ORG_EMPLOYEES', 'SCHEDULE_MANAGEMENT']);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile, session } = useAuth();

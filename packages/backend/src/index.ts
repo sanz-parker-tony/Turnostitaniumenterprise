@@ -55,6 +55,8 @@ import scopeTypesRouter from './routes/scope-types-routes';
 import screenActionsRouter from './routes/screen-actions-mgmt-routes';
 import screensRouter from './routes/screens-mgmt-routes';
 import settingsRouter from './routes/settings-routes';
+import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
+import shiftConstructorRouter from './routes/shift-constructor-routes';
 import systemSettingsRouter from './routes/system-settings-routes';
 import usersRouter from './routes/users-management-routes';
 
@@ -815,6 +817,12 @@ router.use('/users-management', requireAuth, usersRouter);
 // Organization Management
 router.use('/organization', requireAuth, organizationRouter);
 
+// Shift Constructor Management
+router.use('/shift-constructor', requireAuth, shiftConstructorRouter);
+
+// Employee Shift Planning
+router.use('/employee-shift-planning', requireAuth, employeeShiftPlanningRouter);
+
 // ============================================================================
 // HEALTH & STATUS
 // ============================================================================
@@ -829,6 +837,8 @@ router.get('/status', (req: Request, res: Response) => {
       users: ['/users/profile', '/users/change-password'],
       tenants: ['/tenants/:id', '/tenant/settings'],
       maintenance: ['/actions', '/attendance-events', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
+      config: ['/shift-constructor'],
+      employees: ['/employee-shift-planning'],
     },
   });
 });

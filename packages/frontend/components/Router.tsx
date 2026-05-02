@@ -18,7 +18,7 @@ import { ScopeTypesManagement } from './screens/maintenance/ScopeTypesManagement
 import { UsersManagement } from './screens/maintenance/UsersManagement';
 import { SystemSettingsAdmin } from './screens/config/SystemSettingsAdmin';
 import { TenantSettings } from './screens/config/TenantSettings';
-import { ShiftManagement } from './screens/config/ShiftManagement';
+import { ShiftConstructorManagement } from './screens/config/ShiftConstructorManagement';
 import { CalendarManagement } from './screens/config/CalendarManagement';
 import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
@@ -26,6 +26,7 @@ import { OrgStructure } from './screens/org/OrgStructure';
 import { OrgMaintenance } from './screens/org/OrgMaintenance';
 import { EmployeeCompaniesManagement } from './screens/org/EmployeeCompaniesManagement';
 import { EmployeeProfilesManagement } from './screens/org/EmployeeProfilesManagement';
+import { EmployeeShiftPlanningManagement } from './screens/employees/EmployeeShiftPlanningManagement';
 import TenantsManagement from './security/TenantsManagement';
 import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
 import { ScreensManagement } from './screens/security/ScreensManagement';
@@ -103,7 +104,8 @@ export function Router() {
 
     // ── Configuración ──────────────────────────────────────────────────────
     '/dashboard/config/tenant-settings': <TenantSettings />,
-    '/dashboard/config/shifts':          <ShiftManagement />,
+    '/dashboard/config/shifts':          <ShiftConstructorManagement />,
+    '/dashboard/config/shift-constructor': <ShiftConstructorManagement />,
     '/dashboard/config/calendars':       <CalendarManagement />,
     '/dashboard/config/devices':         <DeviceManagement />,
     '/dashboard/config/payroll':         <PayrollIntegration />,
@@ -120,6 +122,9 @@ export function Router() {
     '/dashboard/org/cost-centers': <OrgMaintenance initialEntity="cost-centers" hideEntityTabs pageTitle="Centros de Costo" pageDescription="Gestión de centros de costo" />,
     '/dashboard/org/employee-profiles': <EmployeeProfilesManagement />,
     '/dashboard/org/employee-companies': <EmployeeCompaniesManagement />,
+
+    // ── Empleados ────────────────────────────────────────────────────────────
+    '/dashboard/employees/shift-planning': <EmployeeShiftPlanningManagement />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

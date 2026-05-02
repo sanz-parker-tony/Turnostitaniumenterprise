@@ -80,12 +80,14 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
 
   // ========== CONFIGURATION ==========
   'CONF_PARAMS': '/dashboard/config/parameters',
-  'CONF_SHIFTS': '/dashboard/config/shifts',
+  'CONF_SHIFTS': '/dashboard/config/shift-constructor',
+  'CONF_SHIFT_CONSTRUCTOR': '/dashboard/config/shift-constructor',
   'CONF_WORK_PATTERNS': '/dashboard/config/work-patterns',
   'CONF_SURCHARGES': '/dashboard/config/surcharges',
   'CONF_DEVICES': '/dashboard/config/devices',
   'CONF_ATT_PROCESS': '/dashboard/config/attendance-processes',
   'CONF_TENANT_SETTINGS': '/dashboard/config/tenant-settings',
+  'SHIFT_CONSTRUCTOR_MANAGEMENT': '/dashboard/config/shift-constructor',
 
   // ========== ORGANIZATION ==========
   'ORG_STRUCTURE': '/dashboard/org/structure',
@@ -108,6 +110,8 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'EMPL_PROFILE_SETTINGS': '/dashboard/employees/profile-settings',
   'EMPL_ABSENCE_REQUESTS': '/dashboard/employees/absence-requests',
   'EMPL_DOCUMENTS': '/dashboard/employees/documents',
+  'EMPL_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
+  'EMPLOYEE_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
 
   // ========== ATTENDANCE ==========
   'ATT_TIME_PUNCHES': '/dashboard/attendance/time-punches',

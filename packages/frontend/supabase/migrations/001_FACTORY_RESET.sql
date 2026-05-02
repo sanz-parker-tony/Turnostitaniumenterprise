@@ -66,6 +66,8 @@ TRUNCATE TABLE public.employee_time_punches CASCADE;
 TRUNCATE TABLE public.employee_shift_plans CASCADE;
 TRUNCATE TABLE public.employee_absence_requests CASCADE;
 TRUNCATE TABLE public.time_surcharge_rules CASCADE;
+TRUNCATE TABLE public.shift_constructor_blocks CASCADE;
+TRUNCATE TABLE public.shift_constructors CASCADE;
 TRUNCATE TABLE public.attendance_events CASCADE;
 TRUNCATE TABLE public.attendance_movements CASCADE;
 TRUNCATE TABLE public.justification_types CASCADE;
