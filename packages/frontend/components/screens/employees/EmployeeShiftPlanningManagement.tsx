@@ -1,23 +1,34 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
+  BellRing,
+  Briefcase,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Coffee,
   CheckCircle2,
   CircleX,
   Clock3,
   Filter,
+  Flame,
   Lightbulb,
+  Minus,
   Moon,
+  Plus,
   RefreshCw,
   Save,
   Settings,
+  Shield,
   Sparkles,
   Sun,
   Sunset,
+  Truck,
   Users,
+  Wrench,
 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 
@@ -28,6 +39,8 @@ type ShiftPlanRow = {
   shift_date: string;
   shift_type_id: string | null;
   company_id: string;
+  shift_name?: string | null;
+  shift_short_name?: string | null;
 };
 
 type EmployeeRow = {
@@ -44,6 +57,9 @@ type ShiftRow = {
   company_id: string;
   shift_name: string;
   shift_short_name: string;
+  start_time?: string | null;
+  work_minutes?: number | null;
+  shift_icon_key?: string | null;
 };
 
 type ShiftTypeRow = {
@@ -67,7 +83,8 @@ type DayCellChange = {
 };
 
 type ViewMode = 'employees' | 'shifts';
-type ShiftKind = 'M' | 'T' | 'N' | 'L' | 'O';
+type ShiftKind = 'M' | 'T' | 'N' | 'L' | 'O' | 'X';
+type DistributionShift = { shift_id: string; required: number };
 
 type Suggestion = {
   id: string;
@@ -78,14 +95,50 @@ type Suggestion = {
   apply: () => void;
 };
 
+type WorkPattern = {
+  id: string;
+  name: string;
+  work_days: number;
+  free_days: number;
+  is_default?: boolean;
+};
+
+type WorkPatternApiRow = {
+  id: string;
+  pattern_name: string;
+  work_days_per_cycle: number;
+  rest_days_per_cycle: number;
+  is_active: boolean;
+};
+
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+
+const DEFAULT_WORK_PATTERNS: WorkPattern[] = [
+  { id: 'p-5x2', name: 'Patrón 5x2', work_days: 5, free_days: 2, is_default: true },
+  { id: 'p-6x1', name: 'Patrón 6x1', work_days: 6, free_days: 1 },
+  { id: 'p-4x3', name: 'Patrón 4x3', work_days: 4, free_days: 3 },
+];
 
 const KIND_META: Record<ShiftKind, { label: string; color: string; bg: string; Icon: any }> = {
   M: { label: 'Turno Mañana', color: '#0074D9', bg: '#E3F2FD', Icon: Sun },
   T: { label: 'Turno Tarde', color: '#FF6B35', bg: '#FFF3E0', Icon: Sunset },
   N: { label: 'Turno Noche', color: '#5E35B1', bg: '#EDE7F6', Icon: Moon },
   L: { label: 'Libre', color: '#9CA3AF', bg: '#F3F4F6', Icon: Coffee },
-  O: { label: 'Otro', color: '#6B7280', bg: '#F3F4F6', Icon: Clock3 },
+  O: { label: 'Otro', color: '#6B7280', bg: '#F3F4F6', Icon: Briefcase },
+  X: { label: 'Sin dato', color: '#EF4444', bg: '#FEF2F2', Icon: CircleX },
+};
+
+const SHIFT_ICON_META: Record<string, { color: string; bg: string; Icon: any }> = {
+  Sun: { color: '#0074D9', bg: '#E3F2FD', Icon: Sun },
+  Sunset: { color: '#FF6B35', bg: '#FFF3E0', Icon: Sunset },
+  Moon: { color: '#5E35B1', bg: '#EDE7F6', Icon: Moon },
+  Coffee: { color: '#9CA3AF', bg: '#F3F4F6', Icon: Coffee },
+  Briefcase: { color: '#4B5563', bg: '#EEF2F7', Icon: Briefcase },
+  BellRing: { color: '#DC2626', bg: '#FEE2E2', Icon: BellRing },
+  Shield: { color: '#0E7490', bg: '#ECFEFF', Icon: Shield },
+  Wrench: { color: '#0F766E', bg: '#ECFDF5', Icon: Wrench },
+  Truck: { color: '#B45309', bg: '#FFFBEB', Icon: Truck },
+  Flame: { color: '#C2410C', bg: '#FFF7ED', Icon: Flame },
 };
 
 function getToken() {
@@ -135,6 +188,39 @@ function keyOf(employeeId: string, dateIso: string): string {
   return `${employeeId}::${dateIso}`;
 }
 
+function normalizeShiftIconKey(value?: string | null): string | null {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === 'SUN' || raw === 'SOL' || raw === 'MANANA' || raw === 'MORNING') return 'Sun';
+  if (raw === 'SUNSET' || raw === 'ATARDECER' || raw === 'AFTERNOON' || raw === 'TARDE') return 'Sunset';
+  if (raw === 'MOON' || raw === 'NOCHE' || raw === 'NIGHT') return 'Moon';
+  if (raw === 'COFFEE' || raw === 'LIBRE' || raw === 'DESCANSO' || raw === 'REST' || raw === 'OFF') return 'Coffee';
+  if (raw === 'BRIEFCASE' || raw === 'OFICINA' || raw === 'OFFICE') return 'Briefcase';
+  if (raw === 'BELLRING' || raw === 'SIRENA' || raw === 'EMERGENCIA') return 'BellRing';
+  if (raw === 'SHIELD' || raw === 'SEGURIDAD') return 'Shield';
+  if (raw === 'WRENCH' || raw === 'MANTENIMIENTO') return 'Wrench';
+  if (raw === 'TRUCK' || raw === 'LOGISTICA' || raw === 'RUTA') return 'Truck';
+  if (raw === 'FLAME' || raw === 'ALTADEMANDA') return 'Flame';
+  return null;
+}
+
+function parseTimeToMinutes(value?: string | null): number | null {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function formatMinutesAsClock(totalMinutes: number): string {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hh = Math.floor(normalized / 60);
+  const mm = normalized % 60;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function classifyShift(shift: ShiftRow): ShiftKind {
   const text = `${shift.shift_short_name} ${shift.shift_name}`.toUpperCase();
   if (text.includes('LIBRE') || text.includes('DESCANSO') || text.includes('OFF') || text.includes('REST')) return 'L';
@@ -142,6 +228,40 @@ function classifyShift(shift: ShiftRow): ShiftKind {
   if (text.includes('TARDE') || text.includes('VES') || text.includes('T ')) return 'T';
   if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('M ')) return 'M';
   return 'O';
+}
+
+function classifyShiftText(shiftName?: string | null, shiftShortName?: string | null): ShiftKind {
+  const text = `${shiftShortName || ''} ${shiftName || ''}`.toUpperCase();
+  if (text.includes('LIBRE') || text.includes('DESCANSO') || text.includes('OFF') || text.includes('REST')) return 'L';
+  if (text.includes('NOCHE') || text.includes('NOC') || text.includes('N ')) return 'N';
+  if (text.includes('TARDE') || text.includes('VES') || text.includes('T ')) return 'T';
+  if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('M ')) return 'M';
+  return 'O';
+}
+
+function getShiftVisualMeta(shift: ShiftRow | null, kind: ShiftKind) {
+  const iconKey = normalizeShiftIconKey(shift?.shift_icon_key);
+  if (iconKey && SHIFT_ICON_META[iconKey]) {
+    return SHIFT_ICON_META[iconKey];
+  }
+  return KIND_META[kind];
+}
+
+function getShiftTimeHint(shift: ShiftRow | null, kind: ShiftKind): string {
+  const start = parseTimeToMinutes(shift?.start_time);
+  const workMinutes = Number(shift?.work_minutes || 0);
+  if (start !== null && workMinutes > 0) {
+    const end = start + workMinutes;
+    return `${formatMinutesAsClock(start)} - ${formatMinutesAsClock(end)}`;
+  }
+  if (kind === 'L') return 'Sin jornada';
+  if (kind === 'X') return 'Sin turno planificado';
+  return '-';
+}
+
+function isShiftCompatibleWithEmployee(shift: ShiftRow, employee: EmployeeRow): boolean {
+  if (!employee.company_id) return true;
+  return shift.company_id === employee.company_id;
 }
 
 export function EmployeeShiftPlanningManagement() {
@@ -159,9 +279,9 @@ export function EmployeeShiftPlanningManagement() {
   const [plans, setPlans] = useState<ShiftPlanRow[]>([]);
   const [changes, setChanges] = useState<Record<string, DayCellChange>>({});
 
-  const [dotacionM, setDotacionM] = useState(3);
-  const [dotacionT, setDotacionT] = useState(3);
-  const [dotacionN, setDotacionN] = useState(3);
+  const [distributionShifts, setDistributionShifts] = useState<DistributionShift[]>([]);
+  const [newDistributionShiftId, setNewDistributionShiftId] = useState('');
+  const [distributionComboOpen, setDistributionComboOpen] = useState(false);
   const [areaFilter, setAreaFilter] = useState('ALL');
   const [groupFilter, setGroupFilter] = useState('ALL');
   const [diasTrabajo, setDiasTrabajo] = useState(5);
@@ -175,8 +295,14 @@ export function EmployeeShiftPlanningManagement() {
   const [viewMode, setViewMode] = useState<ViewMode>('employees');
   const [ignoredSuggestionIds, setIgnoredSuggestionIds] = useState<Record<string, true>>({});
   const [confirmed, setConfirmed] = useState(false);
+  const [paramsPanelOpen, setParamsPanelOpen] = useState(false);
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [fechaInicio, setFechaInicio] = useState(() => toIsoDate(initialStart));
   const [fechaFin, setFechaFin] = useState(() => toIsoDate(initialEnd));
+  const [workPatterns, setWorkPatterns] = useState<WorkPattern[]>(DEFAULT_WORK_PATTERNS);
+  const [activePatternId, setActivePatternId] = useState('p-5x2');
+  const [legendShiftIds, setLegendShiftIds] = useState<string[]>([]);
+  const distributionComboRef = useRef<HTMLDivElement | null>(null);
 
   const rangeDays = useMemo(() => {
     const start = parseIsoDate(fechaInicio);
@@ -232,17 +358,37 @@ export function EmployeeShiftPlanningManagement() {
     return map;
   }, [shifts]);
 
-  const shiftIdByCompanyAndKind = useMemo(() => {
-    const map = new Map<string, Partial<Record<ShiftKind, string>>>();
-    shifts.forEach((shift) => {
-      const companyKey = shift.company_id || 'GLOBAL';
-      const current = map.get(companyKey) || {};
-      const kind = classifyShift(shift);
-      if (!current[kind]) current[kind] = shift.id;
-      map.set(companyKey, current);
-    });
-    return map;
+  const distributionShiftRows = useMemo(() => {
+    return distributionShifts
+      .map((item) => ({ item, shift: shiftsById.get(item.shift_id) || null }))
+      .filter((entry) => !!entry.shift) as Array<{ item: DistributionShift; shift: ShiftRow }>;
+  }, [distributionShifts, shiftsById]);
+
+  const distributionShiftIds = useMemo(() => {
+    return new Set(distributionShifts.map((item) => item.shift_id));
+  }, [distributionShifts]);
+
+  const selectableDistributionShifts = useMemo(() => {
+    return shifts
+      .sort((a, b) => a.shift_name.localeCompare(b.shift_name));
   }, [shifts]);
+
+  const availableDistributionShifts = useMemo(() => {
+    return selectableDistributionShifts.filter((shift) => !distributionShiftIds.has(shift.id));
+  }, [selectableDistributionShifts, distributionShiftIds]);
+
+  const selectedDistributionShift = useMemo(() => {
+    return selectableDistributionShifts.find((shift) => shift.id === newDistributionShiftId) || null;
+  }, [selectableDistributionShifts, newDistributionShiftId]);
+
+  const requiredByKind = useMemo(() => {
+    const base: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
+    distributionShiftRows.forEach(({ item, shift }) => {
+      const kind = classifyShift(shift);
+      base[kind] += Math.max(0, Number(item.required || 0));
+    });
+    return base;
+  }, [distributionShiftRows]);
 
   const shiftTypeIdByKind = useMemo(() => {
     const map: Partial<Record<ShiftKind, string>> = {};
@@ -254,6 +400,39 @@ export function EmployeeShiftPlanningManagement() {
     });
     return map;
   }, [shiftTypes]);
+
+  const shiftLegendEntries = useMemo(() => {
+    const sourceShifts = legendShiftIds.length > 0
+      ? shifts.filter((shift) => legendShiftIds.includes(shift.id))
+      : shifts;
+
+    const ordered = [...sourceShifts].sort((a, b) => {
+      const aKind = classifyShift(a);
+      const bKind = classifyShift(b);
+      return aKind.localeCompare(bKind) || a.shift_name.localeCompare(b.shift_name);
+    });
+
+    const entries = ordered.map((shift) => {
+      const kind = classifyShift(shift);
+      return {
+        key: shift.id,
+        label: shift.shift_name || shift.shift_short_name || 'Turno',
+        hint: getShiftTimeHint(shift, kind),
+        meta: getShiftVisualMeta(shift, kind),
+      };
+    });
+
+    if (legendShiftIds.length === 0) {
+      entries.push({
+        key: 'NO_DATA',
+        label: KIND_META.X.label,
+        hint: 'Sin turno planificado',
+        meta: KIND_META.X,
+      });
+    }
+
+    return entries;
+  }, [shifts, legendShiftIds]);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -270,15 +449,50 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const loadCatalogs = async () => {
-    const payload = (await request('/employee-shift-planning/catalogs')) as CatalogsResponse;
+    const [catalogsResult, patternsResult] = await Promise.allSettled([
+      request('/employee-shift-planning/catalogs'),
+      request('/work-patterns'),
+    ]);
+
+    if (catalogsResult.status !== 'fulfilled') {
+      throw catalogsResult.reason;
+    }
+
+    const payload = catalogsResult.value as CatalogsResponse;
     setEmployees(payload.employees || []);
     setShifts(payload.shifts || []);
     setShiftTypes(payload.shift_types || []);
+
+    if (patternsResult.status === 'fulfilled') {
+      const rows = ((patternsResult.value?.work_patterns || []) as WorkPatternApiRow[])
+        .filter((item) => item.is_active)
+        .map((item) => ({
+          id: item.id,
+          name: item.pattern_name,
+          work_days: item.work_days_per_cycle,
+          free_days: item.rest_days_per_cycle,
+        }));
+
+      const nextPatterns = rows.length > 0 ? rows : DEFAULT_WORK_PATTERNS;
+      setWorkPatterns(nextPatterns);
+      if (!nextPatterns.some((item) => item.id === activePatternId)) {
+        setActivePatternId(nextPatterns[0].id);
+      }
+    } else {
+      setWorkPatterns(DEFAULT_WORK_PATTERNS);
+      if (!DEFAULT_WORK_PATTERNS.some((item) => item.id === activePatternId)) {
+        setActivePatternId(DEFAULT_WORK_PATTERNS[0].id);
+      }
+    }
   };
 
   const loadPlans = async () => {
     const payload = await request(`/employee-shift-planning/plans?date_from=${rangeFrom}&date_to=${rangeTo}`);
-    setPlans(payload.plans || []);
+    const normalized = ((payload?.plans || []) as ShiftPlanRow[]).map((row) => ({
+      ...row,
+      shift_date: String(row.shift_date || '').split('T')[0],
+    }));
+    setPlans(normalized);
   };
 
   const loadAll = async () => {
@@ -323,27 +537,43 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const getShiftIdByKind = (employee: EmployeeRow, kind: ShiftKind): string | null => {
-    const companyKey = employee.company_id || 'GLOBAL';
-    const byCompany = shiftIdByCompanyAndKind.get(companyKey);
-    const byGlobal = shiftIdByCompanyAndKind.get('GLOBAL');
-    return byCompany?.[kind] || byGlobal?.[kind] || null;
+    if (kind === 'L') return null;
+    const found = distributionShiftRows.find(({ shift }) => {
+      return classifyShift(shift) === kind && isShiftCompatibleWithEmployee(shift, employee);
+    });
+    return found?.shift.id || null;
   };
 
   const cellShiftId = (employee: EmployeeRow, dateIso: string): string | null => {
     const change = changes[keyOf(employee.id, dateIso)];
     if (change) return change.shift_id;
     const planShiftId = plansByKey.get(keyOf(employee.id, dateIso))?.shift_id || null;
-    if (planShiftId) return planShiftId;
+    return planShiftId;
+  };
 
-    const patternKind = getPatternKind(employee, dateIso);
-    return getShiftIdByKind(employee, patternKind);
+  const cellShiftRow = (employee: EmployeeRow, dateIso: string): ShiftRow | null => {
+    const shiftId = cellShiftId(employee, dateIso);
+    if (!shiftId) return null;
+    return shiftsById.get(shiftId) || null;
   };
 
   const cellKind = (employee: EmployeeRow, dateIso: string): ShiftKind => {
+    const change = changes[keyOf(employee.id, dateIso)];
+    if (change) {
+      if (!change.shift_id) return 'L';
+      const changedShift = shiftsById.get(change.shift_id);
+      return changedShift ? classifyShift(changedShift) : 'O';
+    }
+
+    const plan = plansByKey.get(keyOf(employee.id, dateIso));
+    if (!plan?.shift_id) return 'X';
+
     const shiftId = cellShiftId(employee, dateIso);
-    if (!shiftId) return 'L';
+    if (!shiftId) return 'X';
     const shift = shiftsById.get(shiftId);
-    if (!shift) return 'L';
+    if (!shift) {
+      return classifyShiftText(plan.shift_name, plan.shift_short_name);
+    }
     return classifyShift(shift);
   };
 
@@ -405,17 +635,214 @@ export function EmployeeShiftPlanningManagement() {
     setCellShift(employee, dateIso, next || null);
   };
 
+  const addDistributionShift = () => {
+    const nextId = String(newDistributionShiftId || '').trim();
+    if (!nextId) return;
+    if (distributionShiftIds.has(nextId)) return;
+    const shift = shiftsById.get(nextId);
+    if (!shift) return;
+    const required = classifyShift(shift) === 'L' ? 0 : 1;
+    setDistributionShifts((prev) => [...prev, { shift_id: nextId, required }]);
+    setNewDistributionShiftId('');
+    setDistributionComboOpen(false);
+  };
+
+  const removeDistributionShift = (shiftId: string) => {
+    const shift = shiftsById.get(shiftId);
+    if (shift && classifyShift(shift) === 'L') return;
+    setDistributionShifts((prev) => prev.filter((item) => item.shift_id !== shiftId));
+  };
+
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (!distributionComboRef.current) return;
+      if (distributionComboRef.current.contains(event.target as Node)) return;
+      setDistributionComboOpen(false);
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    return () => window.removeEventListener('mousedown', onMouseDown);
+  }, []);
+
+  const updateDistributionRequired = (shiftId: string, required: number) => {
+    const shift = shiftsById.get(shiftId);
+    if (shift && classifyShift(shift) === 'L') {
+      setDistributionShifts((prev) =>
+        prev.map((item) => (item.shift_id === shiftId ? { ...item, required: 0 } : item))
+      );
+      return;
+    }
+    const safe = Math.max(0, Math.trunc(required));
+    setDistributionShifts((prev) =>
+      prev.map((item) => (item.shift_id === shiftId ? { ...item, required: safe } : item))
+    );
+  };
+
+  const generatePlanning = () => {
+    if (confirmed) return;
+
+    const generated: Record<string, DayCellChange> = {};
+    const workLoadByEmployee: Record<string, number> = {};
+
+    const getEffectiveShiftId = (employeeId: string, dateIso: string): string | null => {
+      const cellKey = keyOf(employeeId, dateIso);
+      if (generated[cellKey]) return generated[cellKey].shift_id;
+      if (changes[cellKey]) return changes[cellKey].shift_id;
+      return plansByKey.get(cellKey)?.shift_id || null;
+    };
+
+    const hasExplicitFree = (employeeId: string, dateIso: string): boolean => {
+      const cellKey = keyOf(employeeId, dateIso);
+      if (generated[cellKey]) return generated[cellKey].shift_id === null;
+      if (changes[cellKey]) return changes[cellKey].shift_id === null;
+      return false;
+    };
+
+    const setGeneratedShift = (employee: EmployeeRow, dateIso: string, shiftId: string | null) => {
+      const shift = shiftId ? shiftsById.get(shiftId) : null;
+      const kind = shift ? classifyShift(shift) : 'X';
+      const shiftTypeId = shift ? (shiftTypeIdByKind[kind] || null) : null;
+      generated[keyOf(employee.id, dateIso)] = {
+        employee_id: employee.id,
+        shift_date: dateIso,
+        shift_id: shiftId,
+        shift_type_id: shiftTypeId,
+        company_id: employee.company_id,
+      };
+    };
+
+    const getKindForEmployeeDay = (employee: EmployeeRow, dateIso: string): ShiftKind => {
+      if (hasExplicitFree(employee.id, dateIso)) return 'L';
+      const effectiveShiftId = getEffectiveShiftId(employee.id, dateIso);
+      if (!effectiveShiftId) {
+        const plan = plansByKey.get(keyOf(employee.id, dateIso));
+        return plan?.shift_id ? 'O' : 'X';
+      }
+      const shift = shiftsById.get(effectiveShiftId);
+      if (!shift) return 'X';
+      return classifyShift(shift);
+    };
+
+    const scoreEmployeeForKind = (employee: EmployeeRow, dateIso: string, targetKind: ShiftKind): number => {
+      let score = workLoadByEmployee[employee.id] || 0;
+      if (targetKind === 'M' && reglaEvitarNM) {
+        const prev = addDays(parseIsoDate(dateIso) || new Date(`${dateIso}T00:00:00`), -1);
+        const prevIso = toIsoDate(prev);
+        const prevKind = getKindForEmployeeDay(employee, prevIso);
+        if (prevKind === 'N') score += 1000;
+      }
+      return score;
+    };
+
+    rangeDays.forEach((day) => {
+      const dateIso = toIsoDate(day);
+
+      // 1) Base por patrón para TODO el rango (trabajo/descanso)
+      filteredEmployees.forEach((employee) => {
+        const patternKind = getPatternKind(employee, dateIso);
+        const patternShiftId = getShiftIdByKind(employee, patternKind);
+
+        if (patternKind === 'L') {
+          // Descanso explícito del patrón.
+          setGeneratedShift(employee, dateIso, null);
+          return;
+        }
+
+        if (patternShiftId) {
+          setGeneratedShift(employee, dateIso, patternShiftId);
+          return;
+        }
+
+        // Si no hay turno definido para ese tipo en la compañía, conserva el existente.
+        const current = getEffectiveShiftId(employee.id, dateIso);
+        if (current) {
+          setGeneratedShift(employee, dateIso, current);
+        }
+      });
+
+      // 2) Ajuste por dotación mínima para turnos seleccionados
+      const targetByShiftId: Record<string, number> = {};
+      distributionShiftRows.forEach(({ item, shift }) => {
+        targetByShiftId[shift.id] = Math.max(0, Number(item.required || 0));
+      });
+
+      distributionShiftRows.forEach(({ item, shift }) => {
+        const required = Math.max(0, Number(item.required || 0));
+        if (required <= 0) return;
+        const targetKind = classifyShift(shift);
+
+        const dayCount: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
+        const dayCountByShift: Record<string, number> = {};
+        filteredEmployees.forEach((employee) => {
+          const currentKind = getKindForEmployeeDay(employee, dateIso);
+          dayCount[currentKind] += 1;
+          const currentShiftId = getEffectiveShiftId(employee.id, dateIso);
+          if (currentShiftId) {
+            dayCountByShift[currentShiftId] = (dayCountByShift[currentShiftId] || 0) + 1;
+          }
+        });
+
+        let deficit = required - (dayCountByShift[shift.id] || 0);
+        if (deficit <= 0) return;
+
+        const candidates = filteredEmployees
+          .filter((employee) => {
+            const currentShiftId = getEffectiveShiftId(employee.id, dateIso);
+            if (currentShiftId === shift.id) return false;
+            const currentKind = getKindForEmployeeDay(employee, dateIso);
+            if (currentKind === 'X' || currentKind === 'O') return true;
+            if (currentKind === 'L') return true;
+            if (!currentShiftId) return true;
+
+            const currentTarget = targetByShiftId[currentShiftId];
+            if (currentTarget === undefined) return true;
+            return (dayCountByShift[currentShiftId] || 0) > currentTarget;
+          })
+          .sort((a, b) => scoreEmployeeForKind(a, dateIso, targetKind) - scoreEmployeeForKind(b, dateIso, targetKind));
+
+        for (const employee of candidates) {
+          if (deficit <= 0) break;
+          if (!isShiftCompatibleWithEmployee(shift, employee)) continue;
+          const targetShiftId = shift.id;
+          if (!targetShiftId) continue;
+          const previousShiftId = getEffectiveShiftId(employee.id, dateIso);
+          const prevKind = getKindForEmployeeDay(employee, dateIso);
+          setGeneratedShift(employee, dateIso, targetShiftId);
+          workLoadByEmployee[employee.id] = (workLoadByEmployee[employee.id] || 0) + 1;
+          dayCount[prevKind] = Math.max(0, dayCount[prevKind] - 1);
+          dayCount[targetKind] += 1;
+          if (previousShiftId) {
+            dayCountByShift[previousShiftId] = Math.max(0, (dayCountByShift[previousShiftId] || 0) - 1);
+          }
+          dayCountByShift[targetShiftId] = (dayCountByShift[targetShiftId] || 0) + 1;
+          deficit -= 1;
+        }
+      });
+    });
+
+    if (Object.keys(generated).length === 0) {
+      setSuccess('No hay celdas sin planificación para generar.');
+      return;
+    }
+
+    setChanges((prev) => ({ ...prev, ...generated }));
+    setSuccess(`Planificación generada en ${Object.keys(generated).length} celdas. Revise y luego guarde cambios.`);
+    setError(null);
+    setConfirmed(false);
+  };
+
   const pendingPersistChanges = useMemo<DayCellChange[]>(() => {
     const next: DayCellChange[] = [];
 
     filteredEmployees.forEach((employee) => {
       rangeDays.forEach((day) => {
         const dateIso = toIsoDate(day);
+        const cellKey = keyOf(employee.id, dateIso);
+        const explicitChange = changes[cellKey];
         const existingShiftId = plansByKey.get(keyOf(employee.id, dateIso))?.shift_id || null;
         const effectiveShiftId = cellShiftId(employee, dateIso);
 
-        if (existingShiftId === effectiveShiftId) return;
-        if (!existingShiftId && !effectiveShiftId) return;
+        if (existingShiftId === effectiveShiftId && !explicitChange) return;
+        if (!existingShiftId && !effectiveShiftId && !explicitChange) return;
 
         let shiftTypeId: string | null = null;
         if (effectiveShiftId) {
@@ -429,7 +856,7 @@ export function EmployeeShiftPlanningManagement() {
           employee_id: employee.id,
           shift_date: dateIso,
           shift_id: effectiveShiftId,
-          shift_type_id: shiftTypeId,
+          shift_type_id: explicitChange ? explicitChange.shift_type_id : shiftTypeId,
           company_id: employee.company_id,
         });
       });
@@ -464,21 +891,38 @@ export function EmployeeShiftPlanningManagement() {
     }
   };
 
-  const resetPlan = async () => {
+  const reloadGridFromDatabase = async () => {
+    if (rangeDays.length === 0) {
+      setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
     setChanges({});
     setConfirmed(false);
-    setSuccess(null);
-    setError(null);
-    await loadPlans();
+    try {
+      await loadPlans();
+      setSuccess('Grilla recargada desde la base de datos.');
+    } catch (err: any) {
+      setError(err?.message || 'Error recargando planificación');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const confirmPlan = async () => {
-    await saveChanges();
-    setConfirmed(true);
+  const resetPlan = async () => {
+    await reloadGridFromDatabase();
+  };
+
+  const applyParameters = async () => {
+    const selectedShiftIds = distributionShiftRows.map(({ shift }) => shift.id);
+    setLegendShiftIds(selectedShiftIds);
+    await reloadGridFromDatabase();
   };
 
   const totalsByKind = useMemo(() => {
-    const totals: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0 };
+    const totals: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
     filteredEmployees.forEach((employee) => {
       rangeDays.forEach((day) => {
         totals[cellKind(employee, toIsoDate(day))] += 1;
@@ -491,10 +935,25 @@ export function EmployeeShiftPlanningManagement() {
     const result: Record<string, Record<ShiftKind, number>> = {};
     rangeDays.forEach((day) => {
       const dateIso = toIsoDate(day);
-      result[dateIso] = { M: 0, T: 0, N: 0, L: 0, O: 0 };
+      result[dateIso] = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
       filteredEmployees.forEach((employee) => {
         result[dateIso][cellKind(employee, dateIso)] += 1;
       });
+    });
+    return result;
+  }, [rangeDays, filteredEmployees, plansByKey, changes, shiftsById]);
+
+  const countByDayAndShift = useMemo(() => {
+    const result: Record<string, Record<string, number>> = {};
+    rangeDays.forEach((day) => {
+      const dateIso = toIsoDate(day);
+      const byShift: Record<string, number> = {};
+      filteredEmployees.forEach((employee) => {
+        const shiftId = cellShiftId(employee, dateIso);
+        if (!shiftId) return;
+        byShift[shiftId] = (byShift[shiftId] || 0) + 1;
+      });
+      result[dateIso] = byShift;
     });
     return result;
   }, [rangeDays, filteredEmployees, plansByKey, changes, shiftsById]);
@@ -530,39 +989,87 @@ export function EmployeeShiftPlanningManagement() {
 
     rangeDays.forEach((day) => {
       const dateIso = toIsoDate(day);
-      if (countByDayAndKind[dateIso].N < dotacionN) {
-        const candidate = filteredEmployees.find((employee) => cellKind(employee, dateIso) === 'L');
-        if (candidate) {
-          const nightShift = shifts.find((shift) => classifyShift(shift) === 'N' && (!candidate.company_id || shift.company_id === candidate.company_id));
-          if (nightShift) {
-            list.push({
-              id: `dotacion-n-${candidate.id}-${dateIso}`,
-              kind: 'dotacion',
-              severity: 'medium',
-              text: `Dotación incompleta en turno Noche del ${formatDayMonth(dateIso)} (objetivo ${dotacionN}).`,
-              recommendation: `Reasignar ${candidate.employee_code} a turno Noche.`,
-              apply: () => setCellShift(candidate, dateIso, nightShift.id),
-            });
-          }
-        }
-      }
+      distributionShiftRows.forEach(({ item, shift }) => {
+        const required = Math.max(0, Number(item.required || 0));
+        if (required <= 0) return;
+        const current = countByDayAndShift[dateIso]?.[shift.id] || 0;
+        if (current >= required) return;
+
+        const candidate = filteredEmployees.find((employee) => {
+          const kind = cellKind(employee, dateIso);
+          return kind === 'L' || kind === 'X' || kind === 'O';
+        });
+        if (!candidate || !isShiftCompatibleWithEmployee(shift, candidate)) return;
+
+        list.push({
+          id: `dotacion-${shift.id}-${candidate.id}-${dateIso}`,
+          kind: 'dotacion',
+          severity: 'medium',
+          text: `Dotación incompleta en ${shift.shift_name} del ${formatDayMonth(dateIso)} (objetivo ${required}).`,
+          recommendation: `Reasignar ${candidate.employee_code} a ${shift.shift_name}.`,
+          apply: () => setCellShift(candidate, dateIso, shift.id),
+        });
+      });
     });
 
     return list.filter((item) => !ignoredSuggestionIds[item.id]).slice(0, 6);
-  }, [filteredEmployees, rangeDays, dotacionN, countByDayAndKind, ignoredSuggestionIds, shifts, plansByKey, changes]);
+  }, [filteredEmployees, rangeDays, distributionShiftRows, countByDayAndShift, ignoredSuggestionIds, shifts, plansByKey, changes]);
 
   const alerts = useMemo(() => {
     const issues: string[] = [];
     rangeDays.forEach((day) => {
       const dateIso = toIsoDate(day);
-      if (countByDayAndKind[dateIso].M < dotacionM) issues.push(`Dotación baja en Mañana ${formatDayMonth(dateIso)}.`);
-      if (countByDayAndKind[dateIso].T < dotacionT) issues.push(`Dotación baja en Tarde ${formatDayMonth(dateIso)}.`);
-      if (countByDayAndKind[dateIso].N < dotacionN) issues.push(`Dotación baja en Noche ${formatDayMonth(dateIso)}.`);
+      distributionShiftRows.forEach(({ item, shift }) => {
+        const required = Math.max(0, Number(item.required || 0));
+        if (required <= 0) return;
+        const current = countByDayAndShift[dateIso]?.[shift.id] || 0;
+        if (current < required) issues.push(`Dotación baja en ${shift.shift_name} ${formatDayMonth(dateIso)}.`);
+      });
     });
     return issues.slice(0, 5);
-  }, [rangeDays, countByDayAndKind, dotacionM, dotacionT, dotacionN]);
+  }, [rangeDays, distributionShiftRows, countByDayAndShift]);
 
   const pendingChanges = pendingPersistChanges.length;
+
+  useEffect(() => {
+    const pattern = workPatterns.find((item) => item.id === activePatternId);
+    if (!pattern) return;
+    setDiasTrabajo(pattern.work_days);
+    setDiasLibres(pattern.free_days);
+  }, [activePatternId, workPatterns]);
+
+  useEffect(() => {
+    setDistributionShifts((prev) => {
+      const cleaned = prev.filter((item) => shiftsById.has(item.shift_id));
+      const libreShift = selectableDistributionShifts.find((shift) => classifyShift(shift) === 'L');
+      const ensureLibre = (items: DistributionShift[]) => {
+        if (!libreShift) return items;
+        const exists = items.some((item) => item.shift_id === libreShift.id);
+        if (exists) {
+          return items.map((item) =>
+            item.shift_id === libreShift.id ? { ...item, required: 0 } : item
+          );
+        }
+        return [...items, { shift_id: libreShift.id, required: 0 }];
+      };
+
+      if (cleaned.length > 0) return ensureLibre(cleaned);
+
+      const defaults: DistributionShift[] = [];
+      (['M', 'T', 'N'] as ShiftKind[]).forEach((kind) => {
+        const found = selectableDistributionShifts.find((shift) => classifyShift(shift) === kind);
+        if (found) defaults.push({ shift_id: found.id, required: 3 });
+      });
+
+      if (defaults.length > 0) return ensureLibre(defaults);
+      return ensureLibre(
+        selectableDistributionShifts.slice(0, 3).map((shift) => ({
+          shift_id: shift.id,
+          required: classifyShift(shift) === 'L' ? 0 : 3,
+        }))
+      );
+    });
+  }, [selectableDistributionShifts, shiftsById]);
 
   return (
     <div className="space-y-4">
@@ -574,200 +1081,10 @@ export function EmployeeShiftPlanningManagement() {
       {error && <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
-      <div className="grid grid-cols-12 gap-4">        <div className="col-span-12 xl:col-span-3 space-y-4">
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-2 flex items-center gap-2 text-xl font-semibold">
-              <Filter className="size-4" />
-              Filtros de Empleados
-            </div>
-            <div className="mb-4 text-sm text-gray-600">Solo empleados de turnos rotativos</div>
+      <div className="relative">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
 
-            <div className="space-y-3 border-b pb-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium">Área</label>
-                <select
-                  value={areaFilter}
-                  onChange={(event) => setAreaFilter(event.target.value)}
-                  className="w-full rounded-xl border px-3 py-2 text-sm"
-                >
-                  <option value="ALL">Todas las áreas</option>
-                  {areaOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Grupo de Trabajo</label>
-                <select
-                  value={groupFilter}
-                  onChange={(event) => setGroupFilter(event.target.value)}
-                  className="w-full rounded-xl border px-3 py-2 text-sm"
-                >
-                  <option value="ALL">Todos los grupos</option>
-                  {workGroupOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="pt-3 flex items-center justify-between text-sm">
-              <span className="text-gray-600">Empleados seleccionados:</span>
-              <span className="font-semibold text-gray-900">{filteredEmployees.length}</span>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-2 flex items-center gap-2 text-xl font-semibold">
-              <Settings className="size-4" />
-              Parámetros
-            </div>
-            <div className="mb-4 text-sm text-gray-600">Configuración de planificación</div>
-
-            <div className="space-y-2 border-b pb-3">
-              <div className="flex items-center gap-3">
-                <label className="w-24 text-sm font-medium">Fecha Inicio</label>
-                <input
-                  type="date"
-                  value={fechaInicio}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setFechaInicio(value);
-                    if (fechaFin && value && value > fechaFin) {
-                      setFechaFin(value);
-                    }
-                  }}
-                  className="flex-1 rounded-xl border px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <label className="w-24 text-sm font-medium">Fecha Fin</label>
-                <input
-                  type="date"
-                  value={fechaFin}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    if (fechaInicio && value && value < fechaInicio) {
-                      setFechaInicio(value);
-                    }
-                    setFechaFin(value);
-                  }}
-                  className="flex-1 rounded-xl border px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium">Esquema Trabajo/Libre</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-600">Días Trabajo</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={diasTrabajo}
-                      onChange={(event) => setDiasTrabajo(Math.max(1, Number(event.target.value || 1)))}
-                      className="w-full rounded-xl border px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-600">Días Libres</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={diasLibres}
-                      onChange={(event) => setDiasLibres(Math.max(0, Number(event.target.value || 0)))}
-                      className="w-full rounded-xl border px-3 py-2 text-sm"
-                    />
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-gray-600">Esquema actual: {diasTrabajo}/{diasLibres}</div>
-              </div>
-            </div>
-
-            <button
-              onClick={() => {
-                setDiasTrabajo(5);
-                setDiasLibres(2);
-              }}
-              className="mt-3 w-full rounded-xl border px-3 py-2 text-sm font-semibold hover:bg-gray-50"
-            >
-              Restablecer por defecto (5/2)
-            </button>
-          </div>
-
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-3 flex items-center gap-2 text-xl font-semibold">
-              <Users className="size-4" />
-              Dotación Requerida
-            </div>
-            <div className="mb-3 text-sm text-gray-600">Empleados por turno (mín. 1)</div>
-            <div className="space-y-2">
-              {(['M', 'T', 'N'] as ShiftKind[]).map((kind) => {
-                const meta = KIND_META[kind];
-                const value = kind === 'M' ? dotacionM : kind === 'T' ? dotacionT : dotacionN;
-                const setValue = kind === 'M' ? setDotacionM : kind === 'T' ? setDotacionT : setDotacionN;
-                const Icon = meta.Icon;
-                return (
-                  <div key={kind} className="flex items-center gap-3">
-                    <div className="flex min-w-[130px] items-center gap-2 text-sm font-medium">
-                      <Icon className="size-4" style={{ color: meta.color }} />
-                      {meta.label}
-                    </div>
-                    <input
-                      type="number"
-                      min={0}
-                      value={value}
-                      onChange={(event) => setValue(Math.max(0, Number(event.target.value || 0)))}
-                      className="flex-1 rounded-xl border px-3 py-2 text-sm"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-3 flex items-center gap-2 text-xl font-semibold">
-              <Sparkles className="size-4" /> Reglas de IA
-            </div>
-            <div className="space-y-3 text-sm">
-              <label className="flex items-center justify-between"><span>Evitar turno N → M</span><input type="checkbox" checked={reglaEvitarNM} onChange={(e) => setReglaEvitarNM(e.target.checked)} /></label>
-              <label className="flex items-center justify-between"><span>Priorizar equidad en horas</span><input type="checkbox" checked={reglaEquidad} onChange={(e) => setReglaEquidad(e.target.checked)} /></label>
-              <label className="flex items-center justify-between"><span>Equilibrar feriados</span><input type="checkbox" checked={reglaFeriados} onChange={(e) => setReglaFeriados(e.target.checked)} /></label>
-              <label className="flex items-center justify-between"><span>Permitir swaps</span><input type="checkbox" checked={reglaSwaps} onChange={(e) => setReglaSwaps(e.target.checked)} /></label>
-            </div>
-          </div>
-
-          <button
-            onClick={() => void saveChanges()}
-            disabled={saving || pendingChanges === 0}
-            className="w-full rounded-xl bg-[#2D7FF9] px-4 py-3 text-sm font-semibold text-white hover:bg-[#1F6DE2] disabled:opacity-50"
-          >
-            <span className="inline-flex items-center gap-2">
-              <Save className="size-4" />
-              {saving ? 'Guardando...' : `Guardar cambios (${pendingChanges})`}
-            </span>
-          </button>
-
-          <button
-            onClick={() => void confirmPlan()}
-            disabled={saving || pendingChanges === 0}
-            className="w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
-          >
-            <span className="inline-flex items-center gap-2">
-              <CheckCircle2 className="size-4" />
-              {saving ? 'Guardando...' : 'Confirmar planificación'}
-            </span>
-          </button>
-
-          <button
-            onClick={() => void resetPlan()}
-            className="w-full rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-gray-50"
-          >
-            <span className="inline-flex items-center gap-2"><RefreshCw className="size-4" /> Reiniciar</span>
-          </button>
-        </div>
-
-        <div className="col-span-12 xl:col-span-6"> 
+        <div className="xl:col-span-12"> 
           <div className="rounded-2xl border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <div>
@@ -812,14 +1129,17 @@ export function EmployeeShiftPlanningManagement() {
                     {filteredEmployees.map((employee) => (
                       <tr key={employee.id} className="border-t">
                         <td className="px-3 py-2 align-top">
-                          <div className="font-medium">{employee.employee_code} - {employee.employee_lastname} {employee.employee_name}</div>
+                          <div className="font-medium">{employee.employee_lastname} {employee.employee_name}</div>
                           <div className="mt-1 inline-flex rounded-full bg-blue-600 px-2 py-0.5 text-[10px] text-white">{pendingChanges > 0 ? 'No cumple' : 'Cumple'}</div>
                         </td>
                         {rangeDays.map((day) => {
                           const dateIso = toIsoDate(day);
                           const kind = cellKind(employee, dateIso);
-                          const meta = KIND_META[kind];
+                          const shift = cellShiftRow(employee, dateIso);
+                          const meta = getShiftVisualMeta(shift, kind);
                           const Icon = meta.Icon;
+                          const label = shift?.shift_name || KIND_META[kind].label;
+                          const hint = getShiftTimeHint(shift, kind);
                           return (
                             <td key={dateIso} className="px-1 py-1">
                               <button
@@ -827,7 +1147,7 @@ export function EmployeeShiftPlanningManagement() {
                                 disabled={confirmed}
                                 className="flex h-10 w-full items-center justify-center rounded-md border"
                                 style={{ backgroundColor: meta.bg, borderColor: '#E5E7EB' }}
-                                title={meta.label}
+                                title={`${label} | ${hint}`}
                               >
                                 <Icon className="size-4" style={{ color: meta.color }} />
                               </button>
@@ -866,7 +1186,7 @@ export function EmployeeShiftPlanningManagement() {
                           {rangeDays.map((day) => {
                             const dateIso = toIsoDate(day);
                             const value = countByDayAndKind[dateIso][kind];
-                            const target = kind === 'M' ? dotacionM : kind === 'T' ? dotacionT : kind === 'N' ? dotacionN : 0;
+                            const target = requiredByKind[kind] || 0;
                             const warn = target > 0 && value < target;
                             return (
                               <td key={dateIso} className="px-2 py-2 text-center">
@@ -888,9 +1208,351 @@ export function EmployeeShiftPlanningManagement() {
               Pendiente por guardar: <strong>{pendingChanges}</strong>
             </div>
           </div>
+
+          <div className="mt-4 rounded-2xl border bg-white p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {shiftLegendEntries.map((entry) => {
+                  const Icon = entry.meta.Icon;
+                  return (
+                    <span
+                      key={`legend-${entry.key}`}
+                      className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1"
+                      style={{ backgroundColor: entry.meta.bg, borderColor: '#E5E7EB', color: '#1F2937' }}
+                    >
+                      <Icon className="size-3.5" style={{ color: entry.meta.color }} />
+                      <span className="font-medium">{entry.label}</span>
+                      <span className="text-gray-600">{entry.hint}</span>
+                    </span>
+                  );
+                })}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                onClick={generatePlanning}
+                disabled={loading || saving || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0}
+                className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Sparkles className="size-4" />
+                  Generar planificación
+                </span>
+              </button>
+              <button
+                onClick={() => void saveChanges()}
+                disabled={saving || pendingChanges === 0}
+                className="rounded-xl bg-[#2D7FF9] px-4 py-3 text-sm font-semibold text-white hover:bg-[#1F6DE2] disabled:opacity-50"
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Save className="size-4" />
+                  {saving ? 'Guardando...' : `Guardar cambios (${pendingChanges})`}
+                </span>
+              </button>
+
+              <button
+                onClick={() => void resetPlan()}
+                className="rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-gray-50"
+              >
+                <span className="inline-flex items-center gap-2"><RefreshCw className="size-4" /> Reiniciar</span>
+              </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="col-span-12 xl:col-span-3 space-y-4">
+      </div>
+
+      <div className="fixed right-3 top-24 z-40 flex flex-col gap-2">
+        <button
+          onClick={() => {
+            setParamsPanelOpen((prev) => !prev);
+            setSidePanelOpen(false);
+          }}
+          className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm shadow-md hover:bg-gray-50"
+        >
+          <Settings className="size-4" />
+          {paramsPanelOpen ? 'Ocultar parámetros' : 'Parámetros'}
+          {paramsPanelOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+        </button>
+        <button
+          onClick={() => {
+            setSidePanelOpen((prev) => !prev);
+            setParamsPanelOpen(false);
+          }}
+          className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm shadow-md hover:bg-gray-50"
+        >
+          <Lightbulb className="size-4" />
+          {sidePanelOpen ? 'Ocultar sugerencias' : 'Sugerencias'}
+          {sidePanelOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+        </button>
+      </div>
+
+      {(sidePanelOpen || paramsPanelOpen) && (
+        <div
+          className="fixed inset-0 z-40 bg-black/20 xl:bg-transparent"
+          onClick={() => {
+            setSidePanelOpen(false);
+            setParamsPanelOpen(false);
+          }}
+        />
+      )}
+
+      <aside
+        className={`fixed right-0 top-0 z-50 h-full w-full max-w-[420px] border-l bg-white p-4 shadow-2xl transition-transform duration-300 ${
+          paramsPanelOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between border-b pb-3">
+          <div className="inline-flex items-center gap-2 text-base font-semibold"><Settings className="size-4" /> Parámetros</div>
+          <button
+            onClick={() => setParamsPanelOpen(false)}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+          >
+            Cerrar <ChevronRight className="size-3" />
+          </button>
+        </div>
+
+        <div className="h-[calc(100vh-90px)] space-y-4 overflow-y-auto pb-8 pr-1">
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
+              <Filter className="size-4" />
+              Filtros de Empleados
+            </div>
+            <p className="mb-3 text-sm text-gray-600">Solo empleados de turnos rotativos</p>
+            <div className="space-y-2">
+              <div>
+                <label className="mb-1 block text-sm font-medium">Área</label>
+                <select
+                  value={areaFilter}
+                  onChange={(event) => setAreaFilter(event.target.value)}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todas las áreas</option>
+                  {areaOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Grupo de Trabajo</label>
+                <select
+                  value={groupFilter}
+                  onChange={(event) => setGroupFilter(event.target.value)}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todos los grupos</option>
+                  {workGroupOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
+              <Settings className="size-4" />
+              Rango de Fechas
+            </div>
+            <p className="mb-3 text-sm text-gray-600">Seleccione fecha de inicio y fecha fin</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <label className="w-24 text-sm font-medium">Fecha Inicio</label>
+                <input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setFechaInicio(value);
+                    if (fechaFin && value && value > fechaFin) {
+                      setFechaFin(value);
+                    }
+                  }}
+                  className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="w-24 text-sm font-medium">Fecha Fin</label>
+                <input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (fechaInicio && value && value < fechaInicio) {
+                      setFechaInicio(value);
+                    }
+                    setFechaFin(value);
+                  }}
+                  className="flex-1 rounded-xl border px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-2 text-lg font-semibold">Patrón activo</div>
+            <div className="space-y-3">
+              <select
+                value={activePatternId}
+                onChange={(event) => setActivePatternId(event.target.value)}
+                className="w-full rounded-xl border px-3 py-2 text-sm"
+              >
+                {workPatterns.map((pattern) => (
+                  <option key={pattern.id} value={pattern.id}>
+                    {pattern.name} ({pattern.work_days}/{pattern.free_days})
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-gray-600">Esquema actual: {diasTrabajo}/{diasLibres}</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
+              <Users className="size-4" />
+              Dotación Requerida
+            </div>
+            <p className="mb-3 text-sm text-gray-600">Empleados por turno (mín. 1)</p>
+            <div className="space-y-2">
+              {distributionShiftRows.map(({ item, shift }) => {
+                const kind = classifyShift(shift);
+                const meta = getShiftVisualMeta(shift, kind);
+                const Icon = meta.Icon;
+                const isLibre = kind === 'L';
+                return (
+                  <div key={shift.id} className="flex items-center gap-2">
+                    <div className="flex min-w-[190px] items-center gap-2 text-sm font-medium">
+                      <Icon className="size-4" style={{ color: meta.color }} />
+                      <span className="truncate">{shift.shift_name}</span>
+                    </div>
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.required}
+                      onChange={(event) => updateDistributionRequired(shift.id, Number(event.target.value || 0))}
+                      disabled={isLibre}
+                      className="w-20 rounded-xl border px-2 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeDistributionShift(shift.id)}
+                      disabled={isLibre}
+                      className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={isLibre ? 'Turno Libre fijo por patrón' : 'Quitar turno'}
+                    >
+                      <Minus className="size-4" />
+                    </button>
+                  </div>
+                );
+              })}
+
+              <div className="mt-3 flex items-center gap-2">
+                <div className="relative flex-1" ref={distributionComboRef}>
+                  <button
+                    type="button"
+                    onClick={() => setDistributionComboOpen((prev) => !prev)}
+                    className="w-full inline-flex items-center justify-between rounded-xl border px-3 py-2 text-sm"
+                  >
+                    {selectedDistributionShift ? (
+                      (() => {
+                        const selectedKind = classifyShift(selectedDistributionShift);
+                        const selectedMeta = getShiftVisualMeta(selectedDistributionShift, selectedKind);
+                        const SelectedIcon = selectedMeta.Icon;
+                        return (
+                          <span className="inline-flex items-center gap-2">
+                            <SelectedIcon className="size-4" style={{ color: selectedMeta.color }} />
+                            <span>{selectedDistributionShift.shift_name}</span>
+                          </span>
+                        );
+                      })()
+                    ) : (
+                      <span className="text-gray-500">Seleccionar turno...</span>
+                    )}
+                    <ChevronDown className="size-4 text-gray-500" />
+                  </button>
+                  {distributionComboOpen && (
+                    <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border bg-white p-1 shadow-lg">
+                      {availableDistributionShifts.length === 0 ? (
+                        <div className="px-3 py-2 text-xs text-gray-500">No hay turnos disponibles.</div>
+                      ) : (
+                        availableDistributionShifts.map((shift) => {
+                          const kind = classifyShift(shift);
+                          const meta = getShiftVisualMeta(shift, kind);
+                          const Icon = meta.Icon;
+                          return (
+                            <button
+                              key={shift.id}
+                              type="button"
+                              onClick={() => {
+                                setNewDistributionShiftId(shift.id);
+                                setDistributionComboOpen(false);
+                              }}
+                              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50"
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <Icon className="size-4" style={{ color: meta.color }} />
+                                <span>{shift.shift_name}</span>
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={addDistributionShift}
+                  className="inline-flex items-center justify-center rounded-md border border-emerald-200 p-2 text-emerald-700 hover:bg-emerald-50"
+                  title="Agregar turno"
+                >
+                  <Plus className="size-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border bg-white p-4">
+            <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
+              <Sparkles className="size-4" /> Reglas de IA
+            </div>
+            <div className="space-y-3 text-sm">
+              <label className="flex items-center justify-between"><span>Evitar turno N → M</span><input type="checkbox" checked={reglaEvitarNM} onChange={(e) => setReglaEvitarNM(e.target.checked)} /></label>
+              <label className="flex items-center justify-between"><span>Priorizar equidad en horas</span><input type="checkbox" checked={reglaEquidad} onChange={(e) => setReglaEquidad(e.target.checked)} /></label>
+              <label className="flex items-center justify-between"><span>Equilibrar feriados</span><input type="checkbox" checked={reglaFeriados} onChange={(e) => setReglaFeriados(e.target.checked)} /></label>
+              <label className="flex items-center justify-between"><span>Permitir swaps</span><input type="checkbox" checked={reglaSwaps} onChange={(e) => setReglaSwaps(e.target.checked)} /></label>
+            </div>
+            <button
+              onClick={() => void applyParameters()}
+              disabled={saving || loading}
+              className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+            >
+              <span className="inline-flex items-center gap-2">
+                <CheckCircle2 className="size-4" />
+                {loading ? 'Aplicando...' : 'Aplicar Parámetros'}
+              </span>
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <aside
+        className={`fixed right-0 top-0 z-50 h-full w-full max-w-[380px] border-l bg-white p-4 shadow-2xl transition-transform duration-300 ${
+          sidePanelOpen ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between border-b pb-3">
+          <div className="text-base font-semibold">Sugerencias y Alertas</div>
+          <button
+            onClick={() => setSidePanelOpen(false)}
+            className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-gray-50"
+          >
+            Cerrar <ChevronRight className="size-3" />
+          </button>
+        </div>
+
+        <div className="space-y-4 overflow-y-auto pb-8">
           <div className="rounded-2xl border bg-white p-4">
             <div className="mb-1 flex items-center gap-2 text-xl font-semibold"><Lightbulb className="size-5" /> Sugerencias de IA</div>
             <div className="mb-3 text-sm text-gray-600">{suggestions.length} recomendaciones</div>
@@ -951,6 +1613,7 @@ export function EmployeeShiftPlanningManagement() {
             </div>
           </div>
         </div>
+      </aside>
       </div>
     </div>
   );

@@ -65,6 +65,18 @@ interface EmployeePhotoValidationRules {
 
 type ApiErrorWithMeta = Error & { code?: string; details?: string };
 
+const SHIFT_ICON_OPTIONS = [
+  { id: 'Sun', label: 'Sol (Manana)' },
+  { id: 'Sunset', label: 'Atardecer' },
+  { id: 'Moon', label: 'Cuarto de luna' },
+  { id: 'Coffee', label: 'Taza caliente' },
+  { id: 'Briefcase', label: 'Maletin / Oficina' },
+];
+
+const STATIC_CATALOGS: Record<string, any[]> = {
+  shift_icons: SHIFT_ICON_OPTIONS,
+};
+
 const FALLBACK_EMPLOYEE_PHOTO_RULES: EmployeePhotoValidationRules = {
   max_file_size_bytes: 5 * 1024 * 1024,
   min_width: 450,
@@ -229,6 +241,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'payroll_group_id', label: 'Grupo de nomina', type: 'select', optionsKey: 'payroll_groups' },
       { key: 'shift_name', label: 'Nombre del horario', type: 'text', required: true },
       { key: 'shift_short_name', label: 'Nombre corto', type: 'text', required: true },
+      { key: 'shift_icon_key', label: 'Icono', type: 'select', optionsKey: 'shift_icons', required: true, defaultValue: 'Sun' },
       { key: 'start_time', label: 'Hora inicio', type: 'time', required: true },
       { key: 'work_minutes', label: 'Minutos trabajo', type: 'number', required: true },
       { key: 'lunch_minutes', label: 'Minutos almuerzo', type: 'number', required: true, defaultValue: 0 },
@@ -236,7 +249,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'exit_grace_minutes', label: 'Tolerancia salida (min)', type: 'number', required: true, defaultValue: 0 },
       { key: 'is_active', label: 'Activo', type: 'boolean', defaultValue: true },
     ],
-    tableColumns: ['shift_short_name', 'shift_name', 'company_id', 'start_time', 'work_minutes', 'lunch_minutes', 'entry_grace_minutes', 'exit_grace_minutes', 'is_active'],
+    tableColumns: ['shift_short_name', 'shift_name', 'shift_icon_key', 'company_id', 'start_time', 'work_minutes', 'lunch_minutes', 'entry_grace_minutes', 'exit_grace_minutes', 'is_active'],
   },
   {
     key: 'employee-companies',
@@ -489,7 +502,10 @@ export function OrgMaintenance({
       })
     );
 
-    const catalogsByKey = Object.fromEntries([...entityResults, ...lookupResults]);
+    const catalogsByKey = {
+      ...Object.fromEntries([...entityResults, ...lookupResults]),
+      ...STATIC_CATALOGS,
+    };
     setCatalogs((prev) => ({
       ...prev,
       ...catalogsByKey,
@@ -545,7 +561,10 @@ export function OrgMaintenance({
   const loadCatalogs = async () => {
     try {
       const payload = await request('/organization/catalogs');
-      const catalogs = payload.catalogs || {};
+      const catalogs = {
+        ...(payload.catalogs || {}),
+        ...STATIC_CATALOGS,
+      };
       setCatalogs(catalogs);
 
       const requiredKeys = getRequiredCatalogKeys();
@@ -892,6 +911,7 @@ export function OrgMaintenance({
 
   const getOptionLabel = (option: any) => {
     return (
+      option.label ||
       option.lookup_label ||
       option.company_name ||
       option.department_name ||

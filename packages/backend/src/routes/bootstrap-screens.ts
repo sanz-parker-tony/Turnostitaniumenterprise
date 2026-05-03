@@ -730,8 +730,9 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
       });
     }
 
-    // Retirar la pantalla ORG_MAINTENANCE del menu (deprecada)
+    // Retirar pantallas deprecadas/duplicadas del menu
     let deprecatedOrgMaintenanceDisabled = false;
+    let deprecatedEmployeeProfilesDisabled = false;
     const { data: deprecatedOrgMaintenance } = await Postgres
       .from('screens')
       .select('id, is_active')
@@ -777,6 +778,54 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
       }
 
       deprecatedOrgMaintenanceDisabled = true;
+    }
+
+    // Legacy duplicado de "Perfiles": mantener solo ORG_EMPLOYEE_PROFILES
+    const { data: deprecatedEmployeeProfiles } = await Postgres
+      .from('screens')
+      .select('id, is_active')
+      .eq('screen_key', 'EMPLOYEE_PROFILES')
+      .maybeSingle();
+
+    if (deprecatedEmployeeProfiles?.id) {
+      await Postgres
+        .from('screens')
+        .update({
+          is_active: false,
+          updated_by: 'SYSTEM',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', deprecatedEmployeeProfiles.id);
+
+      const { data: deprecatedProfileScreenActions } = await Postgres
+        .from('screen_actions')
+        .select('id')
+        .eq('screen_id', deprecatedEmployeeProfiles.id);
+
+      const deprecatedProfileScreenActionIds = (deprecatedProfileScreenActions || []).map((row: any) => row.id);
+
+      if (deprecatedProfileScreenActionIds.length > 0) {
+        await Postgres
+          .from('screen_actions')
+          .update({
+            is_active: false,
+            updated_by: 'SYSTEM',
+            updated_at: new Date().toISOString(),
+          })
+          .in('id', deprecatedProfileScreenActionIds);
+
+        await Postgres
+          .from('role_screen_actions')
+          .update({
+            is_allowed: false,
+            is_active: false,
+            updated_by: 'SYSTEM',
+            updated_at: new Date().toISOString(),
+          })
+          .in('screen_action_id', deprecatedProfileScreenActionIds);
+      }
+
+      deprecatedEmployeeProfilesDisabled = true;
     }
 
     const requiredActionKeys = ['VIEW', 'CREATE', 'EDIT', 'DELETE'];
@@ -974,7 +1023,13 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
       role_screen_actions_created: roleScreenActionsCreated,
       supervisor_permissions_disabled: supervisorPermissionsDisabled,
       deprecated_org_maintenance_disabled: deprecatedOrgMaintenanceDisabled,
-      any_created: screensCreated > 0 || screenActionsCreated > 0 || roleScreenActionsCreated > 0 || deprecatedOrgMaintenanceDisabled,
+      deprecated_employee_profiles_disabled: deprecatedEmployeeProfilesDisabled,
+      any_created:
+        screensCreated > 0 ||
+        screenActionsCreated > 0 ||
+        roleScreenActionsCreated > 0 ||
+        deprecatedOrgMaintenanceDisabled ||
+        deprecatedEmployeeProfilesDisabled,
     });
   } catch (error: any) {
     console.error('❌ [BOOTSTRAP] Error ensure-org-maintenance-screen:', error);

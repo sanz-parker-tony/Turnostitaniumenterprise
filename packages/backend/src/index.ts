@@ -56,9 +56,12 @@ import screenActionsRouter from './routes/screen-actions-mgmt-routes';
 import screensRouter from './routes/screens-mgmt-routes';
 import settingsRouter from './routes/settings-routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
+import employeeTimePunchesRouter from './routes/employee-time-punches-routes';
 import shiftConstructorRouter from './routes/shift-constructor-routes';
 import systemSettingsRouter from './routes/system-settings-routes';
+import timeClockDevicesRouter from './routes/time-clock-devices-routes';
 import usersRouter from './routes/users-management-routes';
+import workPatternsRouter from './routes/work-patterns-routes';
 
 const router = Router();
 
@@ -820,8 +823,17 @@ router.use('/organization', requireAuth, organizationRouter);
 // Shift Constructor Management
 router.use('/shift-constructor', requireAuth, shiftConstructorRouter);
 
+// Work Patterns Management
+router.use('/work-patterns', requireAuth, workPatternsRouter);
+
+// Time Clock Devices Management
+router.use('/time-clock-devices', requireAuth, timeClockDevicesRouter);
+
 // Employee Shift Planning
 router.use('/employee-shift-planning', requireAuth, employeeShiftPlanningRouter);
+
+// Employee Time Punches
+router.use('/employee-time-punches', requireAuth, employeeTimePunchesRouter);
 
 // ============================================================================
 // HEALTH & STATUS
@@ -837,8 +849,9 @@ router.get('/status', (req: Request, res: Response) => {
       users: ['/users/profile', '/users/change-password'],
       tenants: ['/tenants/:id', '/tenant/settings'],
       maintenance: ['/actions', '/attendance-events', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
-      config: ['/shift-constructor'],
+      config: ['/shift-constructor', '/work-patterns', '/time-clock-devices'],
       employees: ['/employee-shift-planning'],
+      attendance: ['/employee-time-punches'],
     },
   });
 });

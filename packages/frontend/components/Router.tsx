@@ -22,11 +22,13 @@ import { ShiftConstructorManagement } from './screens/config/ShiftConstructorMan
 import { CalendarManagement } from './screens/config/CalendarManagement';
 import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
+import { WorkPatternsManagement } from './screens/config/WorkPatternsManagement';
 import { OrgStructure } from './screens/org/OrgStructure';
 import { OrgMaintenance } from './screens/org/OrgMaintenance';
 import { EmployeeCompaniesManagement } from './screens/org/EmployeeCompaniesManagement';
 import { EmployeeProfilesManagement } from './screens/org/EmployeeProfilesManagement';
 import { EmployeeShiftPlanningManagement } from './screens/employees/EmployeeShiftPlanningManagement';
+import { TimePunchesManagement } from './screens/attendance/TimePunchesManagement';
 import TenantsManagement from './security/TenantsManagement';
 import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
 import { ScreensManagement } from './screens/security/ScreensManagement';
@@ -109,6 +111,7 @@ export function Router() {
     '/dashboard/config/calendars':       <CalendarManagement />,
     '/dashboard/config/devices':         <DeviceManagement />,
     '/dashboard/config/payroll':         <PayrollIntegration />,
+    '/dashboard/config/work-patterns':   <WorkPatternsManagement />,
 
     // ── Organización ───────────────────────────────────────────────────────
     '/dashboard/org/structure': <OrgStructure />,
@@ -125,6 +128,9 @@ export function Router() {
 
     // ── Empleados ────────────────────────────────────────────────────────────
     '/dashboard/employees/shift-planning': <EmployeeShiftPlanningManagement />,
+    '/dashboard/attendance/shifts': <EmployeeShiftPlanningManagement />,
+    '/dashboard/attendance/timeclock': <TimePunchesManagement />,
+    '/dashboard/attendance/time-punches': <TimePunchesManagement />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

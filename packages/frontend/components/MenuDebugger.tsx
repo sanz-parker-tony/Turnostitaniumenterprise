@@ -72,7 +72,7 @@ export function MenuDebugger() {
   const totalRoles = sortedRoles.length;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 max-w-2xl">
+    <div className="fixed bottom-16 left-4 z-50 max-w-2xl">
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
           <Button

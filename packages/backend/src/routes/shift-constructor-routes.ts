@@ -33,6 +33,19 @@ const DEFAULT_SURCHARGE: Record<ShiftBlockType, number> = {
   BREAK: 0,
 };
 
+const SHIFT_ICON_KEYS = new Set([
+  'Sun',
+  'Sunset',
+  'Moon',
+  'Briefcase',
+  'Coffee',
+  'BellRing',
+  'Shield',
+  'Wrench',
+  'Truck',
+  'Flame',
+]);
+
 async function resolveTenantId(req: Request): Promise<string | null> {
   const explicit = req.query.tenant_id || req.body?.tenant_id;
   if (typeof explicit === 'string' && explicit.trim()) {
@@ -120,6 +133,12 @@ function generateShiftShortName(shiftName: string): string {
 
   const initials = chunks.map((chunk) => chunk[0]).join('');
   return initials.slice(0, 6);
+}
+
+function normalizeShiftIconKey(value: any): string {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Sun';
+  return SHIFT_ICON_KEYS.has(raw) ? raw : 'Sun';
 }
 
 async function resolveDefaultCompanyId(client: any, tenantId: string): Promise<string | null> {
@@ -236,7 +255,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const [shiftsResult, constructorsResult] = await Promise.all([
       pool.query(
         `
-          SELECT id, shift_name, shift_short_name, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
+          SELECT id, shift_name, shift_short_name, shift_icon_key, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
           FROM public.shifts
           WHERE tenant_id = $1
           ORDER BY shift_name ASC
@@ -289,7 +308,7 @@ router.get('/shift/:shiftId', async (req: Request, res: Response) => {
 
     const shiftResult = await pool.query(
       `
-        SELECT id, shift_name, shift_short_name, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
+        SELECT id, shift_name, shift_short_name, shift_icon_key, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
         FROM public.shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -365,6 +384,7 @@ router.post('/shift', async (req: Request, res: Response) => {
 
     const actor = getActor(req);
     const shiftShortName = String(req.body?.shift_short_name || '').trim().toUpperCase() || generateShiftShortName(shiftName);
+    const shiftIconKey = normalizeShiftIconKey(req.body?.shift_icon_key);
     const constructorName = String(req.body?.constructor_name || '').trim() || `Constructor ${shiftName}`;
 
     const companyId = String(req.body?.company_id || '').trim() || await resolveDefaultCompanyId(client, tenantId);
@@ -388,14 +408,14 @@ router.post('/shift', async (req: Request, res: Response) => {
       `
         INSERT INTO public.shifts (
           id, tenant_id, company_id, payroll_group_id, shift_name, shift_short_name,
-          start_time, work_minutes, lunch_minutes, entry_grace_minutes, exit_grace_minutes,
+          shift_icon_key, start_time, work_minutes, lunch_minutes, entry_grace_minutes, exit_grace_minutes,
           is_active, created_by
         )
         VALUES (
           gen_random_uuid(), $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10, true, $11
+          $6, $7, $8, $9, $10, $11, true, $12
         )
-        RETURNING id, shift_name, shift_short_name, work_minutes, lunch_minutes, start_time
+        RETURNING id, shift_name, shift_short_name, shift_icon_key, work_minutes, lunch_minutes, start_time
       `,
       [
         tenantId,
@@ -403,6 +423,7 @@ router.post('/shift', async (req: Request, res: Response) => {
         payrollGroupId,
         shiftName,
         shiftShortName,
+        shiftIconKey,
         derived.startTime,
         derived.totalWorkMinutes,
         derived.totalLunchMinutes,
@@ -498,7 +519,7 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
 
     const shiftResult = await client.query(
       `
-        SELECT id, shift_name, shift_short_name
+        SELECT id, shift_name, shift_short_name, shift_icon_key
         FROM public.shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -520,6 +541,7 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
       String(req.body?.shift_short_name || '').trim().toUpperCase() ||
       String(shift.shift_short_name || '').trim().toUpperCase() ||
       generateShiftShortName(nextShiftName);
+    const nextShiftIconKey = normalizeShiftIconKey(req.body?.shift_icon_key || shift.shift_icon_key);
     const constructorName = String(req.body?.constructor_name || '').trim() || `Constructor ${nextShiftName}`;
     const derived = deriveShiftFields(normalizedBlocks);
 
@@ -530,11 +552,12 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
         UPDATE public.shifts
         SET shift_name = $3,
             shift_short_name = $4,
-            start_time = $5,
-            work_minutes = $6,
-            lunch_minutes = $7,
+            shift_icon_key = $5,
+            start_time = $6,
+            work_minutes = $7,
+            lunch_minutes = $8,
             is_active = true,
-            updated_by = $8,
+            updated_by = $9,
             updated_at = now()
         WHERE id = $1
           AND tenant_id = $2
@@ -544,6 +567,7 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
         tenantId,
         nextShiftName,
         nextShiftShortName,
+        nextShiftIconKey,
         derived.startTime,
         derived.totalWorkMinutes,
         derived.totalLunchMinutes,
@@ -638,6 +662,7 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
       summary: {
         shift_name: nextShiftName,
         shift_short_name: nextShiftShortName,
+        shift_icon_key: nextShiftIconKey,
         constructor_name: constructorName,
         total_work_minutes: derived.totalWorkMinutes,
         total_break_minutes: derived.totalBreakMinutes,

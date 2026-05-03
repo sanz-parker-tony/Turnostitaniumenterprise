@@ -1,44 +1,34 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Edit, Plus, RefreshCw, Save, Search, Tablet, Trash2, X } from 'lucide-react';
+import { Edit, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 
-interface CompanyRow {
+interface WorkPatternRow {
   id: string;
-  company_name: string;
-  company_code: string;
-}
-
-interface DeviceTypeRow {
-  id: string;
-  lookup_key: string;
-  lookup_label: string;
-}
-
-interface DeviceRow {
-  id: string;
-  company_id: string;
-  company_name: string;
-  device_serial_number: string | null;
-  device_name: string | null;
-  device_ip: string | null;
-  device_location: string | null;
-  device_model: string | null;
-  device_type_id: string | null;
-  device_type_label: string | null;
+  pattern_name: string;
+  pattern_short_name: string;
+  cycle_length_days: number;
+  work_days_per_cycle: number;
+  rest_days_per_cycle: number;
+  daily_work_minutes: number;
+  weekly_work_minutes_target: number;
+  is_flexible: boolean;
   is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
 }
 
-interface DeviceFormState {
+interface WorkPatternFormState {
   id: string | null;
-  company_id: string;
-  device_serial_number: string;
-  device_name: string;
-  device_ip: string;
-  device_location: string;
-  device_model: string;
-  device_type_id: string;
+  pattern_name: string;
+  pattern_short_name: string;
+  cycle_length_days: string;
+  work_days_per_cycle: string;
+  rest_days_per_cycle: string;
+  daily_work_minutes: string;
+  weekly_work_minutes_target: string;
+  is_flexible: boolean;
   is_active: boolean;
 }
 
@@ -48,53 +38,40 @@ function getToken() {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-function isValidIpv4(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return true;
-  const match = trimmed.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!match) return false;
-  for (let i = 1; i <= 4; i += 1) {
-    const n = Number(match[i]);
-    if (!Number.isInteger(n) || n < 0 || n > 255) return false;
-  }
-  return true;
-}
-
-function toUpperAlphanumeric(value: string): string {
-  return value.toUpperCase().replace(/[^A-Z0-9/-]/g, '');
-}
-
-function makeEmptyForm(defaultCompanyId = ''): DeviceFormState {
+function makeEmptyForm(): WorkPatternFormState {
   return {
     id: null,
-    company_id: defaultCompanyId,
-    device_serial_number: '',
-    device_name: '',
-    device_ip: '',
-    device_location: '',
-    device_model: '',
-    device_type_id: '',
+    pattern_name: '',
+    pattern_short_name: '',
+    cycle_length_days: '7',
+    work_days_per_cycle: '5',
+    rest_days_per_cycle: '2',
+    daily_work_minutes: '480',
+    weekly_work_minutes_target: '2400',
+    is_flexible: true,
     is_active: true,
   };
 }
 
-export function DeviceManagement() {
+function toInt(value: string, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+export function WorkPatternsManagement() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const [companies, setCompanies] = useState<CompanyRow[]>([]);
-  const [deviceTypes, setDeviceTypes] = useState<DeviceTypeRow[]>([]);
-  const [devices, setDevices] = useState<DeviceRow[]>([]);
-
+  const [patterns, setPatterns] = useState<WorkPatternRow[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [page, setPage] = useState(1);
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<DeviceFormState>(makeEmptyForm());
+  const [form, setForm] = useState<WorkPatternFormState>(makeEmptyForm());
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -106,41 +83,32 @@ export function DeviceManagement() {
       },
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    if (!response.ok) {
+      throw new Error(payload?.error || `HTTP ${response.status}`);
+    }
     return payload;
   };
 
-  const loadData = async () => {
+  const loadPatterns = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [catalogsPayload, devicesPayload] = await Promise.all([
-        request('/time-clock-devices/catalogs'),
-        request('/time-clock-devices?include_inactive=true'),
-      ]);
-
-      const nextCompanies = (catalogsPayload?.companies || []) as CompanyRow[];
-      setCompanies(nextCompanies);
-      setDeviceTypes((catalogsPayload?.device_types || []) as DeviceTypeRow[]);
-      setDevices((devicesPayload?.devices || []) as DeviceRow[]);
-
-      if (!form.company_id && nextCompanies.length > 0) {
-        setForm((prev) => ({ ...prev, company_id: nextCompanies[0].id }));
-      }
+      const payload = await request('/work-patterns?include_inactive=true');
+      setPatterns((payload?.work_patterns || []) as WorkPatternRow[]);
     } catch (err: any) {
-      setError(err?.message || 'Error cargando dispositivos');
+      setError(err?.message || 'Error cargando patrones');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void loadData();
+    void loadPatterns();
   }, []);
 
   const filtered = useMemo(() => {
-    return devices.filter((row) => {
-      const text = `${row.device_name || ''} ${row.device_serial_number || ''} ${row.device_ip || ''} ${row.company_name || ''}`.toLowerCase();
+    return patterns.filter((row) => {
+      const text = `${row.pattern_name} ${row.pattern_short_name}`.toLowerCase();
       const searchOk = !searchTerm.trim() || text.includes(searchTerm.toLowerCase());
       const statusOk =
         statusFilter === 'all' ||
@@ -148,7 +116,7 @@ export function DeviceManagement() {
         (statusFilter === 'inactive' && !row.is_active);
       return searchOk && statusOk;
     });
-  }, [devices, searchTerm, statusFilter]);
+  }, [patterns, searchTerm, statusFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paged = useMemo(() => {
@@ -161,21 +129,22 @@ export function DeviceManagement() {
   }, [page, totalPages]);
 
   const openCreate = () => {
-    setForm(makeEmptyForm(companies[0]?.id || ''));
+    setForm(makeEmptyForm());
     setModalOpen(true);
     setModalError(null);
   };
 
-  const openEdit = (row: DeviceRow) => {
+  const openEdit = (row: WorkPatternRow) => {
     setForm({
       id: row.id,
-      company_id: row.company_id,
-      device_serial_number: row.device_serial_number || '',
-      device_name: row.device_name || '',
-      device_ip: row.device_ip || '',
-      device_location: row.device_location || '',
-      device_model: row.device_model || '',
-      device_type_id: row.device_type_id || '',
+      pattern_name: row.pattern_name,
+      pattern_short_name: row.pattern_short_name,
+      cycle_length_days: String(row.cycle_length_days),
+      work_days_per_cycle: String(row.work_days_per_cycle),
+      rest_days_per_cycle: String(row.rest_days_per_cycle),
+      daily_work_minutes: String(row.daily_work_minutes),
+      weekly_work_minutes_target: String(row.weekly_work_minutes_target),
+      is_flexible: row.is_flexible,
       is_active: row.is_active,
     });
     setModalOpen(true);
@@ -188,73 +157,64 @@ export function DeviceManagement() {
     setModalError(null);
   };
 
-  const removeDevice = async (row: DeviceRow) => {
-    if (!window.confirm(`¿Desea eliminar el dispositivo "${row.device_name || row.device_serial_number || row.id}"?`)) return;
+  const removePattern = async (row: WorkPatternRow) => {
+    if (!window.confirm(`¿Desea eliminar el patrón "${row.pattern_name}"?`)) return;
     setError(null);
     setSuccess(null);
     try {
-      await request(`/time-clock-devices/${row.id}`, { method: 'DELETE' });
-      setSuccess('Dispositivo eliminado correctamente.');
-      await loadData();
+      await request(`/work-patterns/${row.id}`, { method: 'DELETE' });
+      setSuccess('Patrón eliminado correctamente.');
+      await loadPatterns();
     } catch (err: any) {
-      setError(err?.message || 'Error eliminando dispositivo');
+      setError(err?.message || 'Error eliminando patrón');
     }
   };
 
-  const saveDevice = async () => {
+  const savePattern = async () => {
     const payload = {
-      company_id: form.company_id,
-      device_serial_number: form.device_serial_number.trim() || null,
-      device_name: form.device_name.trim(),
-      device_ip: form.device_ip.trim() || null,
-      device_location: form.device_location.trim() || null,
-      device_model: form.device_model.trim() || null,
-      device_type_id: form.device_type_id || null,
+      pattern_name: form.pattern_name.trim(),
+      pattern_short_name: form.pattern_short_name.trim().toUpperCase(),
+      cycle_length_days: toInt(form.cycle_length_days),
+      work_days_per_cycle: toInt(form.work_days_per_cycle),
+      rest_days_per_cycle: toInt(form.rest_days_per_cycle),
+      daily_work_minutes: toInt(form.daily_work_minutes),
+      weekly_work_minutes_target: toInt(form.weekly_work_minutes_target),
+      is_flexible: form.is_flexible,
       is_active: form.is_active,
     };
 
-    if (!payload.company_id) {
-      setModalError('Debe seleccionar empresa.');
+    if (!payload.pattern_name || !payload.pattern_short_name) {
+      setModalError('Debe ingresar nombre y código del patrón.');
       return;
     }
-    if (!payload.device_name) {
-      setModalError('Debe ingresar nombre del dispositivo.');
-      return;
-    }
-    if (!isValidIpv4(form.device_ip)) {
-      setModalError('La IP debe tener formato x.x.x.x y cada número entre 0 y 255.');
-      return;
-    }
-    if (form.device_serial_number && !/^[A-Z0-9/-]+$/.test(form.device_serial_number)) {
-      setModalError('El serial solo puede contener A-Z, 0-9, "-" y "/".');
-      return;
-    }
-    if (form.device_model && !/^[A-Z0-9/-]+$/.test(form.device_model)) {
-      setModalError('El modelo solo puede contener A-Z, 0-9, "-" y "/".');
+
+    if (payload.cycle_length_days !== payload.work_days_per_cycle + payload.rest_days_per_cycle) {
+      setModalError('Ciclo debe ser igual a días trabajo + días descanso.');
       return;
     }
 
     setSaving(true);
     setModalError(null);
     setSuccess(null);
+
     try {
       if (form.id) {
-        await request(`/time-clock-devices/${form.id}`, {
+        await request(`/work-patterns/${form.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
       } else {
-        await request('/time-clock-devices', {
+        await request('/work-patterns', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
       }
 
-      setSuccess('Dispositivo guardado correctamente.');
+      setSuccess('Patrón guardado correctamente.');
       closeModal();
-      await loadData();
+      await loadPatterns();
     } catch (err: any) {
-      setModalError(err?.message || 'Error guardando dispositivo');
+      setModalError(err?.message || 'Error guardando patrón');
     } finally {
       setSaving(false);
     }
@@ -262,17 +222,17 @@ export function DeviceManagement() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Gestión de Dispositivos</h1>
-          <p className="text-muted-foreground mt-1">Administra los dispositivos de marcación (tablets, kioscos)</p>
+          <h1 className="text-3xl font-bold tracking-tight">Patrones de Trabajo</h1>
+          <p className="text-muted-foreground mt-1">Administración de ciclos de trabajo y descanso</p>
         </div>
         <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0]"
+          onClick={() => void loadPatterns()}
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
         >
-          <Plus className="size-4" />
-          Registrar Dispositivo
+          <RefreshCw className="size-4" />
+          Recargar
         </button>
       </div>
 
@@ -281,7 +241,7 @@ export function DeviceManagement() {
 
       <div className="rounded-lg border bg-white p-5">
         <h2 className="mb-1 text-2xl font-semibold">Criterios de Búsqueda</h2>
-        <p className="text-muted-foreground mb-4">Filtrar dispositivos por descripción y estado</p>
+        <p className="text-muted-foreground mb-4">Filtrar patrones por nombre, código y estado</p>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="text-sm font-medium">Descripción</label>
@@ -289,7 +249,7 @@ export function DeviceManagement() {
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
               <input
                 className="w-full rounded-md border py-2 pl-9 pr-3 text-sm"
-                placeholder="Buscar por dispositivo..."
+                placeholder="Buscar patrón..."
                 value={searchTerm}
                 onChange={(event) => {
                   setSearchTerm(event.target.value);
@@ -317,29 +277,29 @@ export function DeviceManagement() {
 
           <div className="flex items-end">
             <button
-              onClick={() => void loadData()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm hover:bg-gray-50"
+              onClick={openCreate}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0]"
             >
-              <RefreshCw className="size-4" />
-              Recargar
+              <Plus className="size-4" />
+              Nuevo Patrón
             </button>
           </div>
         </div>
       </div>
 
       <div className="rounded-lg border bg-white p-5">
-        <h2 className="mb-4 text-2xl font-semibold">Dispositivos de Marcación</h2>
+        <h2 className="mb-4 text-2xl font-semibold">Listado de Patrones</h2>
         <div className="overflow-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b">
                 <th className="py-2 pr-3 text-left">Nombre</th>
-                <th className="py-2 pr-3 text-left">Serial</th>
-                <th className="py-2 pr-3 text-left">Empresa</th>
-                <th className="py-2 pr-3 text-left">Tipo</th>
-                <th className="py-2 pr-3 text-left">IP / Host</th>
-                <th className="py-2 pr-3 text-left">Ubicación</th>
-                <th className="py-2 pr-3 text-left">Modelo</th>
+                <th className="py-2 pr-3 text-left">Código</th>
+                <th className="py-2 pr-3 text-left">Ciclo</th>
+                <th className="py-2 pr-3 text-left">Trabajo/Descanso</th>
+                <th className="py-2 pr-3 text-left">Min Día</th>
+                <th className="py-2 pr-3 text-left">Meta Semanal</th>
+                <th className="py-2 pr-3 text-left">Flexible</th>
                 <th className="py-2 pr-3 text-left">Estado</th>
                 <th className="py-2 text-left">Acciones</th>
               </tr>
@@ -347,27 +307,22 @@ export function DeviceManagement() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando dispositivos...</td>
+                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando patrones...</td>
                 </tr>
               ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen dispositivos</td>
+                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen patrones</td>
                 </tr>
               ) : (
                 paged.map((row) => (
                   <tr key={row.id} className="border-b hover:bg-gray-50">
-                    <td className="py-3 pr-3">
-                      <span className="inline-flex items-center gap-2">
-                        <Tablet className="size-4 text-gray-500" />
-                        {row.device_name || '-'}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-3">{row.device_serial_number || '-'}</td>
-                    <td className="py-3 pr-3">{row.company_name}</td>
-                    <td className="py-3 pr-3">{row.device_type_label || '-'}</td>
-                    <td className="py-3 pr-3">{row.device_ip || '-'}</td>
-                    <td className="py-3 pr-3">{row.device_location || '-'}</td>
-                    <td className="py-3 pr-3">{row.device_model || '-'}</td>
+                    <td className="py-3 pr-3">{row.pattern_name}</td>
+                    <td className="py-3 pr-3"><span className="rounded-full border px-2 py-0.5 text-xs">{row.pattern_short_name}</span></td>
+                    <td className="py-3 pr-3">{row.cycle_length_days} días</td>
+                    <td className="py-3 pr-3">{row.work_days_per_cycle}/{row.rest_days_per_cycle}</td>
+                    <td className="py-3 pr-3">{row.daily_work_minutes}</td>
+                    <td className="py-3 pr-3">{row.weekly_work_minutes_target}</td>
+                    <td className="py-3 pr-3">{row.is_flexible ? 'Sí' : 'No'}</td>
                     <td className="py-3 pr-3">
                       <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.is_active ? 'bg-green-600' : 'bg-gray-500'}`}>
                         {row.is_active ? 'Activo' : 'Inactivo'}
@@ -383,7 +338,7 @@ export function DeviceManagement() {
                           <Edit className="size-4" />
                         </button>
                         <button
-                          onClick={() => void removeDevice(row)}
+                          onClick={() => void removePattern(row)}
                           className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-700 hover:bg-red-50"
                           title="Eliminar"
                         >
@@ -424,7 +379,7 @@ export function DeviceManagement() {
           <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
           <div className="relative w-full max-w-3xl rounded-xl border bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-5 py-3">
-              <h3 className="text-lg font-semibold">{form.id ? 'Editar Dispositivo' : 'Nuevo Dispositivo'}</h3>
+              <h3 className="text-lg font-semibold">{form.id ? 'Editar Patrón' : 'Nuevo Patrón'}</h3>
               <button onClick={closeModal} className="rounded p-1.5 hover:bg-gray-100">
                 <X className="size-4" />
               </button>
@@ -437,81 +392,83 @@ export function DeviceManagement() {
                 </div>
               )}
               <div>
-                <label className="text-sm font-medium">Empresa</label>
-                <select
-                  value={form.company_id}
-                  onChange={(event) => setForm((prev) => ({ ...prev, company_id: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">Seleccione</option>
-                  {companies.map((item) => (
-                    <option key={item.id} value={item.id}>{item.company_name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Tipo de Dispositivo</label>
-                <select
-                  value={form.device_type_id}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_type_id: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">Seleccione</option>
-                  {deviceTypes.map((item) => (
-                    <option key={item.id} value={item.id}>{item.lookup_label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Nombre</label>
+                <label className="text-sm font-medium">Nombre del patrón</label>
                 <input
-                  value={form.device_name}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_name: event.target.value }))}
+                  value={form.pattern_name}
+                  onChange={(event) => setForm((prev) => ({ ...prev, pattern_name: event.target.value }))}
                   className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
                 />
               </div>
               <div>
-                <label className="text-sm font-medium">Serial</label>
+                <label className="text-sm font-medium">Código</label>
                 <input
-                  value={form.device_serial_number}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_serial_number: toUpperAlphanumeric(event.target.value) }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-                  placeholder="ABC123"
-                />
-                <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">IP / Host</label>
-                <input
-                  value={form.device_ip}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_ip: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-                  placeholder="192.168.1.10"
-                />
-                <div className="mt-1 text-xs text-gray-500">Formato: x.x.x.x (cada valor 0-255)</div>
-              </div>
-              <div>
-                <label className="text-sm font-medium">Ubicación</label>
-                <input
-                  value={form.device_location}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_location: event.target.value }))}
+                  value={form.pattern_short_name}
+                  onChange={(event) => setForm((prev) => ({ ...prev, pattern_short_name: event.target.value.toUpperCase() }))}
                   className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
                 />
               </div>
 
               <div>
-                <label className="text-sm font-medium">Modelo</label>
+                <label className="text-sm font-medium">Longitud del ciclo (días)</label>
                 <input
-                  value={form.device_model}
-                  onChange={(event) => setForm((prev) => ({ ...prev, device_model: toUpperAlphanumeric(event.target.value) }))}
+                  type="number"
+                  min={1}
+                  value={form.cycle_length_days}
+                  onChange={(event) => setForm((prev) => ({ ...prev, cycle_length_days: event.target.value }))}
                   className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-                  placeholder="TABLET"
                 />
-                <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>
               </div>
-              <div className="flex items-end">
+              <div>
+                <label className="text-sm font-medium">Días trabajo por ciclo</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.work_days_per_cycle}
+                  onChange={(event) => setForm((prev) => ({ ...prev, work_days_per_cycle: event.target.value }))}
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Días descanso por ciclo</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.rest_days_per_cycle}
+                  onChange={(event) => setForm((prev) => ({ ...prev, rest_days_per_cycle: event.target.value }))}
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Minutos trabajo por día</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.daily_work_minutes}
+                  onChange={(event) => setForm((prev) => ({ ...prev, daily_work_minutes: event.target.value }))}
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Meta semanal (minutos)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.weekly_work_minutes_target}
+                  onChange={(event) => setForm((prev) => ({ ...prev, weekly_work_minutes_target: event.target.value }))}
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex items-end gap-4">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={form.is_flexible}
+                    onChange={(event) => setForm((prev) => ({ ...prev, is_flexible: event.target.checked }))}
+                  />
+                  Flexible
+                </label>
                 <label className="inline-flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -526,12 +483,12 @@ export function DeviceManagement() {
             <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
               <button onClick={closeModal} className="rounded-md border px-4 py-2 text-sm hover:bg-gray-50">Cancelar</button>
               <button
-                onClick={() => void saveDevice()}
+                onClick={() => void savePattern()}
                 disabled={saving}
                 className="inline-flex items-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0] disabled:opacity-50"
               >
                 <Save className="size-4" />
-                {saving ? 'Guardando...' : 'Guardar Dispositivo'}
+                {saving ? 'Guardando...' : 'Guardar Patrón'}
               </button>
             </div>
           </div>
@@ -540,4 +497,3 @@ export function DeviceManagement() {
     </div>
   );
 }
-

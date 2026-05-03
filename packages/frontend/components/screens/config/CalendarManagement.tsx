@@ -164,6 +164,7 @@ export function CalendarManagement() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [companies, setCompanies] = useState<OptionItem[]>([]);
   const [workLocations, setWorkLocations] = useState<OptionItem[]>([]);
@@ -332,12 +333,14 @@ export function CalendarManagement() {
     const dateKey = toDateKey(year, month, day);
     setSelectedDate(dateKey);
     resetFormForDate(dateKey);
+    setModalError(null);
     setModalOpen(true);
   };
 
   const openEditModalForHoliday = (holiday: HolidayItem) => {
     setSelectedDate(toDateOnly(holiday.holiday_date) || holiday.holiday_date);
     fillFormFromHoliday(holiday);
+    setModalError(null);
     setModalOpen(true);
   };
 
@@ -362,7 +365,7 @@ export function CalendarManagement() {
 
   const handleSave = async () => {
     setSaving(true);
-    setError(null);
+    setModalError(null);
     try {
       if (!formData.company_id) throw new Error('Empresa es obligatoria');
       if (!formData.holiday_date) throw new Error('Fecha es obligatoria');
@@ -394,8 +397,9 @@ export function CalendarManagement() {
 
       await loadMonth();
       setModalOpen(false);
+      setModalError(null);
     } catch (err: any) {
-      setError(err.message || 'Error guardando feriado');
+      setModalError(err.message || 'Error guardando feriado');
     } finally {
       setSaving(false);
     }
@@ -407,15 +411,16 @@ export function CalendarManagement() {
     if (!confirmed) return;
 
     setSaving(true);
-    setError(null);
+    setModalError(null);
     try {
       await request(`/organization/holidays/${editingId}`, {
         method: 'DELETE',
       });
       await loadMonth();
       setModalOpen(false);
+      setModalError(null);
     } catch (err: any) {
-      setError(err.message || 'Error eliminando feriado');
+      setModalError(err.message || 'Error eliminando feriado');
     } finally {
       setSaving(false);
     }
@@ -681,7 +686,10 @@ export function CalendarManagement() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/40"
-            onClick={() => setModalOpen(false)}
+            onClick={() => {
+              setModalOpen(false);
+              setModalError(null);
+            }}
           />
           <div className="relative w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
@@ -692,7 +700,10 @@ export function CalendarManagement() {
                 </h3>
               </div>
               <button
-                onClick={() => setModalOpen(false)}
+                onClick={() => {
+                  setModalOpen(false);
+                  setModalError(null);
+                }}
                 className="p-1.5 rounded hover:bg-gray-200"
                 title="Cerrar"
               >
@@ -701,6 +712,11 @@ export function CalendarManagement() {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-4">
+              {modalError && (
+                <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {modalError}
+                </div>
+              )}
               {dayRecords.length > 0 && (
                 <div className="rounded-md border bg-white p-3 space-y-2">
                   <div className="text-xs font-semibold text-gray-700">Registros del dia</div>
@@ -927,7 +943,10 @@ export function CalendarManagement() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setModalOpen(false)}
+                  onClick={() => {
+                    setModalOpen(false);
+                    setModalError(null);
+                  }}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-100"
                 >
                   <X className="size-4" />

@@ -1,15 +1,26 @@
-'use client';
+﻿'use client';
 
 import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  BellRing,
+  Briefcase,
+  ChevronDown,
   Clock3,
+  Coffee,
   Edit,
+  Flame,
+  Moon,
   Plus,
   RefreshCw,
   Save,
   Search,
+  Shield,
   Trash2,
+  Truck,
+  Sun,
+  Sunset,
+  Wrench,
   X,
 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
@@ -20,6 +31,7 @@ interface ShiftCatalogItem {
   id: string;
   shift_name: string;
   shift_short_name: string;
+  shift_icon_key?: string | null;
   work_minutes: number;
   lunch_minutes: number;
   is_active: boolean;
@@ -88,10 +100,33 @@ interface DragPreview {
   end_minutes: number;
 }
 
+interface ShiftIconOption {
+  key: string;
+  label: string;
+  Icon: any;
+  color: string;
+  bg: string;
+}
+
 const MINUTES_IN_48H = 2880;
 const INTERVAL_MINUTES = 15;
 const MIN_BLOCK_MINUTES = 15;
 const PAGE_SIZE = 10;
+
+const SHIFT_ICON_OPTIONS: ShiftIconOption[] = [
+  { key: 'Sun', label: 'Sol (Mañana)', Icon: Sun, color: '#0074D9', bg: '#E3F2FD' },
+  { key: 'Sunset', label: 'Atardecer', Icon: Sunset, color: '#FF6B35', bg: '#FFF3E0' },
+  { key: 'Moon', label: 'Cuarto de luna (Noche)', Icon: Moon, color: '#5E35B1', bg: '#EDE7F6' },
+  { key: 'Briefcase', label: 'Maletín (Oficina)', Icon: Briefcase, color: '#374151', bg: '#EEF2F7' },
+  { key: 'Coffee', label: 'Taza caliente (Libre)', Icon: Coffee, color: '#6B7280', bg: '#F3F4F6' },
+  { key: 'BellRing', label: 'Sirena de emergencia', Icon: BellRing, color: '#DC2626', bg: '#FEE2E2' },
+  { key: 'Shield', label: 'Seguridad', Icon: Shield, color: '#0E7490', bg: '#ECFEFF' },
+  { key: 'Wrench', label: 'Mantenimiento técnico', Icon: Wrench, color: '#0F766E', bg: '#ECFDF5' },
+  { key: 'Truck', label: 'Logística / Ruta', Icon: Truck, color: '#B45309', bg: '#FFFBEB' },
+  { key: 'Flame', label: 'Alta demanda', Icon: Flame, color: '#C2410C', bg: '#FFF7ED' },
+];
+
+const SHIFT_ICON_MAP = Object.fromEntries(SHIFT_ICON_OPTIONS.map((item) => [item.key, item])) as Record<string, ShiftIconOption>;
 
 const BLOCK_TYPES: Record<ShiftBlockType, BlockTypeMeta> = {
   ORDINARIA: {
@@ -285,6 +320,8 @@ export function ShiftConstructorManagement() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [builderError, setBuilderError] = useState<string | null>(null);
+  const [blockModalError, setBlockModalError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [shifts, setShifts] = useState<ShiftCatalogItem[]>([]);
@@ -297,6 +334,8 @@ export function ShiftConstructorManagement() {
   const [activeShiftId, setActiveShiftId] = useState<string | null>(null);
   const [shiftName, setShiftName] = useState('');
   const [shiftShortName, setShiftShortName] = useState('');
+  const [shiftIconKey, setShiftIconKey] = useState('Sun');
+  const [iconComboOpen, setIconComboOpen] = useState(false);
   const [constructorName, setConstructorName] = useState('');
   const [blocks, setBlocks] = useState<ShiftBlockRow[]>([]);
 
@@ -305,6 +344,7 @@ export function ShiftConstructorManagement() {
   const [selectedBlockIndex, setSelectedBlockIndex] = useState<number | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const dragStateRef = useRef<DragState | null>(null);
+  const iconComboRef = useRef<HTMLDivElement | null>(null);
 
   const sortedBlocks = useMemo(() => normalizeBlocks(blocks), [blocks]);
   const workBlocks = useMemo(() => sortedBlocks.filter((block) => !block.is_break), [sortedBlocks]);
@@ -378,6 +418,7 @@ export function ShiftConstructorManagement() {
 
       setShiftName(nextShiftName);
       setShiftShortName(nextShortName);
+      setShiftIconKey(payload.shift?.shift_icon_key || 'Sun');
       setConstructorName(payload.constructor?.constructor_name || `Constructor ${nextShiftName}`);
       setBlocks(normalizeBlocks(payload.blocks || []));
     } catch (err: any) {
@@ -401,17 +442,29 @@ export function ShiftConstructorManagement() {
     }
   }, [selectedBlockIndex, sortedBlocks.length]);
 
+  useEffect(() => {
+    const onMouseDown = (event: MouseEvent) => {
+      if (!iconComboRef.current) return;
+      if (iconComboRef.current.contains(event.target as Node)) return;
+      setIconComboOpen(false);
+    };
+    window.addEventListener('mousedown', onMouseDown);
+    return () => window.removeEventListener('mousedown', onMouseDown);
+  }, []);
+
   const openCreateShiftBuilder = () => {
     setBuilderMode('create');
     setActiveShiftId(null);
     setShiftName('');
     setShiftShortName('');
+    setShiftIconKey('Sun');
     setConstructorName('');
     setBlocks([]);
     setSelectedBlockIndex(null);
     setDragPreview(null);
     setShowBlockModal(false);
-    setError(null);
+    setBuilderError(null);
+    setBlockModalError(null);
     setBuilderOpen(true);
   };
 
@@ -420,12 +473,14 @@ export function ShiftConstructorManagement() {
     setActiveShiftId(shift.id);
     setShiftName(shift.shift_name);
     setShiftShortName(shift.shift_short_name || generateShiftShortName(shift.shift_name));
+    setShiftIconKey(shift.shift_icon_key || 'Sun');
     setConstructorName(shift.constructor?.constructor_name || `Constructor ${shift.shift_name}`);
     setBlocks([]);
     setSelectedBlockIndex(null);
     setDragPreview(null);
     setShowBlockModal(false);
-    setError(null);
+    setBuilderError(null);
+    setBlockModalError(null);
     setBuilderOpen(true);
     await loadShiftDetail(shift.id);
   };
@@ -435,8 +490,11 @@ export function ShiftConstructorManagement() {
     setShowBlockModal(false);
     setSelectedBlockIndex(null);
     setDragPreview(null);
+    setIconComboOpen(false);
     dragStateRef.current = null;
     setSaving(false);
+    setBuilderError(null);
+    setBlockModalError(null);
   };
 
   const removeShift = async (shift: ShiftCatalogItem) => {
@@ -455,6 +513,7 @@ export function ShiftConstructorManagement() {
   const openNewBlockModal = (type?: ShiftBlockType) => {
     const nextSort = sortedBlocks.length > 0 ? sortedBlocks[sortedBlocks.length - 1].sort_order + 10 : 10;
     setBlockForm(makeNewBlockFormState(nextSort, type || 'ORDINARIA'));
+    setBlockModalError(null);
     setShowBlockModal(true);
   };
 
@@ -470,6 +529,7 @@ export function ShiftConstructorManagement() {
       surcharge_pct: String(row.surcharge_pct),
       sort_order: String(row.sort_order),
     });
+    setBlockModalError(null);
     setShowBlockModal(true);
   };
 
@@ -477,7 +537,7 @@ export function ShiftConstructorManagement() {
     const nextSort = sortedBlocks.length > 0 ? sortedBlocks[sortedBlocks.length - 1].sort_order + 10 : 10;
     const workAlreadyExists = WORK_TYPES.has(blockType) && sortedBlocks.some((block) => block.block_type === blockType);
     if (workAlreadyExists) {
-      setError(`El bloque ${BLOCK_TYPES[blockType].label} ya existe.`);
+      setBuilderError(`El bloque ${BLOCK_TYPES[blockType].label} ya existe.`);
       return;
     }
 
@@ -504,12 +564,12 @@ export function ShiftConstructorManagement() {
 
     const validationError = validateBlocks(nextBlocks);
     if (validationError) {
-      setError(validationError);
+      setBuilderError(validationError);
       return;
     }
 
     setBlocks(nextBlocks);
-    setError(null);
+    setBuilderError(null);
   };
 
   const removeBlock = (index: number) => {
@@ -528,7 +588,7 @@ export function ShiftConstructorManagement() {
     const endMinutes = clockToMinutes(blockForm.end_minutes);
 
     if (startMinutes === null || endMinutes === null) {
-      setError('Formato de hora invalido. Use HH:MM en escala 00:00..48:00');
+      setBlockModalError('Formato de hora invalido. Use HH:MM en escala 00:00..48:00');
       return;
     }
 
@@ -555,13 +615,13 @@ export function ShiftConstructorManagement() {
 
     const validationError = validateBlocks(nextList);
     if (validationError) {
-      setError(validationError);
+      setBlockModalError(validationError);
       return;
     }
 
     setBlocks(normalizeBlocks(nextList));
+    setBlockModalError(null);
     setShowBlockModal(false);
-    setError(null);
   };
 
   const applyDefaultTemplate = () => {
@@ -619,7 +679,7 @@ export function ShiftConstructorManagement() {
     ];
 
     setBlocks(normalizeBlocks(template));
-    setError(null);
+    setBuilderError(null);
   };
 
   const saveShiftAndConstructor = async () => {
@@ -628,24 +688,25 @@ export function ShiftConstructorManagement() {
     const finalConstructorName = constructorName.trim() || `Constructor ${trimmedName}`;
 
     if (!trimmedName) {
-      setError('Debe ingresar el nombre del turno.');
+      setBuilderError('Debe ingresar el nombre del turno.');
       return;
     }
 
     const validationError = validateBlocks(sortedBlocks);
     if (validationError) {
-      setError(validationError);
+      setBuilderError(validationError);
       return;
     }
 
     setSaving(true);
-    setError(null);
+    setBuilderError(null);
     setSuccessMessage(null);
 
     try {
       const payload = {
         shift_name: trimmedName,
         shift_short_name: finalShortName,
+        shift_icon_key: shiftIconKey,
         constructor_name: finalConstructorName,
         blocks: sortedBlocks,
       };
@@ -666,7 +727,7 @@ export function ShiftConstructorManagement() {
       closeShiftBuilder();
       await loadCatalogs();
     } catch (err: any) {
-      setError(err?.message || 'Error guardando turno');
+      setBuilderError(err?.message || 'Error guardando turno');
     } finally {
       setSaving(false);
     }
@@ -736,7 +797,7 @@ export function ShiftConstructorManagement() {
       end_minutes: endMinutes,
     });
     setBlocks(normalizeBlocks(candidate));
-    setError(null);
+    setBuilderError(null);
   };
 
   const startDrag = (
@@ -814,7 +875,9 @@ export function ShiftConstructorManagement() {
         </button>
       </div>
 
-      {error && <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>}
+      {error && !builderOpen && !showBlockModal && (
+        <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>
+      )}
       {successMessage && (
         <div className="rounded-md border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm px-3 py-2">{successMessage}</div>
       )}
@@ -822,7 +885,7 @@ export function ShiftConstructorManagement() {
       <div className="rounded-lg border bg-white p-5">
         <h2 className="text-2xl font-semibold mb-1">Criterios de Búsqueda</h2>
         <p className="text-muted-foreground mb-4">Filtrar turnos por descripción y estado</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <label className="text-sm font-medium">Descripción</label>
             <div className="relative mt-1">
@@ -886,6 +949,7 @@ export function ShiftConstructorManagement() {
                 <th className="text-left py-2 pr-3">ID</th>
                 <th className="text-left py-2 pr-3">Nombre</th>
                 <th className="text-left py-2 pr-3">Código</th>
+                <th className="text-left py-2 pr-3">Ícono</th>
                 <th className="text-left py-2 pr-3">Horas Totales</th>
                 <th className="text-left py-2 pr-3">Horas Lunch</th>
                 <th className="text-left py-2 pr-3">Estado</th>
@@ -895,11 +959,11 @@ export function ShiftConstructorManagement() {
             <tbody>
               {loadingCatalogs ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">Cargando turnos...</td>
+                  <td colSpan={8} className="py-6 text-center text-gray-500">Cargando turnos...</td>
                 </tr>
               ) : pagedShifts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-gray-500">No existen turnos</td>
+                  <td colSpan={8} className="py-6 text-center text-gray-500">No existen turnos</td>
                 </tr>
               ) : (
                 pagedShifts.map((shift, index) => (
@@ -912,6 +976,21 @@ export function ShiftConstructorManagement() {
                     <td className="py-3 pr-3">{shift.shift_name}</td>
                     <td className="py-3 pr-3">
                       <span className="px-2 py-0.5 rounded-full border text-xs">{shift.shift_short_name}</span>
+                    </td>
+                    <td className="py-3 pr-3">
+                      {(() => {
+                        const iconMeta = SHIFT_ICON_MAP[shift.shift_icon_key || ''] || SHIFT_ICON_MAP.Sun;
+                        const IconPreview = iconMeta.Icon;
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
+                            style={{ backgroundColor: iconMeta.bg, color: iconMeta.color }}
+                          >
+                            <IconPreview className="size-3.5" />
+                            {iconMeta.label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="py-3 pr-3">{(shift.work_minutes / 60).toFixed(shift.work_minutes % 60 === 0 ? 0 : 1)}h</td>
                     <td className="py-3 pr-3">{(shift.lunch_minutes / 60).toFixed(shift.lunch_minutes % 60 === 0 ? 0 : 1)}h</td>
@@ -987,7 +1066,12 @@ export function ShiftConstructorManagement() {
             </div>
 
             <div className="p-5 space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {builderError && (
+                <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {builderError}
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div className="md:col-span-2">
                   <label className="text-sm font-medium">Nombre del Turno</label>
                   <input
@@ -1005,6 +1089,60 @@ export function ShiftConstructorManagement() {
                     className="w-full border rounded-md px-3 py-2 text-sm mt-1"
                     placeholder="NOC"
                   />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Ícono</label>
+                  <div className="relative mt-1" ref={iconComboRef}>
+                    {(() => {
+                      const selected = SHIFT_ICON_MAP[shiftIconKey] || SHIFT_ICON_MAP.Sun;
+                      const SelectedIcon = selected.Icon;
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setIconComboOpen((prev) => !prev)}
+                            className="w-full inline-flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                          >
+                            <span
+                              className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
+                              style={{ backgroundColor: selected.bg, color: selected.color }}
+                            >
+                              <SelectedIcon className="size-3.5" />
+                              {selected.label}
+                            </span>
+                            <ChevronDown className="size-4 text-gray-500" />
+                          </button>
+                          {iconComboOpen && (
+                            <div className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-white p-1 shadow-lg">
+                              {SHIFT_ICON_OPTIONS.map((item) => {
+                                const OptionIcon = item.Icon;
+                                const isSelected = item.key === shiftIconKey;
+                                return (
+                                  <button
+                                    key={item.key}
+                                    type="button"
+                                    onClick={() => {
+                                      setShiftIconKey(item.key);
+                                      setIconComboOpen(false);
+                                    }}
+                                    className={`w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}
+                                  >
+                                    <span
+                                      className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
+                                      style={{ backgroundColor: item.bg, color: item.color }}
+                                    >
+                                      <OptionIcon className="size-3.5" />
+                                      {item.label}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
 
@@ -1259,19 +1397,37 @@ export function ShiftConstructorManagement() {
 
       {showBlockModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowBlockModal(false)} />
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => {
+              setShowBlockModal(false);
+              setBlockModalError(null);
+            }}
+          />
           <div className="relative w-full max-w-2xl rounded-lg border bg-white shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
               <div className="flex items-center gap-2">
                 <Clock3 className="size-4 text-blue-700" />
                 <h3 className="text-base font-semibold">{blockForm.index === null ? 'Nuevo bloque' : 'Editar bloque'}</h3>
               </div>
-              <button onClick={() => setShowBlockModal(false)} className="p-1.5 rounded hover:bg-gray-200" title="Cerrar">
+              <button
+                onClick={() => {
+                  setShowBlockModal(false);
+                  setBlockModalError(null);
+                }}
+                className="p-1.5 rounded hover:bg-gray-200"
+                title="Cerrar"
+              >
                 <X className="size-4" />
               </button>
             </div>
 
             <div className="p-4 bg-gray-50 grid grid-cols-1 md:grid-cols-2 gap-3">
+              {blockModalError && (
+                <div className="md:col-span-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {blockModalError}
+                </div>
+              )}
               <div className="space-y-1">
                 <label className="text-xs font-medium text-gray-700">Tipo de bloque</label>
                 <select
@@ -1350,7 +1506,13 @@ export function ShiftConstructorManagement() {
             </div>
 
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-white">
-              <button onClick={() => setShowBlockModal(false)} className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-100">
+              <button
+                onClick={() => {
+                  setShowBlockModal(false);
+                  setBlockModalError(null);
+                }}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-100"
+              >
                 <X className="size-4" />
                 Cancelar
               </button>

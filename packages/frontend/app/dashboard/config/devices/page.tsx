@@ -6,20 +6,17 @@
 'use client';
 
 import ScreenPageShell from '@/components/ScreenPageShell';
-import UnderConstruction from '@/components/UnderConstruction';
+import { DeviceManagement } from '@/components/screens/config/DeviceManagement';
 
 export default function ConfigDevicesPage() {
   return (
     <ScreenPageShell
       screenKey="DEVICE_MANAGEMENT"
-      title="Dispositivos"
-      description="Gestión de dispositivos de marcación"
+      title="Gestión de Dispositivos"
+      description="Administra los dispositivos de marcación (tablets, kioscos)"
     >
-      <UnderConstruction
-        screenName="Gestión de Dispositivos"
-        screenKey="DEVICE_MANAGEMENT"
-        description="Esta pantalla permitirá administrar los dispositivos de marcación: relojes checadores biométricos, tablets, terminales móviles, configuración de IP, sincronización y pruebas de conexión."
-      />
+      <DeviceManagement />
     </ScreenPageShell>
   );
 }
+

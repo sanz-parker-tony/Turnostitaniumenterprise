@@ -79,7 +79,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       ),
       pool.query(
         `
-          SELECT id, company_id, shift_name, shift_short_name, is_active
+          SELECT id, company_id, shift_name, shift_short_name, start_time, work_minutes, shift_icon_key, is_active
           FROM public.shifts
           WHERE tenant_id = $1
             AND is_active = true
