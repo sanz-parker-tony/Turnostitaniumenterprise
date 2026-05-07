@@ -66,6 +66,8 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'SEC_AUDIT': '/dashboard/security/audit',
   'SEC_TENANT_MEMBERS': '/dashboard/security/tenant-members',
   'SEC_LOGIN_SESSIONS': '/dashboard/security/login-sessions',
+  'SEC_SUBSCRIPTION_PLANS': '/dashboard/security/subscription-plans',
+  'SUBSCRIPTION_PLAN_MANAGEMENT': '/dashboard/security/subscription-plans',
 
   // ========== MAINTENANCE ==========
   'MAINT_CATALOGS': '/dashboard/maintenance/catalogs',

@@ -58,6 +58,7 @@ import settingsRouter from './routes/settings-routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
 import employeeTimePunchesRouter from './routes/employee-time-punches-routes';
 import shiftConstructorRouter from './routes/shift-constructor-routes';
+import subscriptionPlansRouter from './routes/subscription-plans-routes';
 import systemSettingsRouter from './routes/system-settings-routes';
 import timeClockDevicesRouter from './routes/time-clock-devices-routes';
 import usersRouter from './routes/users-management-routes';
@@ -822,6 +823,10 @@ router.use('/organization', requireAuth, organizationRouter);
 
 // Shift Constructor Management
 router.use('/shift-constructor', requireAuth, shiftConstructorRouter);
+
+// Subscription Plans Management
+router.use('/subscription-plans', requireAuth, subscriptionPlansRouter);
+router.use('/subscription-plans-management', requireAuth, subscriptionPlansRouter); // Legacy alias
 
 // Work Patterns Management
 router.use('/work-patterns', requireAuth, workPatternsRouter);

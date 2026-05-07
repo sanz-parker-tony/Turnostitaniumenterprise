@@ -35,6 +35,7 @@ import { ScreensManagement } from './screens/security/ScreensManagement';
 import { ActionsManagement } from './screens/security/ActionsManagement';
 import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
 import { RoleScreenActionsManagement } from './screens/security/RoleScreenActionsManagement';
+import SubscriptionPlansManagement from './screens/security/SubscriptionPlansManagement';
 
 export function Router() {
   const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
@@ -142,6 +143,7 @@ export function Router() {
     '/dashboard/security/actions':             <ActionsManagement />,
     '/dashboard/security/screen-actions':      <ScreenActionsManagement />,
     '/dashboard/security/role-screen-actions': <RoleScreenActionsManagement />,
+    '/dashboard/security/subscription-plans':  <SubscriptionPlansManagement />,
   };
 
   // Si la ruta existe en el mapa, renderizarla

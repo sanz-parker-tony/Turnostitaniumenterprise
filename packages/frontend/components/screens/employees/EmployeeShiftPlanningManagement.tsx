@@ -302,6 +302,7 @@ export function EmployeeShiftPlanningManagement() {
   const [workPatterns, setWorkPatterns] = useState<WorkPattern[]>(DEFAULT_WORK_PATTERNS);
   const [activePatternId, setActivePatternId] = useState('p-5x2');
   const [legendShiftIds, setLegendShiftIds] = useState<string[]>([]);
+  const [hasAppliedParameters, setHasAppliedParameters] = useState(false);
   const distributionComboRef = useRef<HTMLDivElement | null>(null);
 
   const rangeDays = useMemo(() => {
@@ -402,9 +403,8 @@ export function EmployeeShiftPlanningManagement() {
   }, [shiftTypes]);
 
   const shiftLegendEntries = useMemo(() => {
-    const sourceShifts = legendShiftIds.length > 0
-      ? shifts.filter((shift) => legendShiftIds.includes(shift.id))
-      : shifts;
+    if (!hasAppliedParameters || legendShiftIds.length === 0) return [];
+    const sourceShifts = shifts.filter((shift) => legendShiftIds.includes(shift.id));
 
     const ordered = [...sourceShifts].sort((a, b) => {
       const aKind = classifyShift(a);
@@ -422,17 +422,8 @@ export function EmployeeShiftPlanningManagement() {
       };
     });
 
-    if (legendShiftIds.length === 0) {
-      entries.push({
-        key: 'NO_DATA',
-        label: KIND_META.X.label,
-        hint: 'Sin turno planificado',
-        meta: KIND_META.X,
-      });
-    }
-
     return entries;
-  }, [shifts, legendShiftIds]);
+  }, [shifts, legendShiftIds, hasAppliedParameters]);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -510,6 +501,9 @@ export function EmployeeShiftPlanningManagement() {
   useEffect(() => {
     if (rangeDays.length === 0) {
       setPlans([]);
+      setChanges({});
+      setLegendShiftIds([]);
+      setHasAppliedParameters(false);
       setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
       return;
     }
@@ -641,15 +635,13 @@ export function EmployeeShiftPlanningManagement() {
     if (distributionShiftIds.has(nextId)) return;
     const shift = shiftsById.get(nextId);
     if (!shift) return;
-    const required = classifyShift(shift) === 'L' ? 0 : 1;
+    const required = 1;
     setDistributionShifts((prev) => [...prev, { shift_id: nextId, required }]);
     setNewDistributionShiftId('');
     setDistributionComboOpen(false);
   };
 
   const removeDistributionShift = (shiftId: string) => {
-    const shift = shiftsById.get(shiftId);
-    if (shift && classifyShift(shift) === 'L') return;
     setDistributionShifts((prev) => prev.filter((item) => item.shift_id !== shiftId));
   };
 
@@ -664,13 +656,6 @@ export function EmployeeShiftPlanningManagement() {
   }, []);
 
   const updateDistributionRequired = (shiftId: string, required: number) => {
-    const shift = shiftsById.get(shiftId);
-    if (shift && classifyShift(shift) === 'L') {
-      setDistributionShifts((prev) =>
-        prev.map((item) => (item.shift_id === shiftId ? { ...item, required: 0 } : item))
-      );
-      return;
-    }
     const safe = Math.max(0, Math.trunc(required));
     setDistributionShifts((prev) =>
       prev.map((item) => (item.shift_id === shiftId ? { ...item, required: safe } : item))
@@ -916,9 +901,140 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const applyParameters = async () => {
-    const selectedShiftIds = distributionShiftRows.map(({ shift }) => shift.id);
-    setLegendShiftIds(selectedShiftIds);
-    await reloadGridFromDatabase();
+    if (rangeDays.length === 0) {
+      setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
+      return;
+    }
+
+    const sequenceShiftIds = distributionShiftRows.flatMap(({ item, shift }) => {
+      const amount = Math.max(0, Math.trunc(Number(item.required || 0)));
+      return Array.from({ length: amount }, () => shift.id);
+    });
+
+    if (sequenceShiftIds.length === 0) {
+      setError('Defina al menos 1 día en Dotación Requerida para construir la secuencia.');
+      return;
+    }
+
+    const generated: Record<string, DayCellChange> = {};
+    const sequenceLength = sequenceShiftIds.length;
+    const employeeCount = Math.max(1, filteredEmployees.length);
+
+    // 1) Aplicar la secuencia con desfase por empleado para evitar que todos caigan en el mismo turno/día libre.
+    filteredEmployees.forEach((employee, employeeIndex) => {
+      const phaseOffset = Math.floor((employeeIndex * sequenceLength) / employeeCount) % sequenceLength;
+      rangeDays.forEach((day, dayIndex) => {
+        const dateIso = toIsoDate(day);
+        const sequenceShiftId = sequenceShiftIds[(dayIndex + phaseOffset) % sequenceLength];
+        const shift = shiftsById.get(sequenceShiftId);
+        const kind = shift ? classifyShift(shift) : 'O';
+        const shiftTypeId = shift ? (shiftTypeIdByKind[kind] || null) : null;
+        generated[keyOf(employee.id, dateIso)] = {
+          employee_id: employee.id,
+          shift_date: dateIso,
+          shift_id: sequenceShiftId,
+          shift_type_id: shiftTypeId,
+          company_id: employee.company_id,
+        };
+      });
+    });
+
+    // 2) Garantizar cobertura mínima diaria por turno productivo (>=1) cuando sea factible con el personal disponible.
+    const productiveShiftIds = Array.from(
+      new Set(
+        sequenceShiftIds.filter((shiftId) => {
+          const shift = shiftsById.get(shiftId);
+          if (!shift) return false;
+          return classifyShift(shift) !== 'L';
+        })
+      )
+    );
+
+    let uncoveredGaps = 0;
+    rangeDays.forEach((day, dayIndex) => {
+      const dateIso = toIsoDate(day);
+      const dayCountByShift: Record<string, number> = {};
+
+      filteredEmployees.forEach((employee) => {
+        const assignedShiftId = generated[keyOf(employee.id, dateIso)]?.shift_id || null;
+        if (!assignedShiftId) return;
+        dayCountByShift[assignedShiftId] = (dayCountByShift[assignedShiftId] || 0) + 1;
+      });
+
+      const orderedTargets = productiveShiftIds.map((_, idx) => productiveShiftIds[(idx + dayIndex) % productiveShiftIds.length]);
+      orderedTargets.forEach((targetShiftId) => {
+        if ((dayCountByShift[targetShiftId] || 0) > 0) return;
+        const targetShift = shiftsById.get(targetShiftId);
+        if (!targetShift) return;
+
+        const candidates = filteredEmployees
+          .map((employee) => {
+            const cell = generated[keyOf(employee.id, dateIso)];
+            const currentShiftId = cell?.shift_id || null;
+            const currentShift = currentShiftId ? shiftsById.get(currentShiftId) || null : null;
+            const currentKind = currentShift ? classifyShift(currentShift) : 'X';
+            const currentCount = currentShiftId ? (dayCountByShift[currentShiftId] || 0) : 0;
+            const compatible = isShiftCompatibleWithEmployee(targetShift, employee);
+            return {
+              employee,
+              currentShiftId,
+              currentKind,
+              currentCount,
+              compatible,
+            };
+          })
+          .filter((entry) => entry.compatible && entry.currentShiftId !== targetShiftId)
+          .sort((a, b) => {
+            const score = (item: { currentKind: ShiftKind; currentCount: number }) => {
+              if (item.currentKind === 'L' || item.currentKind === 'X') return 0;
+              if (item.currentCount > 1) return 1;
+              return 10;
+            };
+            return score(a) - score(b);
+          });
+
+        const fallbackAllowed = productiveShiftIds.length > employeeCount;
+        const chosen = candidates.find((entry) => {
+          if (entry.currentKind === 'L' || entry.currentKind === 'X') return true;
+          if (entry.currentCount > 1) return true;
+          return fallbackAllowed;
+        });
+
+        if (!chosen) {
+          uncoveredGaps += 1;
+          return;
+        }
+
+        const cellKey = keyOf(chosen.employee.id, dateIso);
+        const previousShiftId = generated[cellKey]?.shift_id || null;
+        const targetKind = classifyShift(targetShift);
+        generated[cellKey] = {
+          employee_id: chosen.employee.id,
+          shift_date: dateIso,
+          shift_id: targetShiftId,
+          shift_type_id: shiftTypeIdByKind[targetKind] || null,
+          company_id: chosen.employee.company_id,
+        };
+
+        if (previousShiftId) {
+          dayCountByShift[previousShiftId] = Math.max(0, (dayCountByShift[previousShiftId] || 0) - 1);
+        }
+        dayCountByShift[targetShiftId] = (dayCountByShift[targetShiftId] || 0) + 1;
+      });
+    });
+
+    const orderedLegend = Array.from(new Set(sequenceShiftIds));
+    setChanges(generated);
+    setPlans([]);
+    setLegendShiftIds(orderedLegend);
+    setHasAppliedParameters(true);
+    setConfirmed(false);
+    setError(null);
+    if (uncoveredGaps > 0) {
+      setSuccess(`Secuencia aplicada con cobertura parcial: ${sequenceShiftIds.length} días base repetidos en ${rangeDays.length} días. Quedaron ${uncoveredGaps} huecos de cobertura por dotación insuficiente o restricciones de compañía.`);
+      return;
+    }
+    setSuccess(`Secuencia aplicada: ${sequenceShiftIds.length} días base repetidos en ${rangeDays.length} días de planificación, con cobertura diaria mínima en turnos productivos.`);
   };
 
   const totalsByKind = useMemo(() => {
@@ -1041,31 +1157,19 @@ export function EmployeeShiftPlanningManagement() {
   useEffect(() => {
     setDistributionShifts((prev) => {
       const cleaned = prev.filter((item) => shiftsById.has(item.shift_id));
-      const libreShift = selectableDistributionShifts.find((shift) => classifyShift(shift) === 'L');
-      const ensureLibre = (items: DistributionShift[]) => {
-        if (!libreShift) return items;
-        const exists = items.some((item) => item.shift_id === libreShift.id);
-        if (exists) {
-          return items.map((item) =>
-            item.shift_id === libreShift.id ? { ...item, required: 0 } : item
-          );
-        }
-        return [...items, { shift_id: libreShift.id, required: 0 }];
-      };
-
-      if (cleaned.length > 0) return ensureLibre(cleaned);
+      if (cleaned.length > 0) return cleaned;
 
       const defaults: DistributionShift[] = [];
-      (['M', 'T', 'N'] as ShiftKind[]).forEach((kind) => {
+      (['M', 'T', 'N', 'L'] as ShiftKind[]).forEach((kind) => {
         const found = selectableDistributionShifts.find((shift) => classifyShift(shift) === kind);
-        if (found) defaults.push({ shift_id: found.id, required: 3 });
+        if (found) defaults.push({ shift_id: found.id, required: 1 });
       });
 
-      if (defaults.length > 0) return ensureLibre(defaults);
-      return ensureLibre(
+      if (defaults.length > 0) return defaults;
+      return (
         selectableDistributionShifts.slice(0, 3).map((shift) => ({
           shift_id: shift.id,
-          required: classifyShift(shift) === 'L' ? 0 : 3,
+          required: 1,
         }))
       );
     });
@@ -1254,7 +1358,7 @@ export function EmployeeShiftPlanningManagement() {
                 onClick={() => void resetPlan()}
                 className="rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-gray-50"
               >
-                <span className="inline-flex items-center gap-2"><RefreshCw className="size-4" /> Reiniciar</span>
+                <span className="inline-flex items-center gap-2"><RefreshCw className="size-4" /> Recargar</span>
               </button>
               </div>
             </div>
@@ -1269,22 +1373,28 @@ export function EmployeeShiftPlanningManagement() {
             setParamsPanelOpen((prev) => !prev);
             setSidePanelOpen(false);
           }}
-          className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm shadow-md hover:bg-gray-50"
+          className={`inline-flex size-11 items-center justify-center rounded-2xl border shadow-md transition ${
+            paramsPanelOpen
+              ? 'border-gray-300 bg-gray-100 text-gray-400'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-600'
+          }`}
+          title={paramsPanelOpen ? 'Parámetros (abierto)' : 'Parámetros'}
         >
           <Settings className="size-4" />
-          {paramsPanelOpen ? 'Ocultar parámetros' : 'Parámetros'}
-          {paramsPanelOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
         </button>
         <button
           onClick={() => {
             setSidePanelOpen((prev) => !prev);
             setParamsPanelOpen(false);
           }}
-          className="inline-flex items-center gap-2 rounded-xl border bg-white px-3 py-2 text-sm shadow-md hover:bg-gray-50"
+          className={`inline-flex size-11 items-center justify-center rounded-2xl border shadow-md transition ${
+            sidePanelOpen
+              ? 'border-gray-300 bg-gray-100 text-gray-400'
+              : 'border-amber-200 bg-amber-50 text-amber-600'
+          }`}
+          title={sidePanelOpen ? 'Sugerencias (abierto)' : 'Sugerencias'}
         >
           <Lightbulb className="size-4" />
-          {sidePanelOpen ? 'Ocultar sugerencias' : 'Sugerencias'}
-          {sidePanelOpen ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
         </button>
       </div>
 
@@ -1419,7 +1529,6 @@ export function EmployeeShiftPlanningManagement() {
                 const kind = classifyShift(shift);
                 const meta = getShiftVisualMeta(shift, kind);
                 const Icon = meta.Icon;
-                const isLibre = kind === 'L';
                 return (
                   <div key={shift.id} className="flex items-center gap-2">
                     <div className="flex min-w-[190px] items-center gap-2 text-sm font-medium">
@@ -1431,15 +1540,13 @@ export function EmployeeShiftPlanningManagement() {
                       min={0}
                       value={item.required}
                       onChange={(event) => updateDistributionRequired(shift.id, Number(event.target.value || 0))}
-                      disabled={isLibre}
-                      className="w-20 rounded-xl border px-2 py-2 text-sm disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
+                      className="w-20 rounded-xl border px-2 py-2 text-sm"
                     />
                     <button
                       type="button"
                       onClick={() => removeDistributionShift(shift.id)}
-                      disabled={isLibre}
-                      className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      title={isLibre ? 'Turno Libre fijo por patrón' : 'Quitar turno'}
+                      className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                      title="Quitar turno"
                     >
                       <Minus className="size-4" />
                     </button>
