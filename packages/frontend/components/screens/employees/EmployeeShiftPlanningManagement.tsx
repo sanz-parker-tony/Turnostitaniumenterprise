@@ -30,7 +30,11 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
-import { generateShiftPlanning, ShiftPlanningGeneratePayload } from '@/lib/shift-planning-api';
+import {
+  generateShiftPlanning,
+  ShiftPlanningGeneratePayload,
+  ShiftPlanningGeneratedItem,
+} from '@/lib/shift-planning-api';
 import { publicApiToken } from '../../../utils/backend/info';
 
 type ShiftPlanRow = {
@@ -189,8 +193,12 @@ function keyOf(employeeId: string, dateIso: string): string {
   return `${employeeId}::${dateIso}`;
 }
 
+function normalizeLookupValue(value?: string | null): string {
+  return String(value || '').trim().toUpperCase();
+}
+
 function normalizeShiftIconKey(value?: string | null): string | null {
-  const raw = String(value || '').trim().toUpperCase();
+  const raw = normalizeLookupValue(value);
   if (!raw) return null;
   if (raw === 'SUN' || raw === 'SOL' || raw === 'MANANA' || raw === 'MORNING') return 'Sun';
   if (raw === 'SUNSET' || raw === 'ATARDECER' || raw === 'AFTERNOON' || raw === 'TARDE') return 'Sunset';
@@ -225,18 +233,18 @@ function formatMinutesAsClock(totalMinutes: number): string {
 function classifyShift(shift: ShiftRow): ShiftKind {
   const text = `${shift.shift_short_name} ${shift.shift_name}`.toUpperCase();
   if (text.includes('LIBRE') || text.includes('DESCANSO') || text.includes('OFF') || text.includes('REST')) return 'L';
-  if (text.includes('NOCHE') || text.includes('NOC') || text.includes('N ')) return 'N';
-  if (text.includes('TARDE') || text.includes('VES') || text.includes('T ')) return 'T';
-  if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('M ')) return 'M';
+  if (text.includes('NOCHE') || text.includes('NOC') || text.includes('NOCT') || text.includes('VELA') || text.includes('N ')) return 'N';
+  if (text.includes('TARDE') || text.includes('VES') || text.includes('VESP') || text.includes('T ')) return 'T';
+  if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('MATU') || text.includes('M ')) return 'M';
   return 'O';
 }
 
 function classifyShiftText(shiftName?: string | null, shiftShortName?: string | null): ShiftKind {
   const text = `${shiftShortName || ''} ${shiftName || ''}`.toUpperCase();
   if (text.includes('LIBRE') || text.includes('DESCANSO') || text.includes('OFF') || text.includes('REST')) return 'L';
-  if (text.includes('NOCHE') || text.includes('NOC') || text.includes('N ')) return 'N';
-  if (text.includes('TARDE') || text.includes('VES') || text.includes('T ')) return 'T';
-  if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('M ')) return 'M';
+  if (text.includes('NOCHE') || text.includes('NOC') || text.includes('NOCT') || text.includes('VELA') || text.includes('N ')) return 'N';
+  if (text.includes('TARDE') || text.includes('VES') || text.includes('VESP') || text.includes('T ')) return 'T';
+  if (text.includes('MANANA') || text.includes('MAÑANA') || text.includes('MAT') || text.includes('MATU') || text.includes('M ')) return 'M';
   return 'O';
 }
 
@@ -332,6 +340,28 @@ export function EmployeeShiftPlanningManagement() {
   const shiftsById = useMemo(() => {
     const map = new Map<string, ShiftRow>();
     shifts.forEach((shift) => map.set(shift.id, shift));
+    return map;
+  }, [shifts]);
+
+  const shiftsByCode = useMemo(() => {
+    const map = new Map<string, ShiftRow>();
+    shifts.forEach((shift) => {
+      const key = normalizeLookupValue(shift.shift_short_name);
+      if (key && !map.has(key)) {
+        map.set(key, shift);
+      }
+    });
+    return map;
+  }, [shifts]);
+
+  const shiftsByName = useMemo(() => {
+    const map = new Map<string, ShiftRow>();
+    shifts.forEach((shift) => {
+      const key = normalizeLookupValue(shift.shift_name);
+      if (key && !map.has(key)) {
+        map.set(key, shift);
+      }
+    });
     return map;
   }, [shifts]);
 
@@ -710,6 +740,65 @@ export function EmployeeShiftPlanningManagement() {
     };
   };
 
+  const resolveShiftFromGeneratedItem = (item: ShiftPlanningGeneratedItem): ShiftRow | null => {
+    const shiftId = String(item.turnoId || '').trim();
+    if (shiftId && shiftsById.has(shiftId)) {
+      return shiftsById.get(shiftId) || null;
+    }
+
+    const codeKey = normalizeLookupValue(item.codigoTurno);
+    if (codeKey && shiftsByCode.has(codeKey)) {
+      return shiftsByCode.get(codeKey) || null;
+    }
+
+    const nameKey = normalizeLookupValue(item.nombreTurno);
+    if (nameKey && shiftsByName.has(nameKey)) {
+      return shiftsByName.get(nameKey) || null;
+    }
+
+    return null;
+  };
+
+  const applyGeneratedPlanningToTable = (planificacion: ShiftPlanningGeneratedItem[]) => {
+    const employeesById = new Map(filteredEmployees.map((employee) => [employee.id, employee]));
+    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)));
+    const generated: Record<string, DayCellChange> = {};
+    let appliedCount = 0;
+
+    planificacion.forEach((item) => {
+      const employeeId = String(item.empleadoId || '').trim();
+      const dateIso = String(item.fecha || '').trim().split('T')[0];
+      const employee = employeesById.get(employeeId);
+      if (!employee || !validDates.has(dateIso)) return;
+
+      const resolvedShift = resolveShiftFromGeneratedItem(item);
+      const resolvedKind = resolvedShift
+        ? classifyShift(resolvedShift)
+        : classifyShiftText(item.nombreTurno, item.codigoTurno);
+      const isLibre = item.esLibre === true || resolvedKind === 'L';
+
+      const shiftId = resolvedShift?.id || null;
+      if (!shiftId && !isLibre) return;
+
+      generated[keyOf(employee.id, dateIso)] = {
+        employee_id: employee.id,
+        shift_date: dateIso,
+        shift_id: shiftId,
+        shift_type_id: shiftId ? (shiftTypeIdByKind[resolvedKind] || null) : null,
+        company_id: employee.company_id,
+      };
+      appliedCount += 1;
+    });
+
+    setChanges(generated);
+    setPlans([]);
+    setLegendShiftIds(distributionShiftRows.map(({ shift }) => shift.id));
+    setHasAppliedParameters(true);
+    setConfirmed(false);
+
+    return appliedCount;
+  };
+
   const handleGeneratePlanning = async () => {
     if (confirmed) return;
     setError(null);
@@ -750,7 +839,17 @@ export function EmployeeShiftPlanningManagement() {
       const payload = buildShiftPlanningPayload();
       console.log('Shift planning payload (/api/shift-planning/generate):', payload);
       const response = await generateShiftPlanning(payload);
-      setSuccess(response?.message || 'Planificación enviada correctamente al optimizador.');
+
+      if (!response?.success) {
+        setError(response?.message || 'No se pudo generar la planificación.');
+        return;
+      }
+
+      const planificacion = Array.isArray(response?.planificacion) ? response.planificacion : [];
+      const applied = applyGeneratedPlanningToTable(planificacion);
+      setSuccess(
+        response?.message || `Planificación aplicada en ${applied} celdas.`
+      );
     } catch (err: any) {
       setError(err?.message || 'Error preparando payload de planificación');
     } finally {
@@ -1668,5 +1767,3 @@ export function EmployeeShiftPlanningManagement() {
     </div>
   );
 }
-
-

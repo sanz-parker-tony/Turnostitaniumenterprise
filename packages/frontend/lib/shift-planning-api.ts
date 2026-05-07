@@ -65,6 +65,30 @@ export type ShiftPlanningGeneratePayload = {
   turnosDisponibles: ShiftPlanningAvailableShift[];
 };
 
+export type ShiftPlanningGeneratedItem = {
+  empleadoId: string;
+  empleadoNombre: string;
+  fecha: string;
+  turnoId: string | null;
+  nombreTurno: string | null;
+  codigoTurno: string | null;
+  horaInicio: string | null;
+  horaFin: string | null;
+  esLibre: boolean;
+};
+
+export type ShiftPlanningGenerateResponse = {
+  success: boolean;
+  message: string;
+  planificacion: ShiftPlanningGeneratedItem[];
+  resumen?: {
+    totalEmpleados?: number;
+    totalFechas?: number;
+    totalAsignacionesTrabajo?: number;
+    totalAsignacionesLibre?: number;
+  };
+};
+
 type GenerateShiftPlanningOptions = {
   dryRun?: boolean;
 };
@@ -76,9 +100,13 @@ function getToken() {
 export async function generateShiftPlanning(
   payload: ShiftPlanningGeneratePayload,
   options?: GenerateShiftPlanningOptions
-) {
+): Promise<ShiftPlanningGenerateResponse> {
   if (options?.dryRun) {
-    return { success: true, dryRun: true } as const;
+    return {
+      success: true,
+      message: 'Dry run',
+      planificacion: [],
+    };
   }
 
   const response = await fetch('http://localhost:3001/api/shift-planning/generate', {
@@ -92,8 +120,8 @@ export async function generateShiftPlanning(
 
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body?.error || `HTTP ${response.status}`);
+    throw new Error(body?.message || body?.error || `HTTP ${response.status}`);
   }
 
-  return body;
+  return body as ShiftPlanningGenerateResponse;
 }
