@@ -1,3 +1,4 @@
 ﻿node_modules
 packages/backend/dist
 dist
+packages/optimizer/__pycache__

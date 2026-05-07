@@ -30,6 +30,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
+import { generateShiftPlanning, ShiftPlanningGeneratePayload } from '@/lib/shift-planning-api';
 import { publicApiToken } from '../../../utils/backend/info';
 
 type ShiftPlanRow = {
@@ -270,6 +271,7 @@ export function EmployeeShiftPlanningManagement() {
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generatingPlanning, setGeneratingPlanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -381,6 +383,10 @@ export function EmployeeShiftPlanningManagement() {
   const selectedDistributionShift = useMemo(() => {
     return selectableDistributionShifts.find((shift) => shift.id === newDistributionShiftId) || null;
   }, [selectableDistributionShifts, newDistributionShiftId]);
+
+  const activePattern = useMemo(() => {
+    return workPatterns.find((pattern) => pattern.id === activePatternId) || null;
+  }, [workPatterns, activePatternId]);
 
   const requiredByKind = useMemo(() => {
     const base: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
@@ -510,34 +516,6 @@ export function EmployeeShiftPlanningManagement() {
     void loadAll();
   }, [rangeFrom, rangeTo, rangeDays.length]);
 
-  const getPatternKind = (employee: EmployeeRow, dateIso: string): ShiftKind => {
-    const start = parseIsoDate(fechaInicio);
-    const current = parseIsoDate(dateIso);
-    if (!start || !current) return 'L';
-
-    const workDays = Math.max(1, diasTrabajo);
-    const freeDays = Math.max(0, diasLibres);
-    const cycleLength = workDays + freeDays;
-    if (cycleLength <= 0) return 'L';
-
-    const employeeIndex = filteredEmployees.findIndex((item) => item.id === employee.id);
-    const shiftOffset = employeeIndex >= 0 ? employeeIndex : 0;
-    const dayOffset = diffDays(start, current);
-    const cyclePosition = ((dayOffset + shiftOffset) % cycleLength + cycleLength) % cycleLength;
-
-    if (cyclePosition >= workDays) return 'L';
-    const workStep = (dayOffset + shiftOffset) % 3;
-    return (['M', 'T', 'N'] as ShiftKind[])[(workStep + 3) % 3];
-  };
-
-  const getShiftIdByKind = (employee: EmployeeRow, kind: ShiftKind): string | null => {
-    if (kind === 'L') return null;
-    const found = distributionShiftRows.find(({ shift }) => {
-      return classifyShift(shift) === kind && isShiftCompatibleWithEmployee(shift, employee);
-    });
-    return found?.shift.id || null;
-  };
-
   const cellShiftId = (employee: EmployeeRow, dateIso: string): string | null => {
     const change = changes[keyOf(employee.id, dateIso)];
     if (change) return change.shift_id;
@@ -662,157 +640,122 @@ export function EmployeeShiftPlanningManagement() {
     );
   };
 
-  const generatePlanning = () => {
-    if (confirmed) return;
+  const buildShiftPlanningPayload = (): ShiftPlanningGeneratePayload => {
+    const dotacionRequerida = distributionShiftRows.map(({ item, shift }) => {
+      const startMinutes = parseTimeToMinutes(shift.start_time);
+      const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
+      const horaFin = startMinutes !== null && workMinutes > 0
+        ? formatMinutesAsClock(startMinutes + workMinutes)
+        : null;
 
-    const generated: Record<string, DayCellChange> = {};
-    const workLoadByEmployee: Record<string, number> = {};
-
-    const getEffectiveShiftId = (employeeId: string, dateIso: string): string | null => {
-      const cellKey = keyOf(employeeId, dateIso);
-      if (generated[cellKey]) return generated[cellKey].shift_id;
-      if (changes[cellKey]) return changes[cellKey].shift_id;
-      return plansByKey.get(cellKey)?.shift_id || null;
-    };
-
-    const hasExplicitFree = (employeeId: string, dateIso: string): boolean => {
-      const cellKey = keyOf(employeeId, dateIso);
-      if (generated[cellKey]) return generated[cellKey].shift_id === null;
-      if (changes[cellKey]) return changes[cellKey].shift_id === null;
-      return false;
-    };
-
-    const setGeneratedShift = (employee: EmployeeRow, dateIso: string, shiftId: string | null) => {
-      const shift = shiftId ? shiftsById.get(shiftId) : null;
-      const kind = shift ? classifyShift(shift) : 'X';
-      const shiftTypeId = shift ? (shiftTypeIdByKind[kind] || null) : null;
-      generated[keyOf(employee.id, dateIso)] = {
-        employee_id: employee.id,
-        shift_date: dateIso,
-        shift_id: shiftId,
-        shift_type_id: shiftTypeId,
-        company_id: employee.company_id,
+      return {
+        turnoId: shift.id,
+        nombreTurno: shift.shift_name,
+        codigoTurno: shift.shift_short_name,
+        horaInicio: shift.start_time || null,
+        horaFin,
+        cantidadRequerida: Math.max(0, Math.trunc(Number(item.required || 0))),
       };
-    };
-
-    const getKindForEmployeeDay = (employee: EmployeeRow, dateIso: string): ShiftKind => {
-      if (hasExplicitFree(employee.id, dateIso)) return 'L';
-      const effectiveShiftId = getEffectiveShiftId(employee.id, dateIso);
-      if (!effectiveShiftId) {
-        const plan = plansByKey.get(keyOf(employee.id, dateIso));
-        return plan?.shift_id ? 'O' : 'X';
-      }
-      const shift = shiftsById.get(effectiveShiftId);
-      if (!shift) return 'X';
-      return classifyShift(shift);
-    };
-
-    const scoreEmployeeForKind = (employee: EmployeeRow, dateIso: string, targetKind: ShiftKind): number => {
-      let score = workLoadByEmployee[employee.id] || 0;
-      if (targetKind === 'M' && reglaEvitarNM) {
-        const prev = addDays(parseIsoDate(dateIso) || new Date(`${dateIso}T00:00:00`), -1);
-        const prevIso = toIsoDate(prev);
-        const prevKind = getKindForEmployeeDay(employee, prevIso);
-        if (prevKind === 'N') score += 1000;
-      }
-      return score;
-    };
-
-    rangeDays.forEach((day) => {
-      const dateIso = toIsoDate(day);
-
-      // 1) Base por patrón para TODO el rango (trabajo/descanso)
-      filteredEmployees.forEach((employee) => {
-        const patternKind = getPatternKind(employee, dateIso);
-        const patternShiftId = getShiftIdByKind(employee, patternKind);
-
-        if (patternKind === 'L') {
-          // Descanso explícito del patrón.
-          setGeneratedShift(employee, dateIso, null);
-          return;
-        }
-
-        if (patternShiftId) {
-          setGeneratedShift(employee, dateIso, patternShiftId);
-          return;
-        }
-
-        // Si no hay turno definido para ese tipo en la compañía, conserva el existente.
-        const current = getEffectiveShiftId(employee.id, dateIso);
-        if (current) {
-          setGeneratedShift(employee, dateIso, current);
-        }
-      });
-
-      // 2) Ajuste por dotación mínima para turnos seleccionados
-      const targetByShiftId: Record<string, number> = {};
-      distributionShiftRows.forEach(({ item, shift }) => {
-        targetByShiftId[shift.id] = Math.max(0, Number(item.required || 0));
-      });
-
-      distributionShiftRows.forEach(({ item, shift }) => {
-        const required = Math.max(0, Number(item.required || 0));
-        if (required <= 0) return;
-        const targetKind = classifyShift(shift);
-
-        const dayCount: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
-        const dayCountByShift: Record<string, number> = {};
-        filteredEmployees.forEach((employee) => {
-          const currentKind = getKindForEmployeeDay(employee, dateIso);
-          dayCount[currentKind] += 1;
-          const currentShiftId = getEffectiveShiftId(employee.id, dateIso);
-          if (currentShiftId) {
-            dayCountByShift[currentShiftId] = (dayCountByShift[currentShiftId] || 0) + 1;
-          }
-        });
-
-        let deficit = required - (dayCountByShift[shift.id] || 0);
-        if (deficit <= 0) return;
-
-        const candidates = filteredEmployees
-          .filter((employee) => {
-            const currentShiftId = getEffectiveShiftId(employee.id, dateIso);
-            if (currentShiftId === shift.id) return false;
-            const currentKind = getKindForEmployeeDay(employee, dateIso);
-            if (currentKind === 'X' || currentKind === 'O') return true;
-            if (currentKind === 'L') return true;
-            if (!currentShiftId) return true;
-
-            const currentTarget = targetByShiftId[currentShiftId];
-            if (currentTarget === undefined) return true;
-            return (dayCountByShift[currentShiftId] || 0) > currentTarget;
-          })
-          .sort((a, b) => scoreEmployeeForKind(a, dateIso, targetKind) - scoreEmployeeForKind(b, dateIso, targetKind));
-
-        for (const employee of candidates) {
-          if (deficit <= 0) break;
-          if (!isShiftCompatibleWithEmployee(shift, employee)) continue;
-          const targetShiftId = shift.id;
-          if (!targetShiftId) continue;
-          const previousShiftId = getEffectiveShiftId(employee.id, dateIso);
-          const prevKind = getKindForEmployeeDay(employee, dateIso);
-          setGeneratedShift(employee, dateIso, targetShiftId);
-          workLoadByEmployee[employee.id] = (workLoadByEmployee[employee.id] || 0) + 1;
-          dayCount[prevKind] = Math.max(0, dayCount[prevKind] - 1);
-          dayCount[targetKind] += 1;
-          if (previousShiftId) {
-            dayCountByShift[previousShiftId] = Math.max(0, (dayCountByShift[previousShiftId] || 0) - 1);
-          }
-          dayCountByShift[targetShiftId] = (dayCountByShift[targetShiftId] || 0) + 1;
-          deficit -= 1;
-        }
-      });
     });
 
-    if (Object.keys(generated).length === 0) {
-      setSuccess('No hay celdas sin planificación para generar.');
+    return {
+      filtrosEmpleados: {
+        soloEmpleadosTurnosRotativos: true,
+        areaId: areaFilter === 'ALL' ? null : areaFilter,
+        grupoTrabajoId: groupFilter === 'ALL' ? null : groupFilter,
+      },
+      rangoFechas: {
+        fechaInicio,
+        fechaFin,
+      },
+      patronActivo: {
+        patronId: activePatternId,
+        nombrePatron: activePattern?.name || 'Patrón no seleccionado',
+        esquemaActual: {
+          diasTrabajo,
+          diasLibres,
+        },
+      },
+      dotacionRequerida,
+      reglasIA: {
+        evitarTurnoNocheManana: reglaEvitarNM,
+        priorizarEquidadHoras: reglaEquidad,
+        equilibrarFeriados: reglaFeriados,
+        permitirSwaps: reglaSwaps,
+      },
+      empleadosDisponibles: filteredEmployees.map((employee) => ({
+        id: employee.id,
+        codigo: employee.employee_code,
+        nombres: employee.employee_name,
+        apellidos: employee.employee_lastname,
+        companyId: employee.company_id,
+        companyName: employee.company_name,
+      })),
+      turnosDisponibles: shifts.map((shift) => {
+        const startMinutes = parseTimeToMinutes(shift.start_time);
+        const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
+        const horaFin = startMinutes !== null && workMinutes > 0
+          ? formatMinutesAsClock(startMinutes + workMinutes)
+          : null;
+        return {
+          id: shift.id,
+          nombreTurno: shift.shift_name,
+          codigoTurno: shift.shift_short_name,
+          horaInicio: shift.start_time || null,
+          horaFin,
+          duracionMinutos: shift.work_minutes ?? null,
+          companyId: shift.company_id,
+        };
+      }),
+    };
+  };
+
+  const handleGeneratePlanning = async () => {
+    if (confirmed) return;
+    setError(null);
+    setSuccess(null);
+
+    if (!fechaInicio) {
+      setError('Debe seleccionar Fecha Inicio.');
+      return;
+    }
+    if (!fechaFin) {
+      setError('Debe seleccionar Fecha Fin.');
       return;
     }
 
-    setChanges((prev) => ({ ...prev, ...generated }));
-    setSuccess(`Planificación generada en ${Object.keys(generated).length} celdas. Revise y luego guarde cambios.`);
-    setError(null);
-    setConfirmed(false);
+    const startDate = parseIsoDate(fechaInicio);
+    const endDate = parseIsoDate(fechaFin);
+    if (!startDate || !endDate) {
+      setError('Las fechas deben tener formato válido YYYY-MM-DD.');
+      return;
+    }
+    if (startDate > endDate) {
+      setError('Fecha Inicio no puede ser mayor que Fecha Fin.');
+      return;
+    }
+    if (filteredEmployees.length === 0) {
+      setError('No hay empleados disponibles con los filtros actuales.');
+      return;
+    }
+
+    const hasRequiredCoverage = distributionShiftRows.some(({ item }) => Math.max(0, Number(item.required || 0)) >= 1);
+    if (!hasRequiredCoverage) {
+      setError('Debe configurar al menos un turno con cantidad requerida mayor o igual a 1.');
+      return;
+    }
+
+    setGeneratingPlanning(true);
+    try {
+      const payload = buildShiftPlanningPayload();
+      console.log('Shift planning payload (/api/shift-planning/generate):', payload);
+      const response = await generateShiftPlanning(payload);
+      setSuccess(response?.message || 'Planificación enviada correctamente al optimizador.');
+    } catch (err: any) {
+      setError(err?.message || 'Error preparando payload de planificación');
+    } finally {
+      setGeneratingPlanning(false);
+    }
   };
 
   const pendingPersistChanges = useMemo<DayCellChange[]>(() => {
@@ -1334,13 +1277,13 @@ export function EmployeeShiftPlanningManagement() {
 
               <div className="flex flex-wrap items-center justify-end gap-3">
               <button
-                onClick={generatePlanning}
-                disabled={loading || saving || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0}
+                onClick={() => void handleGeneratePlanning()}
+                disabled={loading || saving || generatingPlanning || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0}
                 className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
               >
                 <span className="inline-flex items-center gap-2">
                   <Sparkles className="size-4" />
-                  Generar planificación
+                  {generatingPlanning ? 'Generando...' : 'Generar planificación'}
                 </span>
               </button>
               <button
@@ -1632,12 +1575,12 @@ export function EmployeeShiftPlanningManagement() {
             </div>
             <button
               onClick={() => void applyParameters()}
-              disabled={saving || loading}
+              disabled={saving || loading || generatingPlanning}
               className="mt-4 w-full rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
             >
               <span className="inline-flex items-center gap-2">
                 <CheckCircle2 className="size-4" />
-                {loading ? 'Aplicando...' : 'Aplicar Parámetros'}
+                {generatingPlanning || loading ? 'Aplicando...' : 'Aplicar Parámetros'}
               </span>
             </button>
           </div>
