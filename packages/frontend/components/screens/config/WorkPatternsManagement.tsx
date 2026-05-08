@@ -1,8 +1,18 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Edit, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Edit, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+
+interface WorkPatternShiftRow {
+  id?: string;
+  shift_id: string;
+  sequence_number: number;
+  cycle_day_number: number;
+  shift_name?: string;
+  shift_short_name?: string;
+  is_active?: boolean;
+}
 
 interface WorkPatternRow {
   id: string;
@@ -17,6 +27,19 @@ interface WorkPatternRow {
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
+  pattern_shifts?: WorkPatternShiftRow[];
+}
+
+interface ShiftCatalogRow {
+  id: string;
+  shift_name: string;
+  shift_short_name: string;
+  is_active: boolean;
+}
+
+interface WorkPatternShiftFormRow {
+  shift_id: string;
+  cycle_day_number: string;
 }
 
 interface WorkPatternFormState {
@@ -30,6 +53,7 @@ interface WorkPatternFormState {
   weekly_work_minutes_target: string;
   is_flexible: boolean;
   is_active: boolean;
+  pattern_shifts: WorkPatternShiftFormRow[];
 }
 
 const PAGE_SIZE = 10;
@@ -50,6 +74,7 @@ function makeEmptyForm(): WorkPatternFormState {
     weekly_work_minutes_target: '2400',
     is_flexible: true,
     is_active: true,
+    pattern_shifts: [],
   };
 }
 
@@ -66,12 +91,14 @@ export function WorkPatternsManagement() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [patterns, setPatterns] = useState<WorkPatternRow[]>([]);
+  const [shiftCatalog, setShiftCatalog] = useState<ShiftCatalogRow[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [page, setPage] = useState(1);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<WorkPatternFormState>(makeEmptyForm());
+  const [newShiftId, setNewShiftId] = useState('');
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -95,6 +122,7 @@ export function WorkPatternsManagement() {
     try {
       const payload = await request('/work-patterns?include_inactive=true');
       setPatterns((payload?.work_patterns || []) as WorkPatternRow[]);
+      setShiftCatalog((payload?.shift_catalog || []) as ShiftCatalogRow[]);
     } catch (err: any) {
       setError(err?.message || 'Error cargando patrones');
     } finally {
@@ -118,11 +146,21 @@ export function WorkPatternsManagement() {
     });
   }, [patterns, searchTerm, statusFilter]);
 
+  const shiftById = useMemo(() => {
+    const map = new Map<string, ShiftCatalogRow>();
+    shiftCatalog.forEach((shift) => map.set(shift.id, shift));
+    return map;
+  }, [shiftCatalog]);
+
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paged = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, page]);
+
+  const availableShifts = useMemo(() => {
+    return shiftCatalog;
+  }, [shiftCatalog]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -130,11 +168,19 @@ export function WorkPatternsManagement() {
 
   const openCreate = () => {
     setForm(makeEmptyForm());
+    setNewShiftId('');
     setModalOpen(true);
     setModalError(null);
   };
 
   const openEdit = (row: WorkPatternRow) => {
+    const sortedShifts = [...(row.pattern_shifts || [])]
+      .sort((a, b) => (a.sequence_number || 0) - (b.sequence_number || 0))
+      .map((item, index) => ({
+        shift_id: item.shift_id,
+        cycle_day_number: String(item.cycle_day_number || index + 1),
+      }));
+
     setForm({
       id: row.id,
       pattern_name: row.pattern_name,
@@ -146,7 +192,9 @@ export function WorkPatternsManagement() {
       weekly_work_minutes_target: String(row.weekly_work_minutes_target),
       is_flexible: row.is_flexible,
       is_active: row.is_active,
+      pattern_shifts: sortedShifts,
     });
+    setNewShiftId('');
     setModalOpen(true);
     setModalError(null);
   };
@@ -155,6 +203,51 @@ export function WorkPatternsManagement() {
     setModalOpen(false);
     setSaving(false);
     setModalError(null);
+  };
+
+  const addShiftSequence = () => {
+    const shiftId = String(newShiftId || '').trim();
+    if (!shiftId) return;
+
+    setForm((prev) => ({
+      ...prev,
+      pattern_shifts: [
+        ...prev.pattern_shifts,
+        {
+          shift_id: shiftId,
+          cycle_day_number: String(prev.pattern_shifts.length + 1),
+        },
+      ],
+    }));
+    setNewShiftId('');
+  };
+
+  const removeShiftSequence = (index: number) => {
+    setForm((prev) => ({
+      ...prev,
+      pattern_shifts: prev.pattern_shifts.filter((_, currentIndex) => currentIndex !== index),
+    }));
+  };
+
+  const moveShiftSequence = (index: number, direction: 'up' | 'down') => {
+    setForm((prev) => {
+      const list = [...prev.pattern_shifts];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= list.length) return prev;
+      const current = list[index];
+      list[index] = list[targetIndex];
+      list[targetIndex] = current;
+      return { ...prev, pattern_shifts: list };
+    });
+  };
+
+  const updateShiftCycleDay = (index: number, value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      pattern_shifts: prev.pattern_shifts.map((item, currentIndex) =>
+        currentIndex === index ? { ...item, cycle_day_number: value } : item
+      ),
+    }));
   };
 
   const removePattern = async (row: WorkPatternRow) => {
@@ -171,16 +264,28 @@ export function WorkPatternsManagement() {
   };
 
   const savePattern = async () => {
+    const cycleLength = toInt(form.cycle_length_days);
+    const workDays = toInt(form.work_days_per_cycle);
+    const restDays = toInt(form.rest_days_per_cycle);
+
+    const sequencePayload = form.pattern_shifts.map((item, index) => ({
+      shift_id: item.shift_id,
+      sequence_number: index + 1,
+      cycle_day_number: toInt(item.cycle_day_number),
+      is_active: true,
+    }));
+
     const payload = {
       pattern_name: form.pattern_name.trim(),
       pattern_short_name: form.pattern_short_name.trim().toUpperCase(),
-      cycle_length_days: toInt(form.cycle_length_days),
-      work_days_per_cycle: toInt(form.work_days_per_cycle),
-      rest_days_per_cycle: toInt(form.rest_days_per_cycle),
+      cycle_length_days: cycleLength,
+      work_days_per_cycle: workDays,
+      rest_days_per_cycle: restDays,
       daily_work_minutes: toInt(form.daily_work_minutes),
       weekly_work_minutes_target: toInt(form.weekly_work_minutes_target),
       is_flexible: form.is_flexible,
       is_active: form.is_active,
+      pattern_shifts: sequencePayload,
     };
 
     if (!payload.pattern_name || !payload.pattern_short_name) {
@@ -191,6 +296,33 @@ export function WorkPatternsManagement() {
     if (payload.cycle_length_days !== payload.work_days_per_cycle + payload.rest_days_per_cycle) {
       setModalError('Ciclo debe ser igual a días trabajo + días descanso.');
       return;
+    }
+
+    if (payload.pattern_shifts.length === 0) {
+      setModalError('Debe agregar al menos un turno a la secuencia del patrón.');
+      return;
+    }
+
+    const usedCycleDays = new Set<number>();
+    for (let index = 0; index < payload.pattern_shifts.length; index += 1) {
+      const row = payload.pattern_shifts[index];
+      if (!row.shift_id) {
+        setModalError(`Debe seleccionar turno en la secuencia #${index + 1}.`);
+        return;
+      }
+      if (row.cycle_day_number <= 0) {
+        setModalError(`El día de ciclo en la secuencia #${index + 1} debe ser mayor a 0.`);
+        return;
+      }
+      if (row.cycle_day_number > payload.cycle_length_days) {
+        setModalError(`El día de ciclo ${row.cycle_day_number} excede la longitud del ciclo (${payload.cycle_length_days}).`);
+        return;
+      }
+      if (usedCycleDays.has(row.cycle_day_number)) {
+        setModalError(`El día de ciclo ${row.cycle_day_number} está repetido.`);
+        return;
+      }
+      usedCycleDays.add(row.cycle_day_number);
     }
 
     setSaving(true);
@@ -297,6 +429,7 @@ export function WorkPatternsManagement() {
                 <th className="py-2 pr-3 text-left">Código</th>
                 <th className="py-2 pr-3 text-left">Ciclo</th>
                 <th className="py-2 pr-3 text-left">Trabajo/Descanso</th>
+                <th className="py-2 pr-3 text-left">Secuencia</th>
                 <th className="py-2 pr-3 text-left">Min Día</th>
                 <th className="py-2 pr-3 text-left">Meta Semanal</th>
                 <th className="py-2 pr-3 text-left">Flexible</th>
@@ -307,11 +440,11 @@ export function WorkPatternsManagement() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando patrones...</td>
+                  <td colSpan={10} className="py-6 text-center text-gray-500">Cargando patrones...</td>
                 </tr>
               ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen patrones</td>
+                  <td colSpan={10} className="py-6 text-center text-gray-500">No existen patrones</td>
                 </tr>
               ) : (
                 paged.map((row) => (
@@ -320,6 +453,7 @@ export function WorkPatternsManagement() {
                     <td className="py-3 pr-3"><span className="rounded-full border px-2 py-0.5 text-xs">{row.pattern_short_name}</span></td>
                     <td className="py-3 pr-3">{row.cycle_length_days} días</td>
                     <td className="py-3 pr-3">{row.work_days_per_cycle}/{row.rest_days_per_cycle}</td>
+                    <td className="py-3 pr-3">{row.pattern_shifts?.length || 0} turnos</td>
                     <td className="py-3 pr-3">{row.daily_work_minutes}</td>
                     <td className="py-3 pr-3">{row.weekly_work_minutes_target}</td>
                     <td className="py-3 pr-3">{row.is_flexible ? 'Sí' : 'No'}</td>
@@ -377,7 +511,7 @@ export function WorkPatternsManagement() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
           <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
-          <div className="relative w-full max-w-3xl rounded-xl border bg-white shadow-2xl">
+          <div className="relative max-h-[92vh] w-full max-w-5xl overflow-auto rounded-xl border bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-5 py-3">
               <h3 className="text-lg font-semibold">{form.id ? 'Editar Patrón' : 'Nuevo Patrón'}</h3>
               <button onClick={closeModal} className="rounded p-1.5 hover:bg-gray-100">
@@ -477,6 +611,94 @@ export function WorkPatternsManagement() {
                   />
                   Activo
                 </label>
+              </div>
+
+              <div className="md:col-span-2 rounded-lg border p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-base font-semibold">Secuencia de turnos</h4>
+                    <p className="text-xs text-gray-600">Relación padre-hijo del patrón con los turnos del ciclo.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {form.pattern_shifts.length === 0 ? (
+                    <div className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-gray-500">
+                      No hay turnos agregados en la secuencia.
+                    </div>
+                  ) : (
+                    form.pattern_shifts.map((item, index) => {
+                      const shift = shiftById.get(item.shift_id);
+                      const label = shift ? `${shift.shift_name} (${shift.shift_short_name})` : item.shift_id;
+                      return (
+                        <div key={`${item.shift_id}-${index}`} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
+                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">#{index + 1}</span>
+                          <div className="min-w-[260px] flex-1 text-sm">{label}</div>
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs text-gray-600">Día ciclo</label>
+                            <input
+                              type="number"
+                              min={1}
+                              className="w-20 rounded-md border px-2 py-1.5 text-sm"
+                              value={item.cycle_day_number}
+                              onChange={(event) => updateShiftCycleDay(index, event.target.value)}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => moveShiftSequence(index, 'up')}
+                            disabled={index === 0}
+                            className="inline-flex items-center justify-center rounded border p-1.5 text-gray-600 disabled:opacity-40"
+                            title="Mover arriba"
+                          >
+                            <ArrowUp className="size-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveShiftSequence(index, 'down')}
+                            disabled={index === form.pattern_shifts.length - 1}
+                            className="inline-flex items-center justify-center rounded border p-1.5 text-gray-600 disabled:opacity-40"
+                            title="Mover abajo"
+                          >
+                            <ArrowDown className="size-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeShiftSequence(index)}
+                            className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-600 hover:bg-red-50"
+                            title="Quitar turno"
+                          >
+                            <X className="size-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <select
+                    value={newShiftId}
+                    onChange={(event) => setNewShiftId(event.target.value)}
+                    className="min-w-[280px] flex-1 rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">Seleccionar turno...</option>
+                    {availableShifts.map((shift) => (
+                      <option key={shift.id} value={shift.id}>
+                        {shift.shift_name} ({shift.shift_short_name})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={addShiftSequence}
+                    disabled={!newShiftId}
+                    className="inline-flex items-center gap-2 rounded-md border border-green-200 px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50"
+                  >
+                    <Plus className="size-4" />
+                    Agregar turno
+                  </button>
+                </div>
               </div>
             </div>
 

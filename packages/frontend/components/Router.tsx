@@ -16,6 +16,7 @@ import { SystemSettingsManagement } from './screens/maintenance/SystemSettingsMa
 import { RolesManagement } from './screens/maintenance/RolesManagement';
 import { ScopeTypesManagement } from './screens/maintenance/ScopeTypesManagement';
 import { UsersManagement } from './screens/maintenance/UsersManagement';
+import { MigrationDiagnosticManagement } from './screens/maintenance/MigrationDiagnosticManagement';
 import { SystemSettingsAdmin } from './screens/config/SystemSettingsAdmin';
 import { TenantSettings } from './screens/config/TenantSettings';
 import { ShiftConstructorManagement } from './screens/config/ShiftConstructorManagement';
@@ -30,12 +31,13 @@ import { EmployeeProfilesManagement } from './screens/org/EmployeeProfilesManage
 import { EmployeeShiftPlanningManagement } from './screens/employees/EmployeeShiftPlanningManagement';
 import { TimePunchesManagement } from './screens/attendance/TimePunchesManagement';
 import TenantsManagement from './security/TenantsManagement';
-import { MenuGroupsManagement } from './screens/security/MenuGroupsManagement';
-import { ScreensManagement } from './screens/security/ScreensManagement';
-import { ActionsManagement } from './screens/security/ActionsManagement';
+import SecurityAuthorizationCatalog from './screens/security/SecurityAuthorizationCatalog';
 import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
 import { RoleScreenActionsManagement } from './screens/security/RoleScreenActionsManagement';
 import SubscriptionPlansManagement from './screens/security/SubscriptionPlansManagement';
+import KioskPunch from './kiosk/KioskPunch';
+import KioskPunchHistory from './kiosk/KioskPunchHistory';
+import KioskRequests from './kiosk/KioskRequests';
 
 export function Router() {
   const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
@@ -104,6 +106,7 @@ export function Router() {
     '/dashboard/maintenance/roles':           <RolesManagement />,
     '/dashboard/maintenance/scopes':          <ScopeTypesManagement />,
     '/dashboard/maintenance/users':           <UsersManagement />,
+    '/dashboard/maintenance/diagnostic':      <MigrationDiagnosticManagement />,
 
     // ── Configuración ──────────────────────────────────────────────────────
     '/dashboard/config/tenant-settings': <TenantSettings />,
@@ -133,14 +136,19 @@ export function Router() {
     '/dashboard/attendance/timeclock': <TimePunchesManagement />,
     '/dashboard/attendance/time-punches': <TimePunchesManagement />,
 
+    // ── Kiosko ───────────────────────────────────────────────────────────────
+    '/dashboard/kiosk/timeclock': <KioskPunch />,
+    '/dashboard/kiosk/attendance': <KioskPunchHistory />,
+    '/dashboard/kiosk/requests': <KioskRequests />,
+
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,
     '/dashboard/security/roles':               <RolesManagement />,
     '/dashboard/security/scopes':              <ScopeTypesManagement />,
     '/dashboard/security/tenant-members':      <UsersManagement />,
-    '/dashboard/security/menu-groups':         <MenuGroupsManagement />,
-    '/dashboard/security/screens':             <ScreensManagement />,
-    '/dashboard/security/actions':             <ActionsManagement />,
+    '/dashboard/security/menu-groups':         <SecurityAuthorizationCatalog />,
+    '/dashboard/security/screens':             <SecurityAuthorizationCatalog />,
+    '/dashboard/security/actions':             <SecurityAuthorizationCatalog />,
     '/dashboard/security/screen-actions':      <ScreenActionsManagement />,
     '/dashboard/security/role-screen-actions': <RoleScreenActionsManagement />,
     '/dashboard/security/subscription-plans':  <SubscriptionPlansManagement />,

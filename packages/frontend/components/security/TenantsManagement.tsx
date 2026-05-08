@@ -35,7 +35,6 @@ import { toast } from 'sonner';
 import { projectId, publicApiToken } from '../../utils/backend/info';
 import { ApiClient, getValidSession } from '../../lib/api-client';
 import { useAuth } from '../../contexts/AuthContext';
-import { MigrationDiagnostic } from '../admin/MigrationDiagnostic';
 
 interface Tenant {
   id: string;
@@ -156,13 +155,13 @@ export default function TenantsManagement() {
 
   const loadTenant = async () => {
     try {
-      console.log('🔍 Buscando tenant SYSTEM...');
-      
-      // ✅ Buscar el tenant SYSTEM (el único tenant del sistema)
+      console.log('🔍 Cargando tenant único...');
+
       const { data, error } = await ApiClient
         .from('tenants')
         .select('*')
-        .eq('tenant_key', 'SYSTEM') // ✅ Cambiar a buscar SYSTEM
+        .order('created_at', { ascending: true })
+        .limit(1)
         .single();
 
       if (error) {
@@ -170,7 +169,7 @@ export default function TenantsManagement() {
         throw error;
       }
       
-      console.log('✅ Tenant SYSTEM encontrado:', data);
+      console.log('✅ Tenant cargado:', data);
       setTenant(data);
       setEditedName(data.tenant_name);
     } catch (error: any) {
@@ -546,7 +545,7 @@ export default function TenantsManagement() {
               <div>
                 <p className="text-sm font-medium text-red-900">Tenant no encontrado</p>
                 <p className="text-sm text-red-700 mt-1">
-                  No se encontró el tenant único del sistema. Verifica la consola del navegador (F12) para más detalles.
+                  No se encontró el registro del tenant único del sistema. Verifica la consola del navegador (F12) para más detalles.
                 </p>
               </div>
             </div>
@@ -565,13 +564,13 @@ export default function TenantsManagement() {
             <CardTitle className="text-sm">Diagnóstico</CardTitle>
           </CardHeader>
           <CardContent className="text-xs space-y-2">
-            <p>La aplicación busca un tenant que <strong>NO</strong> tenga el tenant_key "SYSTEM".</p>
+            <p>La aplicación espera encontrar <strong>un único tenant</strong> en la base de datos.</p>
             <p className="text-muted-foreground">
               Verifica en la consola del navegador el log que dice:<br/>
               <code className="bg-gray-100 px-1">📊 Tenants en la base de datos: [...]</code>
             </p>
             <p className="text-muted-foreground">
-              Si solo existe el tenant SYSTEM, necesitas ejecutar el SEED completo que crea el tenant principal.
+              Si no existe ningún tenant, ejecuta el SEED completo para crear el tenant principal.
             </p>
           </CardContent>
         </Card>
@@ -606,9 +605,6 @@ export default function TenantsManagement() {
           </CardContent>
         </Card>
       )}
-
-      {/* Componente de Diagnóstico de Migraciones */}
-      <MigrationDiagnostic />
 
       {/* Header */}
       <div>

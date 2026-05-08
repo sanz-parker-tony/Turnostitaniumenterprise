@@ -34,6 +34,7 @@ export type ShiftPlanningAIRules = {
   priorizarEquidadHoras: boolean;
   equilibrarFeriados: boolean;
   permitirSwaps: boolean;
+  modoDistribucionTurnos?: 'ESCALONADOS' | 'IGUALES';
 };
 
 export type ShiftPlanningAvailableEmployee = {

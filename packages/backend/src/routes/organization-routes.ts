@@ -185,6 +185,120 @@ function getEntityConfig(entity: string): EntityConfig | null {
   return null;
 }
 
+async function ensureEmployeeRoleAssigned(
+  Postgres: any,
+  tenantId: string,
+  userId: string,
+  actor: string
+): Promise<string> {
+  const { data: role, error: roleError } = await Postgres
+    .from('roles')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('role_key', 'EMPLOYEE')
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (roleError) throw new Error(roleError.message);
+  if (!role?.id) {
+    throw new Error('No existe un rol activo EMPLOYEE en este tenant');
+  }
+
+  const { data: existingUserRole, error: existingUserRoleError } = await Postgres
+    .from('user_roles')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('user_id', userId)
+    .eq('role_id', role.id)
+    .maybeSingle();
+
+  if (existingUserRoleError) throw new Error(existingUserRoleError.message);
+
+  if (existingUserRole?.id) {
+    const { error: activateError } = await Postgres
+      .from('user_roles')
+      .update({
+        is_active: true,
+        updated_by: actor,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existingUserRole.id);
+    if (activateError) throw new Error(activateError.message);
+    return existingUserRole.id;
+  }
+
+  const { data: insertedUserRole, error: insertRoleError } = await Postgres
+    .from('user_roles')
+    .insert({
+      tenant_id: tenantId,
+      user_id: userId,
+      role_id: role.id,
+      company_id: null,
+      is_active: true,
+      created_by: actor,
+    })
+    .select('id')
+    .single();
+  if (insertRoleError) throw new Error(insertRoleError.message);
+  if (!insertedUserRole?.id) throw new Error('No se pudo crear la asignación de rol EMPLOYEE');
+  return insertedUserRole.id;
+}
+
+async function ensureEmployeeScopeAssigned(
+  Postgres: any,
+  tenantId: string,
+  userRoleId: string,
+  employeeId: string,
+  actor: string
+) {
+  const { data: scopeType, error: scopeTypeError } = await Postgres
+    .from('scope_types')
+    .select('id')
+    .eq('scope_type_key', 'EMPLOYEE')
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (scopeTypeError) throw new Error(scopeTypeError.message);
+  if (!scopeType?.id) throw new Error('No existe un scope_type activo con key EMPLOYEE');
+
+  const { data: existingScope, error: existingScopeError } = await Postgres
+    .from('user_role_scopes')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('user_role_id', userRoleId)
+    .eq('scope_type_id', scopeType.id)
+    .eq('scope_entity_id', employeeId)
+    .maybeSingle();
+
+  if (existingScopeError) throw new Error(existingScopeError.message);
+
+  if (existingScope?.id) {
+    const { error: activateScopeError } = await Postgres
+      .from('user_role_scopes')
+      .update({
+        is_active: true,
+        updated_by: actor,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existingScope.id);
+    if (activateScopeError) throw new Error(activateScopeError.message);
+    return;
+  }
+
+  const { error: insertScopeError } = await Postgres
+    .from('user_role_scopes')
+    .insert({
+      tenant_id: tenantId,
+      user_role_id: userRoleId,
+      scope_type_id: scopeType.id,
+      scope_entity_id: employeeId,
+      is_active: true,
+      created_by: actor,
+    });
+
+  if (insertScopeError) throw new Error(insertScopeError.message);
+}
+
 function normalizeScopeFilter(value: any): string {
   const raw = String(value || '').trim();
   if (!raw || raw === '0') return '';
@@ -878,6 +992,285 @@ router.get('/holidays/calendar', async (req: Request, res: Response) => {
       month,
       items: monthItems,
       count: monthItems.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+// Employee user management (link employees -> users)
+router.get('/employee-users/catalogs', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    }
+
+    const [languages, employeeRole] = await Promise.all([
+      Postgres
+        .from('system_languages')
+        .select('code, language_name')
+        .eq('is_active', true)
+        .order('language_name'),
+      Postgres
+        .from('roles')
+        .select('id, role_key, role_name')
+        .eq('tenant_id', tenantId)
+        .eq('role_key', 'EMPLOYEE')
+        .eq('is_active', true)
+        .maybeSingle(),
+    ]);
+
+    if (languages.error) return res.status(500).json({ error: languages.error.message });
+    if (employeeRole.error) return res.status(500).json({ error: employeeRole.error.message });
+
+    return res.status(200).json({
+      success: true,
+      tenant_id: tenantId,
+      catalogs: {
+        languages: languages.data || [],
+      },
+      employee_role: employeeRole.data || null,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/employee-users', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    }
+
+    const { data: employees, error: employeesError } = await Postgres
+      .from('employees')
+      .select('id, tenant_id, employee_code, employee_lastname, employee_name, is_active, user_id')
+      .eq('tenant_id', tenantId)
+      .order('employee_lastname', { ascending: true })
+      .order('employee_name', { ascending: true });
+
+    if (employeesError) return res.status(500).json({ error: employeesError.message });
+
+    const userIds = Array.from(
+      new Set((employees || []).map((row: any) => row.user_id).filter(Boolean))
+    );
+
+    let usersById = new Map<string, any>();
+    if (userIds.length > 0) {
+      const { data: users, error: usersError } = await Postgres
+        .from('users')
+        .select('id, username, display_name, email, phone, preferred_language_code, is_active')
+        .in('id', userIds);
+      if (usersError) return res.status(500).json({ error: usersError.message });
+      usersById = new Map((users || []).map((u: any) => [u.id, u]));
+    }
+
+    const rows = (employees || []).map((employee: any) => {
+      const linkedUser = employee.user_id ? usersById.get(employee.user_id) : null;
+      return {
+        employee_id: employee.id,
+        tenant_id: employee.tenant_id,
+        employee_code: employee.employee_code,
+        employee_lastname: employee.employee_lastname,
+        employee_name: employee.employee_name,
+        employee_is_active: employee.is_active,
+        user_id: employee.user_id || null,
+        username: linkedUser?.username || null,
+        display_name: linkedUser?.display_name || null,
+        email: linkedUser?.email || null,
+        phone: linkedUser?.phone || null,
+        preferred_language_code: linkedUser?.preferred_language_code || null,
+        user_is_active: linkedUser?.is_active ?? null,
+      };
+    });
+
+    return res.status(200).json({ success: true, rows, count: rows.length });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.put('/employee-users/:employee_id', async (req: Request, res: Response) => {
+  try {
+    const employeeId = req.params.employee_id;
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    const actor = getActor(req);
+
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    }
+
+    const {
+      username,
+      display_name,
+      email,
+      phone,
+      preferred_language_code,
+      password,
+      is_active = true,
+    } = req.body || {};
+
+    if (!username || !String(username).trim()) {
+      return res.status(400).json({ error: 'username es obligatorio' });
+    }
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({ error: 'email es obligatorio' });
+    }
+    if (password && String(password).trim().length > 0 && String(password).trim().length < 8) {
+      return res.status(400).json({ error: 'password debe tener al menos 8 caracteres' });
+    }
+
+    const { data: employee, error: employeeError } = await Postgres
+      .from('employees')
+      .select('id, tenant_id, user_id')
+      .eq('id', employeeId)
+      .eq('tenant_id', tenantId)
+      .maybeSingle();
+
+    if (employeeError) return res.status(500).json({ error: employeeError.message });
+    if (!employee) return res.status(404).json({ error: 'Empleado no encontrado' });
+
+    let targetUserId = employee.user_id as string | null;
+    let created = false;
+
+    if (targetUserId) {
+      const { data: existingUser, error: existingUserError } = await Postgres
+        .from('users')
+        .select('id, auth_user_id, username, email')
+        .eq('id', targetUserId)
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+      if (existingUserError) return res.status(500).json({ error: existingUserError.message });
+      if (!existingUser) return res.status(404).json({ error: 'Usuario asociado no encontrado' });
+
+      const { data: duplicateUsername } = await Postgres
+        .from('users')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('username', String(username).trim())
+        .neq('id', existingUser.id)
+        .maybeSingle();
+      if (duplicateUsername?.id) {
+        return res.status(409).json({ error: 'Ya existe un usuario con ese username en este tenant' });
+      }
+
+      const updatePayload: Record<string, any> = {
+        username: String(username).trim(),
+        display_name: display_name || null,
+        email: String(email).trim(),
+        phone: phone || null,
+        preferred_language_code: preferred_language_code || null,
+        is_active: !!is_active,
+        updated_by: actor,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: updateUserError } = await Postgres
+        .from('users')
+        .update(updatePayload)
+        .eq('id', existingUser.id);
+      if (updateUserError) return res.status(500).json({ error: updateUserError.message });
+
+      if (existingUser.auth_user_id) {
+        const authUpdatePayload: Record<string, any> = {
+          email: String(email).trim(),
+          user_metadata: {
+            username: String(username).trim(),
+            display_name: display_name || null,
+            tenant_id: tenantId,
+          },
+          ban_duration: is_active ? 'none' : '876000h',
+        };
+        if (password && String(password).trim()) {
+          authUpdatePayload.password = String(password).trim();
+        }
+        const { error: authUpdateError } = await Postgres.auth.admin.updateUserById(existingUser.auth_user_id, authUpdatePayload);
+        if (authUpdateError) return res.status(500).json({ error: authUpdateError.message });
+      }
+    } else {
+      if (!password || !String(password).trim()) {
+        return res.status(400).json({ error: 'password es obligatorio para crear usuario por primera vez' });
+      }
+
+      const { data: duplicateUsername } = await Postgres
+        .from('users')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('username', String(username).trim())
+        .maybeSingle();
+      if (duplicateUsername?.id) {
+        return res.status(409).json({ error: 'Ya existe un usuario con ese username en este tenant' });
+      }
+
+      const { data: authData, error: authError } = await Postgres.auth.admin.createUser({
+        email: String(email).trim(),
+        password: String(password).trim(),
+        email_confirm: true,
+        user_metadata: {
+          username: String(username).trim(),
+          display_name: display_name || null,
+          tenant_id: tenantId,
+        },
+      });
+      if (authError || !authData?.user?.id) {
+        return res.status(500).json({ error: authError?.message || 'No se pudo crear el usuario en Auth' });
+      }
+
+      const authUserId = authData.user.id;
+      const { data: insertedUser, error: insertUserError } = await Postgres
+        .from('users')
+        .insert({
+          tenant_id: tenantId,
+          auth_user_id: authUserId,
+          username: String(username).trim(),
+          display_name: display_name || null,
+          email: String(email).trim(),
+          phone: phone || null,
+          preferred_language_code: preferred_language_code || null,
+          is_active: !!is_active,
+          created_by: actor,
+        })
+        .select('id')
+        .single();
+
+      if (insertUserError || !insertedUser?.id) {
+        return res.status(500).json({ error: insertUserError?.message || 'No se pudo crear el usuario en tabla users' });
+      }
+
+      targetUserId = insertedUser.id;
+      created = true;
+
+      const { error: updateEmployeeError } = await Postgres
+        .from('employees')
+        .update({
+          user_id: targetUserId,
+          updated_by: actor,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', employeeId);
+      if (updateEmployeeError) return res.status(500).json({ error: updateEmployeeError.message });
+    }
+
+    if (!targetUserId) return res.status(500).json({ error: 'No se pudo resolver el usuario a asociar' });
+    const userRoleId = await ensureEmployeeRoleAssigned(Postgres, tenantId, targetUserId, actor);
+    await ensureEmployeeScopeAssigned(Postgres, tenantId, userRoleId, employeeId, actor);
+
+    return res.status(200).json({
+      success: true,
+      employee_id: employeeId,
+      user_id: targetUserId,
+      created,
+      role_key: 'EMPLOYEE',
+      scope_key: 'EMPLOYEE',
+      scope_entity_id: employeeId,
+      message: created
+        ? 'Usuario EMPLOYEE creado, asociado al empleado y con scope EMPLOYEE'
+        : 'Usuario EMPLOYEE actualizado con scope EMPLOYEE',
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

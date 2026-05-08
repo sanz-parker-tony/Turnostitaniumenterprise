@@ -58,6 +58,7 @@ import settingsRouter from './routes/settings-routes';
 import shiftPlanningRouter from './routes/shift-planning.routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
 import employeeTimePunchesRouter from './routes/employee-time-punches-routes';
+import kioskRouter from './routes/kiosk-routes';
 import shiftConstructorRouter from './routes/shift-constructor-routes';
 import subscriptionPlansRouter from './routes/subscription-plans-routes';
 import systemSettingsRouter from './routes/system-settings-routes';
@@ -844,6 +845,9 @@ router.use('/employee-shift-planning', requireAuth, employeeShiftPlanningRouter)
 // Employee Time Punches
 router.use('/employee-time-punches', requireAuth, employeeTimePunchesRouter);
 
+// Kiosk (employee self-service)
+router.use('/kiosk', requireAuth, kioskRouter);
+
 // ============================================================================
 // HEALTH & STATUS
 // ============================================================================
@@ -861,7 +865,7 @@ router.get('/status', (req: Request, res: Response) => {
       config: ['/shift-constructor', '/work-patterns', '/time-clock-devices'],
       planning: ['/api/shift-planning/generate'],
       employees: ['/employee-shift-planning'],
-      attendance: ['/employee-time-punches'],
+      attendance: ['/employee-time-punches', '/kiosk'],
     },
   });
 });

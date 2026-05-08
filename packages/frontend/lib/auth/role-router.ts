@@ -79,6 +79,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'MAINT_ATT_EVENTS': '/dashboard/maintenance/attendance-events',
   'MAINT_JUSTIFICATIONS': '/dashboard/maintenance/justification-types',
   'MAINT_MESSAGES': '/dashboard/maintenance/messages',
+  'MAINT_DIAGNOSTIC': '/dashboard/maintenance/diagnostic',
 
   // ========== CONFIGURATION ==========
   'CONF_PARAMS': '/dashboard/config/parameters',
@@ -131,11 +132,13 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
 
   // ========== KIOSK (fuera de dashboard) ==========
   'KIOSK_PUNCH': '/kiosk/punch',
+  'KIOSK_TIMECLOCK': '/dashboard/kiosk/timeclock',
+  'MY_ATTENDANCE': '/dashboard/kiosk/attendance',
   'KIOSK_REGULARIZATION': '/kiosk/regularization',
   'KIOSK_SHIFT_CHANGE': '/kiosk/shift-change',
   'KIOSK_PERMISSION': '/kiosk/permission',
   'KIOSK_JUSTIFICATION': '/kiosk/justification',
-  'KIOSK_REQUESTS': '/kiosk/requests',
+  'KIOSK_REQUESTS': '/dashboard/kiosk/requests',
 };
 
 // ============================================================================

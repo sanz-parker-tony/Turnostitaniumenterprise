@@ -112,6 +112,69 @@ router.get('/catalogs/languages', async (req: Request, res: Response) => {
   }
 });
 
+// GET /catalogs/user-role-summaries - Resumen de roles activos por usuario
+router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const { data, error } = await Postgres
+      .from('user_roles')
+      .select(`
+        user_id,
+        role_id,
+        created_at,
+        role:roles!user_roles_role_id_fkey(role_name, role_key)
+      `)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const roleIds = Array.from(new Set((data || []).map((row: any) => row.role_id).filter(Boolean)));
+    const roleMap = new Map<string, any>();
+    if (roleIds.length > 0) {
+      const { data: roleRows } = await Postgres
+        .from('roles')
+        .select('id, role_name, role_key')
+        .in('id', roleIds);
+      for (const roleRow of roleRows || []) roleMap.set(roleRow.id, roleRow);
+    }
+
+    const summariesByUserId: Record<string, {
+      user_id: string;
+      primary_role_name: string | null;
+      primary_role_key: string | null;
+      role_count: number;
+    }> = {};
+
+    for (const row of (data || []) as any[]) {
+      const userId = row.user_id as string;
+      const fallbackRole = roleMap.get(row.role_id);
+      const roleName = row.role?.role_name || fallbackRole?.role_name || null;
+      const roleKey = row.role?.role_key || fallbackRole?.role_key || null;
+      if (!userId) continue;
+
+      if (!summariesByUserId[userId]) {
+        summariesByUserId[userId] = {
+          user_id: userId,
+          primary_role_name: roleName,
+          primary_role_key: roleKey,
+          role_count: 1,
+        };
+      } else {
+        summariesByUserId[userId].role_count += 1;
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      summaries: Object.values(summariesByUserId),
+      count: Object.keys(summariesByUserId).length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
 // ============================================================================
 // USER-ROLES (sub-recursos estáticos) — ANTES de /:user_id/*
 // ============================================================================
@@ -121,11 +184,42 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
     const body = req.body;
-    const { valid_from, valid_to, is_active } = body;
+    const { tenant_id, role_id, company_id, valid_from, valid_to, is_active } = body;
 
     const Postgres = getPostgres();
 
+    const { data: currentUserRole, error: currentError } = await Postgres
+      .from('user_roles')
+      .select('id, tenant_id, user_id, role_id, company_id')
+      .eq('id', userRoleId)
+      .single();
+
+    if (currentError || !currentUserRole) {
+      return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+    }
+
+    const nextTenantId = tenant_id || currentUserRole.tenant_id;
+    const nextRoleId = role_id || currentUserRole.role_id;
+    const nextCompanyId = company_id === undefined ? currentUserRole.company_id : (company_id || null);
+
+    const { data: duplicated } = await Postgres
+      .from('user_roles')
+      .select('id')
+      .eq('tenant_id', nextTenantId)
+      .eq('user_id', currentUserRole.user_id)
+      .eq('role_id', nextRoleId)
+      .is('company_id', nextCompanyId)
+      .neq('id', userRoleId)
+      .maybeSingle();
+
+    if (duplicated) {
+      return res.status(409).json({ error: 'Ya existe una asignación con ese rol y empresa para este usuario' });
+    }
+
     const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
+    if (tenant_id !== undefined) updateData.tenant_id = nextTenantId;
+    if (role_id !== undefined) updateData.role_id = nextRoleId;
+    if (company_id !== undefined) updateData.company_id = nextCompanyId;
     if (valid_from !== undefined) updateData.valid_from = valid_from || null;
     if (valid_to !== undefined) updateData.valid_to = valid_to || null;
     if (is_active !== undefined) updateData.is_active = is_active;
@@ -183,6 +277,42 @@ router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Respo
     });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en PATCH /user-roles/:id/status:', err);
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
+// DELETE /user-roles/:user_role_id - Desasignar rol de usuario (elimina relación y sus alcances)
+router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) => {
+  try {
+    const userRoleId = req.params.user_role_id;
+    const Postgres = getPostgres();
+
+    const { data: existingUserRole, error: existingError } = await Postgres
+      .from('user_roles')
+      .select('id')
+      .eq('id', userRoleId)
+      .maybeSingle();
+
+    if (existingError) return res.status(500).json({ error: existingError.message });
+    if (!existingUserRole) return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+
+    const { error: deleteScopesError } = await Postgres
+      .from('user_role_scopes')
+      .delete()
+      .eq('user_role_id', userRoleId);
+
+    if (deleteScopesError) return res.status(500).json({ error: deleteScopesError.message });
+
+    const { error: deleteRoleError } = await Postgres
+      .from('user_roles')
+      .delete()
+      .eq('id', userRoleId);
+
+    if (deleteRoleError) return res.status(500).json({ error: deleteRoleError.message });
+
+    return res.status(200).json({ success: true, message: 'Rol desasignado exitosamente' });
+  } catch (err: any) {
+    console.error('[USERS-MGMT] Error en DELETE /user-roles/:id:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
   }
 });
@@ -267,6 +397,69 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
     return res.status(201).json({ success: true, scope: newScope, message: 'Alcance asignado exitosamente' });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en POST /user-roles/:id/scopes:', err);
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
+// PUT /scopes/:scope_id - Editar alcance
+router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
+  try {
+    const scopeId = req.params.scope_id;
+    const body = req.body;
+    const { tenant_id, user_role_id, scope_type_id, scope_entity_id, is_active } = body;
+
+    if (!tenant_id || !user_role_id || !scope_type_id || !scope_entity_id) {
+      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, user_role_id, scope_type_id, scope_entity_id' });
+    }
+
+    const Postgres = getPostgres();
+
+    const { data: currentScope, error: currentError } = await Postgres
+      .from('user_role_scopes')
+      .select('id')
+      .eq('id', scopeId)
+      .maybeSingle();
+
+    if (currentError) return res.status(500).json({ error: currentError.message });
+    if (!currentScope) return res.status(404).json({ error: 'Alcance no encontrado' });
+
+    const { data: duplicated } = await Postgres
+      .from('user_role_scopes')
+      .select('id')
+      .eq('tenant_id', tenant_id)
+      .eq('user_role_id', user_role_id)
+      .eq('scope_type_id', scope_type_id)
+      .eq('scope_entity_id', scope_entity_id)
+      .neq('id', scopeId)
+      .maybeSingle();
+
+    if (duplicated) {
+      return res.status(409).json({ error: 'Ya existe ese alcance para esta asignación de rol' });
+    }
+
+    const updateData: any = {
+      tenant_id,
+      user_role_id,
+      scope_type_id,
+      scope_entity_id,
+      updated_by: 'system',
+      updated_at: new Date().toISOString(),
+    };
+    if (typeof is_active === 'boolean') updateData.is_active = is_active;
+
+    const { data: updatedScope, error } = await Postgres
+      .from('user_role_scopes')
+      .update(updateData)
+      .eq('id', scopeId)
+      .select()
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!updatedScope) return res.status(404).json({ error: 'Alcance no encontrado' });
+
+    return res.status(200).json({ success: true, scope: updatedScope, message: 'Alcance actualizado exitosamente' });
+  } catch (err: any) {
+    console.error('[USERS-MGMT] Error en PUT /scopes/:id:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
   }
 });
@@ -633,14 +826,27 @@ router.get('/:user_id/roles', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    const rolesWithLabels = (userRoles || []).map((ur: any) => ({
+    const roleIds = Array.from(new Set((userRoles || []).map((ur: any) => ur.role_id).filter(Boolean)));
+    const roleMap = new Map<string, any>();
+    if (roleIds.length > 0) {
+      const { data: roleRows } = await Postgres
+        .from('roles')
+        .select('id, role_key, role_name, role_scope, data_scope')
+        .in('id', roleIds);
+      for (const roleRow of roleRows || []) roleMap.set(roleRow.id, roleRow);
+    }
+
+    const rolesWithLabels = (userRoles || []).map((ur: any) => {
+      const fallbackRole = roleMap.get(ur.role_id);
+      return ({
       ...ur,
-      role_key: ur.role?.role_key || null,
-      role_name: ur.role?.role_name || null,
-      role_scope: ur.role?.role_scope || null,
-      data_scope: ur.role?.data_scope || null,
+      role_key: ur.role?.role_key || fallbackRole?.role_key || null,
+      role_name: ur.role?.role_name || fallbackRole?.role_name || null,
+      role_scope: ur.role?.role_scope || fallbackRole?.role_scope || null,
+      data_scope: ur.role?.data_scope || fallbackRole?.data_scope || null,
       company_name: ur.company?.company_name || null,
-    }));
+      });
+    });
 
     return res.status(200).json({ success: true, userRoles: rolesWithLabels, count: rolesWithLabels.length });
   } catch (err: any) {

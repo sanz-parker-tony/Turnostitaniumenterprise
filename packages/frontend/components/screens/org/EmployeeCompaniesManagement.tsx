@@ -1,20 +1,23 @@
-/**
+﻿/**
  * EmployeeCompaniesManagement
- * Dos pestañas:
+ * Tres pestañas:
  * 1) Datos personales (employees)
- * 2) Asignación empleado-empresa (employee_companies)
+ * 2) Usuario del sistema (users + role EMPLOYEE + vínculo employees.user_id)
+ * 3) Asignación empleado-empresa (employee_companies)
  */
 
 'use client';
 
 import { useState } from 'react';
-import { User, Building2 } from 'lucide-react';
+import { User, Building2, Shield } from 'lucide-react';
 import { OrgMaintenance } from './OrgMaintenance';
+import { EmployeeSystemUserManagement } from './EmployeeSystemUserManagement';
 
-type EmployeeTab = 'employee-personal' | 'employee-company';
+type EmployeeTab = 'employee-personal' | 'employee-system-user' | 'employee-company';
 
 const TABS: Array<{ key: EmployeeTab; label: string; icon: any }> = [
   { key: 'employee-personal', label: 'Datos Personales', icon: User },
+  { key: 'employee-system-user', label: 'Usuario del Sistema', icon: Shield },
   { key: 'employee-company', label: 'Empleado por Empresa', icon: Building2 },
 ];
 
@@ -53,6 +56,8 @@ export function EmployeeCompaniesManagement() {
           pageTitle="Datos Personales del Empleado"
           pageDescription="Registro y mantenimiento de información personal de empleados"
         />
+      ) : activeTab === 'employee-system-user' ? (
+        <EmployeeSystemUserManagement />
       ) : (
         <OrgMaintenance
           key="employee-company"
@@ -66,4 +71,3 @@ export function EmployeeCompaniesManagement() {
     </div>
   );
 }
-

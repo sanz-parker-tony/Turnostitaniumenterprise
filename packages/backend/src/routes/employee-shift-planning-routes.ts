@@ -49,7 +49,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
 
-    const [employeesResult, shiftsResult, shiftTypesResult] = await Promise.all([
+    const [employeesResult, shiftsResult, shiftTypesResult, combinationsResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -58,10 +58,15 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             e.employee_name,
             e.employee_lastname,
             ec.company_id,
-            c.company_name
+            ec.cost_center_id,
+            ec.work_group_id,
+            ec.work_on_holidays,
+            c.company_name,
+            cc.cost_center_name,
+            wg.work_group_name
           FROM public.employees e
           LEFT JOIN LATERAL (
-            SELECT company_id
+            SELECT company_id, cost_center_id, work_group_id, work_on_holidays
             FROM public.employee_companies ec
             WHERE ec.tenant_id = e.tenant_id
               AND ec.employee_id = e.id
@@ -71,6 +76,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           ) ec ON true
           LEFT JOIN public.companies c
             ON c.id = ec.company_id
+          LEFT JOIN public.cost_centers cc
+            ON cc.id = ec.cost_center_id
+          LEFT JOIN public.work_groups wg
+            ON wg.id = ec.work_group_id
           WHERE e.tenant_id = $1
             AND e.is_active = true
           ORDER BY e.employee_lastname ASC, e.employee_name ASC
@@ -98,7 +107,60 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `
       ),
+      pool.query(
+        `
+          SELECT DISTINCT
+            ec.company_id,
+            c.company_name,
+            ec.cost_center_id,
+            cc.cost_center_name,
+            ec.work_group_id,
+            wg.work_group_name
+          FROM public.employee_companies ec
+          INNER JOIN public.companies c
+            ON c.id = ec.company_id
+          LEFT JOIN public.cost_centers cc
+            ON cc.id = ec.cost_center_id
+          LEFT JOIN public.work_groups wg
+            ON wg.id = ec.work_group_id
+          WHERE ec.tenant_id = $1
+            AND ec.is_active = true
+            AND ec.company_id IS NOT NULL
+          ORDER BY c.company_name ASC, cc.cost_center_name ASC NULLS LAST, wg.work_group_name ASC NULLS LAST
+        `,
+        [tenantId]
+      ),
     ]);
+
+    const companiesMap = new Map<string, { id: string; company_name: string }>();
+    const costCentersMap = new Map<string, { id: string; cost_center_name: string; company_id: string | null }>();
+    const workGroupsMap = new Map<string, { id: string; work_group_name: string; company_id: string | null; cost_center_id: string | null }>();
+
+    combinationsResult.rows.forEach((row) => {
+      if (row.company_id && !companiesMap.has(row.company_id)) {
+        companiesMap.set(row.company_id, {
+          id: row.company_id,
+          company_name: row.company_name || 'Empresa',
+        });
+      }
+
+      if (row.cost_center_id && !costCentersMap.has(row.cost_center_id)) {
+        costCentersMap.set(row.cost_center_id, {
+          id: row.cost_center_id,
+          cost_center_name: row.cost_center_name || 'Centro de Costo',
+          company_id: row.company_id || null,
+        });
+      }
+
+      if (row.work_group_id && !workGroupsMap.has(row.work_group_id)) {
+        workGroupsMap.set(row.work_group_id, {
+          id: row.work_group_id,
+          work_group_name: row.work_group_name || 'Grupo de Trabajo',
+          company_id: row.company_id || null,
+          cost_center_id: row.cost_center_id || null,
+        });
+      }
+    });
 
     return res.status(200).json({
       success: true,
@@ -106,6 +168,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       employees: employeesResult.rows,
       shifts: shiftsResult.rows,
       shift_types: shiftTypesResult.rows,
+      employee_combinations: combinationsResult.rows,
+      companies: Array.from(companiesMap.values()),
+      cost_centers: Array.from(costCentersMap.values()),
+      work_groups: Array.from(workGroupsMap.values()),
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

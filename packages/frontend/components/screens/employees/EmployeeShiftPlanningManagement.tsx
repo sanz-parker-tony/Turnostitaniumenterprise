@@ -1,13 +1,11 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
   BellRing,
   Briefcase,
-  ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Coffee,
   CheckCircle2,
@@ -55,6 +53,11 @@ type EmployeeRow = {
   employee_lastname: string;
   company_id: string | null;
   company_name: string | null;
+  cost_center_id?: string | null;
+  cost_center_name?: string | null;
+  work_group_id?: string | null;
+  work_group_name?: string | null;
+  work_on_holidays?: boolean | null;
 };
 
 type ShiftRow = {
@@ -77,6 +80,8 @@ type CatalogsResponse = {
   employees: EmployeeRow[];
   shifts: ShiftRow[];
   shift_types: ShiftTypeRow[];
+  employee_combinations?: EmployeeCombinationRow[];
+  companies?: CompanyFilterRow[];
 };
 
 type DayCellChange = {
@@ -89,7 +94,29 @@ type DayCellChange = {
 
 type ViewMode = 'employees' | 'shifts';
 type ShiftKind = 'M' | 'T' | 'N' | 'L' | 'O' | 'X';
-type DistributionShift = { shift_id: string; required: number };
+type ShiftDistributionMode = 'staggered' | 'same';
+
+type EmployeeCombinationRow = {
+  company_id: string | null;
+  company_name: string | null;
+  cost_center_id: string | null;
+  cost_center_name: string | null;
+  work_group_id: string | null;
+  work_group_name: string | null;
+};
+
+type CompanyFilterRow = {
+  id: string;
+  company_name: string;
+};
+
+type WorkPatternShift = {
+  shift_id: string;
+  sequence_number: number;
+  cycle_day_number: number;
+  shift_name?: string | null;
+  shift_short_name?: string | null;
+};
 
 type Suggestion = {
   id: string;
@@ -105,23 +132,27 @@ type WorkPattern = {
   name: string;
   work_days: number;
   free_days: number;
+  cycle_length_days: number;
+  pattern_shifts: WorkPatternShift[];
   is_default?: boolean;
 };
 
 type WorkPatternApiRow = {
   id: string;
   pattern_name: string;
+  cycle_length_days?: number;
   work_days_per_cycle: number;
   rest_days_per_cycle: number;
   is_active: boolean;
+  pattern_shifts?: WorkPatternShift[];
 };
 
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
 
 const DEFAULT_WORK_PATTERNS: WorkPattern[] = [
-  { id: 'p-5x2', name: 'Patrón 5x2', work_days: 5, free_days: 2, is_default: true },
-  { id: 'p-6x1', name: 'Patrón 6x1', work_days: 6, free_days: 1 },
-  { id: 'p-4x3', name: 'Patrón 4x3', work_days: 4, free_days: 3 },
+  { id: 'p-5x2', name: 'Patrón 5x2', work_days: 5, free_days: 2, cycle_length_days: 7, pattern_shifts: [], is_default: true },
+  { id: 'p-6x1', name: 'Patrón 6x1', work_days: 6, free_days: 1, cycle_length_days: 7, pattern_shifts: [] },
+  { id: 'p-4x3', name: 'Patrón 4x3', work_days: 4, free_days: 3, cycle_length_days: 7, pattern_shifts: [] },
 ];
 
 const KIND_META: Record<ShiftKind, { label: string; color: string; bg: string; Icon: any }> = {
@@ -286,16 +317,18 @@ export function EmployeeShiftPlanningManagement() {
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
   const [shifts, setShifts] = useState<ShiftRow[]>([]);
   const [shiftTypes, setShiftTypes] = useState<ShiftTypeRow[]>([]);
+  const [employeeCombinations, setEmployeeCombinations] = useState<EmployeeCombinationRow[]>([]);
+  const [filterCompanies, setFilterCompanies] = useState<CompanyFilterRow[]>([]);
   const [plans, setPlans] = useState<ShiftPlanRow[]>([]);
   const [changes, setChanges] = useState<Record<string, DayCellChange>>({});
 
-  const [distributionShifts, setDistributionShifts] = useState<DistributionShift[]>([]);
-  const [newDistributionShiftId, setNewDistributionShiftId] = useState('');
-  const [distributionComboOpen, setDistributionComboOpen] = useState(false);
-  const [areaFilter, setAreaFilter] = useState('ALL');
-  const [groupFilter, setGroupFilter] = useState('ALL');
+  const [companyFilter, setCompanyFilter] = useState('ALL');
+  const [costCenterFilter, setCostCenterFilter] = useState('ALL');
+  const [workGroupFilter, setWorkGroupFilter] = useState('ALL');
   const [diasTrabajo, setDiasTrabajo] = useState(5);
   const [diasLibres, setDiasLibres] = useState(2);
+  const [requiredEmployeesPerShift, setRequiredEmployeesPerShift] = useState(1);
+  const [shiftDistributionMode, setShiftDistributionMode] = useState<ShiftDistributionMode>('staggered');
 
   const [reglaEvitarNM, setReglaEvitarNM] = useState(true);
   const [reglaEquidad, setReglaEquidad] = useState(true);
@@ -313,7 +346,6 @@ export function EmployeeShiftPlanningManagement() {
   const [activePatternId, setActivePatternId] = useState('p-5x2');
   const [legendShiftIds, setLegendShiftIds] = useState<string[]>([]);
   const [hasAppliedParameters, setHasAppliedParameters] = useState(false);
-  const distributionComboRef = useRef<HTMLDivElement | null>(null);
 
   const rangeDays = useMemo(() => {
     const start = parseIsoDate(fechaInicio);
@@ -365,19 +397,47 @@ export function EmployeeShiftPlanningManagement() {
     return map;
   }, [shifts]);
 
-  const areaOptions = useMemo(() => {
-    return Array.from(new Set(employees.map((item) => item.company_name || '').filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [employees]);
+  const availableCostCenters = useMemo(() => {
+    if (companyFilter === 'ALL') return [];
+    const map = new Map<string, { id: string; cost_center_name: string }>();
+    employeeCombinations.forEach((combo) => {
+      if (combo.company_id !== companyFilter) return;
+      if (!combo.cost_center_id) return;
+      if (!map.has(combo.cost_center_id)) {
+        map.set(combo.cost_center_id, {
+          id: combo.cost_center_id,
+          cost_center_name: combo.cost_center_name || 'Centro de Costo',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.cost_center_name.localeCompare(b.cost_center_name));
+  }, [employeeCombinations, companyFilter]);
 
-  const workGroupOptions = useMemo(() => areaOptions, [areaOptions]);
+  const availableWorkGroups = useMemo(() => {
+    if (companyFilter === 'ALL' || costCenterFilter === 'ALL') return [];
+    const map = new Map<string, { id: string; work_group_name: string }>();
+    employeeCombinations.forEach((combo) => {
+      if (combo.company_id !== companyFilter) return;
+      if (combo.cost_center_id !== costCenterFilter) return;
+      if (!combo.work_group_id) return;
+      if (!map.has(combo.work_group_id)) {
+        map.set(combo.work_group_id, {
+          id: combo.work_group_id,
+          work_group_name: combo.work_group_name || 'Grupo de Trabajo',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.work_group_name.localeCompare(b.work_group_name));
+  }, [employeeCombinations, companyFilter, costCenterFilter]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter((employee) => {
-      const areaOk = areaFilter === 'ALL' || employee.company_name === areaFilter;
-      const groupOk = groupFilter === 'ALL' || employee.company_name === groupFilter;
-      return areaOk && groupOk;
+      const companyOk = companyFilter === 'ALL' || employee.company_id === companyFilter;
+      const costCenterOk = costCenterFilter === 'ALL' || employee.cost_center_id === costCenterFilter;
+      const workGroupOk = workGroupFilter === 'ALL' || employee.work_group_id === workGroupFilter;
+      return companyOk && costCenterOk && workGroupOk;
     });
-  }, [employees, areaFilter, groupFilter]);
+  }, [employees, companyFilter, costCenterFilter, workGroupFilter]);
 
   const shiftOptionsByCompany = useMemo(() => {
     const map = new Map<string, ShiftRow[]>();
@@ -391,41 +451,9 @@ export function EmployeeShiftPlanningManagement() {
     return map;
   }, [shifts]);
 
-  const distributionShiftRows = useMemo(() => {
-    return distributionShifts
-      .map((item) => ({ item, shift: shiftsById.get(item.shift_id) || null }))
-      .filter((entry) => !!entry.shift) as Array<{ item: DistributionShift; shift: ShiftRow }>;
-  }, [distributionShifts, shiftsById]);
-
-  const distributionShiftIds = useMemo(() => {
-    return new Set(distributionShifts.map((item) => item.shift_id));
-  }, [distributionShifts]);
-
-  const selectableDistributionShifts = useMemo(() => {
-    return shifts
-      .sort((a, b) => a.shift_name.localeCompare(b.shift_name));
-  }, [shifts]);
-
-  const availableDistributionShifts = useMemo(() => {
-    return selectableDistributionShifts.filter((shift) => !distributionShiftIds.has(shift.id));
-  }, [selectableDistributionShifts, distributionShiftIds]);
-
-  const selectedDistributionShift = useMemo(() => {
-    return selectableDistributionShifts.find((shift) => shift.id === newDistributionShiftId) || null;
-  }, [selectableDistributionShifts, newDistributionShiftId]);
-
   const activePattern = useMemo(() => {
     return workPatterns.find((pattern) => pattern.id === activePatternId) || null;
   }, [workPatterns, activePatternId]);
-
-  const requiredByKind = useMemo(() => {
-    const base: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
-    distributionShiftRows.forEach(({ item, shift }) => {
-      const kind = classifyShift(shift);
-      base[kind] += Math.max(0, Number(item.required || 0));
-    });
-    return base;
-  }, [distributionShiftRows]);
 
   const shiftTypeIdByKind = useMemo(() => {
     const map: Partial<Record<ShiftKind, string>> = {};
@@ -489,6 +517,8 @@ export function EmployeeShiftPlanningManagement() {
     setEmployees(payload.employees || []);
     setShifts(payload.shifts || []);
     setShiftTypes(payload.shift_types || []);
+    setEmployeeCombinations(payload.employee_combinations || []);
+    setFilterCompanies(payload.companies || []);
 
     if (patternsResult.status === 'fulfilled') {
       const rows = ((patternsResult.value?.work_patterns || []) as WorkPatternApiRow[])
@@ -498,6 +528,8 @@ export function EmployeeShiftPlanningManagement() {
           name: item.pattern_name,
           work_days: item.work_days_per_cycle,
           free_days: item.rest_days_per_cycle,
+          cycle_length_days: Number(item.cycle_length_days || (item.work_days_per_cycle + item.rest_days_per_cycle) || 7),
+          pattern_shifts: Array.isArray(item.pattern_shifts) ? item.pattern_shifts : [],
         }));
 
       const nextPatterns = rows.length > 0 ? rows : DEFAULT_WORK_PATTERNS;
@@ -545,6 +577,15 @@ export function EmployeeShiftPlanningManagement() {
     }
     void loadAll();
   }, [rangeFrom, rangeTo, rangeDays.length]);
+
+  useEffect(() => {
+    setCostCenterFilter('ALL');
+    setWorkGroupFilter('ALL');
+  }, [companyFilter]);
+
+  useEffect(() => {
+    setWorkGroupFilter('ALL');
+  }, [costCenterFilter]);
 
   const cellShiftId = (employee: EmployeeRow, dateIso: string): string | null => {
     const change = changes[keyOf(employee.id, dateIso)];
@@ -637,41 +678,34 @@ export function EmployeeShiftPlanningManagement() {
     setCellShift(employee, dateIso, next || null);
   };
 
-  const addDistributionShift = () => {
-    const nextId = String(newDistributionShiftId || '').trim();
-    if (!nextId) return;
-    if (distributionShiftIds.has(nextId)) return;
-    const shift = shiftsById.get(nextId);
-    if (!shift) return;
-    const required = 1;
-    setDistributionShifts((prev) => [...prev, { shift_id: nextId, required }]);
-    setNewDistributionShiftId('');
-    setDistributionComboOpen(false);
+  const increaseRequiredEmployees = () => {
+    setRequiredEmployeesPerShift((prev) => Math.min(99, Math.max(1, prev + 1)));
   };
 
-  const removeDistributionShift = (shiftId: string) => {
-    setDistributionShifts((prev) => prev.filter((item) => item.shift_id !== shiftId));
+  const decreaseRequiredEmployees = () => {
+    setRequiredEmployeesPerShift((prev) => Math.max(1, prev - 1));
   };
 
-  useEffect(() => {
-    const onMouseDown = (event: MouseEvent) => {
-      if (!distributionComboRef.current) return;
-      if (distributionComboRef.current.contains(event.target as Node)) return;
-      setDistributionComboOpen(false);
-    };
-    window.addEventListener('mousedown', onMouseDown);
-    return () => window.removeEventListener('mousedown', onMouseDown);
-  }, []);
-
-  const updateDistributionRequired = (shiftId: string, required: number) => {
-    const safe = Math.max(0, Math.trunc(required));
-    setDistributionShifts((prev) =>
-      prev.map((item) => (item.shift_id === shiftId ? { ...item, required: safe } : item))
-    );
-  };
+  const activePatternShiftSequence = useMemo(() => {
+    const rows = [...(activePattern?.pattern_shifts || [])]
+      .filter((item) => String(item.shift_id || '').trim())
+      .sort((a, b) => {
+        const aSeq = Number(a.sequence_number || 0);
+        const bSeq = Number(b.sequence_number || 0);
+        if (aSeq !== bSeq) return aSeq - bSeq;
+        return Number(a.cycle_day_number || 0) - Number(b.cycle_day_number || 0);
+      });
+    return rows;
+  }, [activePattern]);
 
   const buildShiftPlanningPayload = (): ShiftPlanningGeneratePayload => {
-    const dotacionRequerida = distributionShiftRows.map(({ item, shift }) => {
+    const uniquePatternShifts = Array.from(
+      new Set(activePatternShiftSequence.map((item) => item.shift_id))
+    )
+      .map((shiftId) => shiftsById.get(shiftId))
+      .filter((shift): shift is ShiftRow => Boolean(shift));
+
+    const dotacionRequerida = uniquePatternShifts.map((shift) => {
       const startMinutes = parseTimeToMinutes(shift.start_time);
       const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
       const horaFin = startMinutes !== null && workMinutes > 0
@@ -684,15 +718,15 @@ export function EmployeeShiftPlanningManagement() {
         codigoTurno: shift.shift_short_name,
         horaInicio: shift.start_time || null,
         horaFin,
-        cantidadRequerida: Math.max(0, Math.trunc(Number(item.required || 0))),
+        cantidadRequerida: Math.max(1, Math.trunc(Number(requiredEmployeesPerShift || 1))),
       };
     });
 
     return {
       filtrosEmpleados: {
         soloEmpleadosTurnosRotativos: true,
-        areaId: areaFilter === 'ALL' ? null : areaFilter,
-        grupoTrabajoId: groupFilter === 'ALL' ? null : groupFilter,
+        areaId: costCenterFilter === 'ALL' ? null : costCenterFilter,
+        grupoTrabajoId: workGroupFilter === 'ALL' ? null : workGroupFilter,
       },
       rangoFechas: {
         fechaInicio,
@@ -712,6 +746,7 @@ export function EmployeeShiftPlanningManagement() {
         priorizarEquidadHoras: reglaEquidad,
         equilibrarFeriados: reglaFeriados,
         permitirSwaps: reglaSwaps,
+        modoDistribucionTurnos: shiftDistributionMode === 'staggered' ? 'ESCALONADOS' : 'IGUALES',
       },
       empleadosDisponibles: filteredEmployees.map((employee) => ({
         id: employee.id,
@@ -721,7 +756,7 @@ export function EmployeeShiftPlanningManagement() {
         companyId: employee.company_id,
         companyName: employee.company_name,
       })),
-      turnosDisponibles: shifts.map((shift) => {
+      turnosDisponibles: uniquePatternShifts.map((shift) => {
         const startMinutes = parseTimeToMinutes(shift.start_time);
         const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
         const horaFin = startMinutes !== null && workMinutes > 0
@@ -792,7 +827,7 @@ export function EmployeeShiftPlanningManagement() {
 
     setChanges(generated);
     setPlans([]);
-    setLegendShiftIds(distributionShiftRows.map(({ shift }) => shift.id));
+    setLegendShiftIds(Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id))));
     setHasAppliedParameters(true);
     setConfirmed(false);
 
@@ -828,9 +863,13 @@ export function EmployeeShiftPlanningManagement() {
       return;
     }
 
-    const hasRequiredCoverage = distributionShiftRows.some(({ item }) => Math.max(0, Number(item.required || 0)) >= 1);
-    if (!hasRequiredCoverage) {
-      setError('Debe configurar al menos un turno con cantidad requerida mayor o igual a 1.');
+    if (activePatternShiftSequence.length === 0) {
+      setError('El patrón seleccionado no tiene turnos configurados.');
+      return;
+    }
+
+    if (Math.max(1, Math.trunc(Number(requiredEmployeesPerShift || 1))) < 1) {
+      setError('La dotación mínima por turno debe ser mayor o igual a 1.');
       return;
     }
 
@@ -948,158 +987,185 @@ export function EmployeeShiftPlanningManagement() {
       return;
     }
 
-    const sequenceShiftIds = distributionShiftRows.flatMap(({ item, shift }) => {
-      const amount = Math.max(0, Math.trunc(Number(item.required || 0)));
-      return Array.from({ length: amount }, () => shift.id);
-    });
-
-    if (sequenceShiftIds.length === 0) {
-      setError('Defina al menos 1 día en Dotación Requerida para construir la secuencia.');
+    if (filteredEmployees.length === 0) {
+      setError('No hay empleados para los filtros seleccionados.');
       return;
     }
 
-    const generated: Record<string, DayCellChange> = {};
-    const sequenceLength = sequenceShiftIds.length;
-    const employeeCount = Math.max(1, filteredEmployees.length);
+    const orderedPatternShifts = [...activePatternShiftSequence];
+    if (orderedPatternShifts.length === 0) {
+      setError('El patrón de trabajo seleccionado no tiene secuencia de turnos configurada.');
+      return;
+    }
 
-    // 1) Aplicar la secuencia con desfase por empleado para evitar que todos caigan en el mismo turno/día libre.
+    const patternCycleLength = Math.max(
+      1,
+      Number(activePattern?.cycle_length_days || 0),
+      ...orderedPatternShifts.map((item) => Number(item.cycle_day_number || 0))
+    );
+    const shiftByCycleDay = new Map<number, string>();
+    orderedPatternShifts.forEach((item) => {
+      const day = Number(item.cycle_day_number || 0);
+      const shiftId = String(item.shift_id || '').trim();
+      if (day > 0 && shiftId) {
+        shiftByCycleDay.set(day, shiftId);
+      }
+    });
+
+    const fallbackSequence = orderedPatternShifts
+      .map((item) => String(item.shift_id || '').trim())
+      .filter(Boolean);
+    if (fallbackSequence.length === 0) {
+      setError('No se encontraron turnos válidos en el patrón seleccionado.');
+      return;
+    }
+    const missingShifts = fallbackSequence.filter((shiftId) => !shiftsById.has(shiftId));
+    if (missingShifts.length > 0) {
+      setError('El patrón contiene turnos que no están activos/disponibles para este tenant.');
+      return;
+    }
+
+    const requiredPerShift = Math.max(1, Math.trunc(Number(requiredEmployeesPerShift || 1)));
+    const generated: Record<string, DayCellChange> = {};
+    const employeeCount = filteredEmployees.length;
+    const usePhaseOffset = shiftDistributionMode === 'staggered';
+
+    // 1) Aplicar la secuencia del patrón con desfase opcional por empleado.
     filteredEmployees.forEach((employee, employeeIndex) => {
-      const phaseOffset = Math.floor((employeeIndex * sequenceLength) / employeeCount) % sequenceLength;
+      const phaseOffset = usePhaseOffset
+        ? Math.floor((employeeIndex * patternCycleLength) / Math.max(1, employeeCount)) % patternCycleLength
+        : 0;
+
       rangeDays.forEach((day, dayIndex) => {
         const dateIso = toIsoDate(day);
-        const sequenceShiftId = sequenceShiftIds[(dayIndex + phaseOffset) % sequenceLength];
-        const shift = shiftsById.get(sequenceShiftId);
+        const cycleDay = ((dayIndex + phaseOffset) % patternCycleLength) + 1;
+        const byCycle = shiftByCycleDay.get(cycleDay) || null;
+        const fallbackId = fallbackSequence[(dayIndex + phaseOffset) % fallbackSequence.length];
+        const shiftId = byCycle || fallbackId || null;
+        const shift = shiftId ? shiftsById.get(shiftId) : null;
         const kind = shift ? classifyShift(shift) : 'O';
         const shiftTypeId = shift ? (shiftTypeIdByKind[kind] || null) : null;
         generated[keyOf(employee.id, dateIso)] = {
           employee_id: employee.id,
           shift_date: dateIso,
-          shift_id: sequenceShiftId,
+          shift_id: shiftId,
           shift_type_id: shiftTypeId,
           company_id: employee.company_id,
         };
       });
     });
 
-    // 2) Garantizar cobertura mínima diaria por turno productivo (>=1) cuando sea factible con el personal disponible.
-    const productiveShiftIds = Array.from(
-      new Set(
-        sequenceShiftIds.filter((shiftId) => {
-          const shift = shiftsById.get(shiftId);
-          if (!shift) return false;
-          return classifyShift(shift) !== 'L';
-        })
-      )
-    );
-
+    const shouldEnforceCoverage = shiftDistributionMode === 'staggered';
     let uncoveredGaps = 0;
-    rangeDays.forEach((day, dayIndex) => {
-      const dateIso = toIsoDate(day);
-      const dayCountByShift: Record<string, number> = {};
-
-      filteredEmployees.forEach((employee) => {
-        const assignedShiftId = generated[keyOf(employee.id, dateIso)]?.shift_id || null;
-        if (!assignedShiftId) return;
-        dayCountByShift[assignedShiftId] = (dayCountByShift[assignedShiftId] || 0) + 1;
-      });
-
-      const orderedTargets = productiveShiftIds.map((_, idx) => productiveShiftIds[(idx + dayIndex) % productiveShiftIds.length]);
-      orderedTargets.forEach((targetShiftId) => {
-        if ((dayCountByShift[targetShiftId] || 0) > 0) return;
-        const targetShift = shiftsById.get(targetShiftId);
-        if (!targetShift) return;
-
-        const candidates = filteredEmployees
-          .map((employee) => {
-            const cell = generated[keyOf(employee.id, dateIso)];
-            const currentShiftId = cell?.shift_id || null;
-            const currentShift = currentShiftId ? shiftsById.get(currentShiftId) || null : null;
-            const currentKind = currentShift ? classifyShift(currentShift) : 'X';
-            const currentCount = currentShiftId ? (dayCountByShift[currentShiftId] || 0) : 0;
-            const compatible = isShiftCompatibleWithEmployee(targetShift, employee);
-            return {
-              employee,
-              currentShiftId,
-              currentKind,
-              currentCount,
-              compatible,
-            };
+    if (shouldEnforceCoverage) {
+      // 2) Cobertura mínima diaria por turno productivo según dotación requerida.
+      const productiveShiftIds = Array.from(
+        new Set(
+          fallbackSequence.filter((shiftId) => {
+            const shift = shiftsById.get(shiftId);
+            if (!shift) return false;
+            return classifyShift(shift) !== 'L';
           })
-          .filter((entry) => entry.compatible && entry.currentShiftId !== targetShiftId)
-          .sort((a, b) => {
-            const score = (item: { currentKind: ShiftKind; currentCount: number }) => {
-              if (item.currentKind === 'L' || item.currentKind === 'X') return 0;
-              if (item.currentCount > 1) return 1;
-              return 10;
-            };
-            return score(a) - score(b);
-          });
+        )
+      );
 
-        const fallbackAllowed = productiveShiftIds.length > employeeCount;
-        const chosen = candidates.find((entry) => {
-          if (entry.currentKind === 'L' || entry.currentKind === 'X') return true;
-          if (entry.currentCount > 1) return true;
-          return fallbackAllowed;
+      rangeDays.forEach((day, dayIndex) => {
+        const dateIso = toIsoDate(day);
+        const dayCountByShift: Record<string, number> = {};
+
+        filteredEmployees.forEach((employee) => {
+          const assignedShiftId = generated[keyOf(employee.id, dateIso)]?.shift_id || null;
+          if (!assignedShiftId) return;
+          dayCountByShift[assignedShiftId] = (dayCountByShift[assignedShiftId] || 0) + 1;
         });
 
-        if (!chosen) {
-          uncoveredGaps += 1;
-          return;
-        }
+        const orderedTargets = productiveShiftIds.map((_, idx) => productiveShiftIds[(idx + dayIndex) % productiveShiftIds.length]);
+        orderedTargets.forEach((targetShiftId) => {
+          if ((dayCountByShift[targetShiftId] || 0) >= requiredPerShift) return;
+          const targetShift = shiftsById.get(targetShiftId);
+          if (!targetShift) return;
 
-        const cellKey = keyOf(chosen.employee.id, dateIso);
-        const previousShiftId = generated[cellKey]?.shift_id || null;
-        const targetKind = classifyShift(targetShift);
-        generated[cellKey] = {
-          employee_id: chosen.employee.id,
-          shift_date: dateIso,
-          shift_id: targetShiftId,
-          shift_type_id: shiftTypeIdByKind[targetKind] || null,
-          company_id: chosen.employee.company_id,
-        };
+          const candidates = filteredEmployees
+            .map((employee) => {
+              const cell = generated[keyOf(employee.id, dateIso)];
+              const currentShiftId = cell?.shift_id || null;
+              const currentShift = currentShiftId ? shiftsById.get(currentShiftId) || null : null;
+              const currentKind = currentShift ? classifyShift(currentShift) : 'X';
+              const currentCount = currentShiftId ? (dayCountByShift[currentShiftId] || 0) : 0;
+              const compatible = isShiftCompatibleWithEmployee(targetShift, employee);
+              return {
+                employee,
+                currentShiftId,
+                currentKind,
+                currentCount,
+                compatible,
+                workOnHolidays: employee.work_on_holidays !== false,
+              };
+            })
+            .filter((entry) => entry.compatible && entry.currentShiftId !== targetShiftId)
+            .sort((a, b) => {
+              const score = (item: { currentKind: ShiftKind; currentCount: number }) => {
+                if (item.currentKind === 'L' || item.currentKind === 'X') return 0;
+                if (item.currentCount > 1) return 1;
+                return 10;
+              };
+              return score(a) - score(b);
+            });
 
-        if (previousShiftId) {
-          dayCountByShift[previousShiftId] = Math.max(0, (dayCountByShift[previousShiftId] || 0) - 1);
-        }
-        dayCountByShift[targetShiftId] = (dayCountByShift[targetShiftId] || 0) + 1;
+          while ((dayCountByShift[targetShiftId] || 0) < requiredPerShift) {
+            const fallbackAllowed = productiveShiftIds.length > employeeCount;
+            const chosen = candidates.find((entry) => {
+              if (entry.currentKind === 'L' || entry.currentKind === 'X') return true;
+              if (entry.currentCount > 1) return true;
+              return fallbackAllowed;
+            });
+
+            if (!chosen) {
+              uncoveredGaps += 1;
+              break;
+            }
+
+            const cellKey = keyOf(chosen.employee.id, dateIso);
+            const previousShiftId = generated[cellKey]?.shift_id || null;
+            const targetKind = classifyShift(targetShift);
+            generated[cellKey] = {
+              employee_id: chosen.employee.id,
+              shift_date: dateIso,
+              shift_id: targetShiftId,
+              shift_type_id: shiftTypeIdByKind[targetKind] || null,
+              company_id: chosen.employee.company_id,
+            };
+
+            if (previousShiftId) {
+              dayCountByShift[previousShiftId] = Math.max(0, (dayCountByShift[previousShiftId] || 0) - 1);
+            }
+            dayCountByShift[targetShiftId] = (dayCountByShift[targetShiftId] || 0) + 1;
+            const idx = candidates.findIndex((entry) => entry.employee.id === chosen.employee.id);
+            if (idx >= 0) {
+              candidates.splice(idx, 1);
+            }
+          }
+        });
       });
-    });
+    }
 
-    const orderedLegend = Array.from(new Set(sequenceShiftIds));
+    const orderedLegend = Array.from(new Set(fallbackSequence));
     setChanges(generated);
     setPlans([]);
     setLegendShiftIds(orderedLegend);
     setHasAppliedParameters(true);
     setConfirmed(false);
     setError(null);
-    if (uncoveredGaps > 0) {
-      setSuccess(`Secuencia aplicada con cobertura parcial: ${sequenceShiftIds.length} días base repetidos en ${rangeDays.length} días. Quedaron ${uncoveredGaps} huecos de cobertura por dotación insuficiente o restricciones de compañía.`);
+    if (shouldEnforceCoverage && uncoveredGaps > 0) {
+      setSuccess(`Secuencia aplicada con cobertura parcial: patrón ${activePattern?.name || ''} en ${rangeDays.length} días. Quedaron ${uncoveredGaps} huecos de cobertura por dotación insuficiente o restricciones de compañía.`);
       return;
     }
-    setSuccess(`Secuencia aplicada: ${sequenceShiftIds.length} días base repetidos en ${rangeDays.length} días de planificación, con cobertura diaria mínima en turnos productivos.`);
+    if (!shouldEnforceCoverage) {
+      setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${rangeDays.length} días de planificación, con turnos iguales para todos los empleados.`);
+      return;
+    }
+    setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${rangeDays.length} días de planificación, con cobertura diaria mínima por turno.`);
   };
-
-  const totalsByKind = useMemo(() => {
-    const totals: Record<ShiftKind, number> = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
-    filteredEmployees.forEach((employee) => {
-      rangeDays.forEach((day) => {
-        totals[cellKind(employee, toIsoDate(day))] += 1;
-      });
-    });
-    return totals;
-  }, [filteredEmployees, rangeDays, plansByKey, changes, shiftsById]);
-
-  const countByDayAndKind = useMemo(() => {
-    const result: Record<string, Record<ShiftKind, number>> = {};
-    rangeDays.forEach((day) => {
-      const dateIso = toIsoDate(day);
-      result[dateIso] = { M: 0, T: 0, N: 0, L: 0, O: 0, X: 0 };
-      filteredEmployees.forEach((employee) => {
-        result[dateIso][cellKind(employee, dateIso)] += 1;
-      });
-    });
-    return result;
-  }, [rangeDays, filteredEmployees, plansByKey, changes, shiftsById]);
 
   const countByDayAndShift = useMemo(() => {
     const result: Record<string, Record<string, number>> = {};
@@ -1116,8 +1182,47 @@ export function EmployeeShiftPlanningManagement() {
     return result;
   }, [rangeDays, filteredEmployees, plansByKey, changes, shiftsById]);
 
+  const shiftsByDayGridRows = useMemo(() => {
+    if (!hasAppliedParameters) return [] as ShiftRow[];
+
+    const baseIds = legendShiftIds.length > 0
+      ? legendShiftIds
+      : Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id)));
+
+    const baseIdSet = new Set(baseIds);
+    const usedIdSet = new Set<string>();
+    rangeDays.forEach((day) => {
+      const dateIso = toIsoDate(day);
+      Object.keys(countByDayAndShift[dateIso] || {}).forEach((shiftId) => {
+        if ((countByDayAndShift[dateIso]?.[shiftId] || 0) > 0) {
+          usedIdSet.add(shiftId);
+        }
+      });
+    });
+
+    const allIdsOrdered = [
+      ...baseIds,
+      ...Array.from(usedIdSet).filter((shiftId) => !baseIdSet.has(shiftId)),
+    ];
+
+    return allIdsOrdered
+      .map((shiftId) => shiftsById.get(shiftId))
+      .filter((shift): shift is ShiftRow => Boolean(shift));
+  }, [hasAppliedParameters, legendShiftIds, activePatternShiftSequence, rangeDays, countByDayAndShift, shiftsById]);
+
   const suggestions = useMemo<Suggestion[]>(() => {
     const list: Suggestion[] = [];
+    const required = Math.max(1, Number(requiredEmployeesPerShift || 1));
+    const productiveShiftIds = Array.from(
+      new Set(
+        activePatternShiftSequence
+          .map((item) => String(item.shift_id || '').trim())
+          .filter((shiftId) => {
+            const shift = shiftsById.get(shiftId);
+            return !!shift && classifyShift(shift) !== 'L';
+          })
+      )
+    );
 
     filteredEmployees.forEach((employee) => {
       let consecutive = 0;
@@ -1147,10 +1252,10 @@ export function EmployeeShiftPlanningManagement() {
 
     rangeDays.forEach((day) => {
       const dateIso = toIsoDate(day);
-      distributionShiftRows.forEach(({ item, shift }) => {
-        const required = Math.max(0, Number(item.required || 0));
-        if (required <= 0) return;
-        const current = countByDayAndShift[dateIso]?.[shift.id] || 0;
+      productiveShiftIds.forEach((shiftId) => {
+        const shift = shiftsById.get(shiftId);
+        if (!shift) return;
+        const current = countByDayAndShift[dateIso]?.[shiftId] || 0;
         if (current >= required) return;
 
         const candidate = filteredEmployees.find((employee) => {
@@ -1160,32 +1265,44 @@ export function EmployeeShiftPlanningManagement() {
         if (!candidate || !isShiftCompatibleWithEmployee(shift, candidate)) return;
 
         list.push({
-          id: `dotacion-${shift.id}-${candidate.id}-${dateIso}`,
+          id: `dotacion-${shiftId}-${candidate.id}-${dateIso}`,
           kind: 'dotacion',
           severity: 'medium',
           text: `Dotación incompleta en ${shift.shift_name} del ${formatDayMonth(dateIso)} (objetivo ${required}).`,
           recommendation: `Reasignar ${candidate.employee_code} a ${shift.shift_name}.`,
-          apply: () => setCellShift(candidate, dateIso, shift.id),
+          apply: () => setCellShift(candidate, dateIso, shiftId),
         });
       });
     });
 
     return list.filter((item) => !ignoredSuggestionIds[item.id]).slice(0, 6);
-  }, [filteredEmployees, rangeDays, distributionShiftRows, countByDayAndShift, ignoredSuggestionIds, shifts, plansByKey, changes]);
+  }, [filteredEmployees, rangeDays, activePatternShiftSequence, requiredEmployeesPerShift, countByDayAndShift, ignoredSuggestionIds, shiftsById, plansByKey, changes]);
 
   const alerts = useMemo(() => {
     const issues: string[] = [];
+    const required = Math.max(1, Number(requiredEmployeesPerShift || 1));
+    const productiveShiftIds = Array.from(
+      new Set(
+        activePatternShiftSequence
+          .map((item) => String(item.shift_id || '').trim())
+          .filter((shiftId) => {
+            const shift = shiftsById.get(shiftId);
+            return !!shift && classifyShift(shift) !== 'L';
+          })
+      )
+    );
+
     rangeDays.forEach((day) => {
       const dateIso = toIsoDate(day);
-      distributionShiftRows.forEach(({ item, shift }) => {
-        const required = Math.max(0, Number(item.required || 0));
-        if (required <= 0) return;
-        const current = countByDayAndShift[dateIso]?.[shift.id] || 0;
+      productiveShiftIds.forEach((shiftId) => {
+        const shift = shiftsById.get(shiftId);
+        if (!shift) return;
+        const current = countByDayAndShift[dateIso]?.[shiftId] || 0;
         if (current < required) issues.push(`Dotación baja en ${shift.shift_name} ${formatDayMonth(dateIso)}.`);
       });
     });
     return issues.slice(0, 5);
-  }, [rangeDays, distributionShiftRows, countByDayAndShift]);
+  }, [rangeDays, activePatternShiftSequence, requiredEmployeesPerShift, countByDayAndShift, shiftsById]);
 
   const pendingChanges = pendingPersistChanges.length;
 
@@ -1195,27 +1312,6 @@ export function EmployeeShiftPlanningManagement() {
     setDiasTrabajo(pattern.work_days);
     setDiasLibres(pattern.free_days);
   }, [activePatternId, workPatterns]);
-
-  useEffect(() => {
-    setDistributionShifts((prev) => {
-      const cleaned = prev.filter((item) => shiftsById.has(item.shift_id));
-      if (cleaned.length > 0) return cleaned;
-
-      const defaults: DistributionShift[] = [];
-      (['M', 'T', 'N', 'L'] as ShiftKind[]).forEach((kind) => {
-        const found = selectableDistributionShifts.find((shift) => classifyShift(shift) === kind);
-        if (found) defaults.push({ shift_id: found.id, required: 1 });
-      });
-
-      if (defaults.length > 0) return defaults;
-      return (
-        selectableDistributionShifts.slice(0, 3).map((shift) => ({
-          shift_id: shift.id,
-          required: 1,
-        }))
-      );
-    });
-  }, [selectableDistributionShifts, shiftsById]);
 
   return (
     <div className="space-y-4">
@@ -1308,7 +1404,7 @@ export function EmployeeShiftPlanningManagement() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="px-3 py-2 text-left min-w-[180px]">Turno</th>
+                      <th className="px-3 py-2 text-left min-w-[220px]">Turno Aplicado</th>
                       {rangeDays.map((day) => {
                         const dateIso = toIsoDate(day);
                         return (
@@ -1321,18 +1417,29 @@ export function EmployeeShiftPlanningManagement() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(['M', 'T', 'N', 'L'] as ShiftKind[]).map((kind) => {
-                      const meta = KIND_META[kind];
+                    {shiftsByDayGridRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={rangeDays.length + 1} className="px-3 py-8 text-center text-sm text-gray-500">
+                          Aplique parámetros para visualizar el consolidado de turnos por día.
+                        </td>
+                      </tr>
+                    ) : shiftsByDayGridRows.map((shift) => {
+                      const kind = classifyShift(shift);
+                      const meta = getShiftVisualMeta(shift, kind);
                       const Icon = meta.Icon;
+                      const target = kind === 'L' ? 0 : Math.max(1, requiredEmployeesPerShift);
                       return (
-                        <tr key={kind} className="border-t">
+                        <tr key={shift.id} className="border-t">
                           <td className="px-3 py-2 font-medium">
-                            <span className="inline-flex items-center gap-2"><Icon className="size-4" style={{ color: meta.color }} /> {meta.label}</span>
+                            <span className="inline-flex items-center gap-2">
+                              <Icon className="size-4" style={{ color: meta.color }} />
+                              {shift.shift_name}
+                            </span>
+                            <div className="ml-6 text-[11px] text-gray-500">{shift.shift_short_name}</div>
                           </td>
                           {rangeDays.map((day) => {
                             const dateIso = toIsoDate(day);
-                            const value = countByDayAndKind[dateIso][kind];
-                            const target = requiredByKind[kind] || 0;
+                            const value = countByDayAndShift[dateIso]?.[shift.id] || 0;
                             const warn = target > 0 && value < target;
                             return (
                               <td key={dateIso} className="px-2 py-2 text-center">
@@ -1471,31 +1578,46 @@ export function EmployeeShiftPlanningManagement() {
               <Filter className="size-4" />
               Filtros de Empleados
             </div>
-            <p className="mb-3 text-sm text-gray-600">Solo empleados de turnos rotativos</p>
+            <p className="mb-3 text-sm text-gray-600">Filtros secuenciales por combinaciones reales de employee_companies</p>
             <div className="space-y-2">
               <div>
-                <label className="mb-1 block text-sm font-medium">Área</label>
+                <label className="mb-1 block text-sm font-medium">Empresa</label>
                 <select
-                  value={areaFilter}
-                  onChange={(event) => setAreaFilter(event.target.value)}
+                  value={companyFilter}
+                  onChange={(event) => setCompanyFilter(event.target.value)}
                   className="w-full rounded-xl border px-3 py-2 text-sm"
                 >
-                  <option value="ALL">Todas las áreas</option>
-                  {areaOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
+                  <option value="ALL">Todas las empresas</option>
+                  {filterCompanies.map((option) => (
+                    <option key={option.id} value={option.id}>{option.company_name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Centro de Costo</label>
+                <select
+                  value={costCenterFilter}
+                  onChange={(event) => setCostCenterFilter(event.target.value)}
+                  disabled={companyFilter === 'ALL'}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todos los centros</option>
+                  {availableCostCenters.map((option) => (
+                    <option key={option.id} value={option.id}>{option.cost_center_name}</option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium">Grupo de Trabajo</label>
                 <select
-                  value={groupFilter}
-                  onChange={(event) => setGroupFilter(event.target.value)}
+                  value={workGroupFilter}
+                  onChange={(event) => setWorkGroupFilter(event.target.value)}
+                  disabled={companyFilter === 'ALL' || costCenterFilter === 'ALL'}
                   className="w-full rounded-xl border px-3 py-2 text-sm"
                 >
                   <option value="ALL">Todos los grupos</option>
-                  {workGroupOptions.map((option) => (
-                    <option key={option} value={option}>{option}</option>
+                  {availableWorkGroups.map((option) => (
+                    <option key={option.id} value={option.id}>{option.work_group_name}</option>
                   ))}
                 </select>
               </div>
@@ -1543,7 +1665,7 @@ export function EmployeeShiftPlanningManagement() {
           </div>
 
           <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-2 text-lg font-semibold">Patrón activo</div>
+            <div className="mb-2 text-lg font-semibold">Patrón de Trabajo</div>
             <div className="space-y-3">
               <select
                 value={activePatternId}
@@ -1557,6 +1679,39 @@ export function EmployeeShiftPlanningManagement() {
                 ))}
               </select>
               <div className="text-xs text-gray-600">Esquema actual: {diasTrabajo}/{diasLibres}</div>
+
+              <div className="pt-1">
+                <label className="mb-2 block text-sm font-medium">Distribución de Turnos</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShiftDistributionMode('staggered')}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+                      shiftDistributionMode === 'staggered'
+                        ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
+                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Turnos escalonados
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShiftDistributionMode('same')}
+                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+                      shiftDistributionMode === 'same'
+                        ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
+                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Turnos iguales
+                  </button>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  {shiftDistributionMode === 'staggered'
+                    ? 'Cada empleado inicia el patrón con desfase para distribuir la carga.'
+                    : 'Todos los empleados siguen el mismo turno por día (sin desfase).'}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1565,101 +1720,38 @@ export function EmployeeShiftPlanningManagement() {
               <Users className="size-4" />
               Dotación Requerida
             </div>
-            <p className="mb-3 text-sm text-gray-600">Empleados por turno (mín. 1)</p>
-            <div className="space-y-2">
-              {distributionShiftRows.map(({ item, shift }) => {
-                const kind = classifyShift(shift);
-                const meta = getShiftVisualMeta(shift, kind);
-                const Icon = meta.Icon;
-                return (
-                  <div key={shift.id} className="flex items-center gap-2">
-                    <div className="flex min-w-[190px] items-center gap-2 text-sm font-medium">
-                      <Icon className="size-4" style={{ color: meta.color }} />
-                      <span className="truncate">{shift.shift_name}</span>
-                    </div>
-                    <input
-                      type="number"
-                      min={0}
-                      value={item.required}
-                      onChange={(event) => updateDistributionRequired(shift.id, Number(event.target.value || 0))}
-                      className="w-20 rounded-xl border px-2 py-2 text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeDistributionShift(shift.id)}
-                      className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50"
-                      title="Quitar turno"
-                    >
-                      <Minus className="size-4" />
-                    </button>
-                  </div>
-                );
-              })}
-
-              <div className="mt-3 flex items-center gap-2">
-                <div className="relative flex-1" ref={distributionComboRef}>
-                  <button
-                    type="button"
-                    onClick={() => setDistributionComboOpen((prev) => !prev)}
-                    className="w-full inline-flex items-center justify-between rounded-xl border px-3 py-2 text-sm"
-                  >
-                    {selectedDistributionShift ? (
-                      (() => {
-                        const selectedKind = classifyShift(selectedDistributionShift);
-                        const selectedMeta = getShiftVisualMeta(selectedDistributionShift, selectedKind);
-                        const SelectedIcon = selectedMeta.Icon;
-                        return (
-                          <span className="inline-flex items-center gap-2">
-                            <SelectedIcon className="size-4" style={{ color: selectedMeta.color }} />
-                            <span>{selectedDistributionShift.shift_name}</span>
-                          </span>
-                        );
-                      })()
-                    ) : (
-                      <span className="text-gray-500">Seleccionar turno...</span>
-                    )}
-                    <ChevronDown className="size-4 text-gray-500" />
-                  </button>
-                  {distributionComboOpen && (
-                    <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border bg-white p-1 shadow-lg">
-                      {availableDistributionShifts.length === 0 ? (
-                        <div className="px-3 py-2 text-xs text-gray-500">No hay turnos disponibles.</div>
-                      ) : (
-                        availableDistributionShifts.map((shift) => {
-                          const kind = classifyShift(shift);
-                          const meta = getShiftVisualMeta(shift, kind);
-                          const Icon = meta.Icon;
-                          return (
-                            <button
-                              key={shift.id}
-                              type="button"
-                              onClick={() => {
-                                setNewDistributionShiftId(shift.id);
-                                setDistributionComboOpen(false);
-                              }}
-                              className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50"
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Icon className="size-4" style={{ color: meta.color }} />
-                                <span>{shift.shift_name}</span>
-                              </span>
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={addDistributionShift}
-                  className="inline-flex items-center justify-center rounded-md border border-emerald-200 p-2 text-emerald-700 hover:bg-emerald-50"
-                  title="Agregar turno"
-                >
-                  <Plus className="size-4" />
-                </button>
-              </div>
+            <p className="mb-3 text-sm text-gray-600">Cantidad mínima global de empleados por turno (default 1)</p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={decreaseRequiredEmployees}
+                className="inline-flex items-center justify-center rounded-md border border-red-200 p-2 text-red-600 hover:bg-red-50"
+                title="Disminuir"
+              >
+                <Minus className="size-4" />
+              </button>
+              <input
+                type="number"
+                min={1}
+                value={requiredEmployeesPerShift}
+                onChange={(event) => setRequiredEmployeesPerShift(Math.max(1, Math.trunc(Number(event.target.value || 1))))}
+                className="w-24 rounded-xl border px-2 py-2 text-center text-sm font-semibold"
+              />
+              <button
+                type="button"
+                onClick={increaseRequiredEmployees}
+                className="inline-flex items-center justify-center rounded-md border border-emerald-200 p-2 text-emerald-700 hover:bg-emerald-50"
+                title="Aumentar"
+              >
+                <Plus className="size-4" />
+              </button>
+              <span className="text-xs text-gray-500">empleados/turno</span>
             </div>
+            {activePatternShiftSequence.length > 0 && (
+              <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                Turnos del patrón: {Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_name || item.shift_short_name || item.shift_id))).join(' · ')}
+              </div>
+            )}
           </div>
 
           <div className="rounded-2xl border bg-white p-4">
@@ -1667,8 +1759,8 @@ export function EmployeeShiftPlanningManagement() {
               <Sparkles className="size-4" /> Reglas de IA
             </div>
             <div className="space-y-3 text-sm">
-              <label className="flex items-center justify-between"><span>Evitar turno N → M</span><input type="checkbox" checked={reglaEvitarNM} onChange={(e) => setReglaEvitarNM(e.target.checked)} /></label>
-              <label className="flex items-center justify-between"><span>Priorizar equidad en horas</span><input type="checkbox" checked={reglaEquidad} onChange={(e) => setReglaEquidad(e.target.checked)} /></label>
+              <label className="flex items-center justify-between"><span>Evitar Amanecida → Mañana</span><input type="checkbox" checked={reglaEvitarNM} onChange={(e) => setReglaEvitarNM(e.target.checked)} /></label>
+              <label className="flex items-center justify-between"><span>Priorizar equidad de horas</span><input type="checkbox" checked={reglaEquidad} onChange={(e) => setReglaEquidad(e.target.checked)} /></label>
               <label className="flex items-center justify-between"><span>Equilibrar feriados</span><input type="checkbox" checked={reglaFeriados} onChange={(e) => setReglaFeriados(e.target.checked)} /></label>
               <label className="flex items-center justify-between"><span>Permitir swaps</span><input type="checkbox" checked={reglaSwaps} onChange={(e) => setReglaSwaps(e.target.checked)} /></label>
             </div>

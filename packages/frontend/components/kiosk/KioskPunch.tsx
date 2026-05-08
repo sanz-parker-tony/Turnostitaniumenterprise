@@ -1,399 +1,314 @@
-/**
- * KIOSK_PUNCH - Marcación de Asistencia
- * Screen: KIOSK_PUNCH
- * Route: /kiosk/punch
- * 
- * Permite al empleado realizar marcaciones de entrada/salida
- */
-
 'use client';
 
-import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { 
-  LogIn, 
-  LogOut, 
-  Coffee, 
-  Clock, 
-  Calendar,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  User,
-  ArrowLeft
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Building2, Loader2, MonitorSmartphone, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
-import { projectId, publicApiToken } from '@/utils/backend/info';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 
-interface Employee {
-  employee_id: string;
-  employee_code: string;
-  full_name: string;
-  photo_url?: string;
-  company_name: string;
-  current_shift_name?: string;
-  last_punch_type?: string;
-  last_punch_datetime?: string;
+const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
+
+interface SelectOption {
+  id: string;
+  lookup_label?: string;
+  lookup_short_label?: string;
+  punch_key_value?: number;
+  company_id?: string | null;
+  company_name?: string | null;
+  device_name?: string | null;
+  device_serial_number?: string | null;
 }
 
-interface Punch {
+interface EmployeeContext {
   id: string;
-  punch_datetime: string;
-  punch_type_code: string;
-  punch_type_name: string;
-  source_code: string;
-  is_anomaly: boolean;
+  employee_code: string | null;
+  employee_name: string | null;
+  employee_lastname: string | null;
+  employee_photo_path?: string | null;
+  company_id: string | null;
+  company_name: string | null;
+}
+
+interface ContextPayload {
+  employee: EmployeeContext;
+  companies: SelectOption[];
+  devices: SelectOption[];
+  punch_keys: SelectOption[];
+  punch_sources: SelectOption[];
+  punch_statuses: SelectOption[];
+}
+
+function getFullName(employee: EmployeeContext | null): string {
+  if (!employee) return '';
+  return `${employee.employee_name || ''} ${employee.employee_lastname || ''}`.trim() || employee.employee_code || 'Empleado';
+}
+
+function formatTime(date: Date): string {
+  return date.toLocaleTimeString('es-EC', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('es-EC', {
+    weekday: 'long',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 }
 
 export default function KioskPunch() {
-  const [step, setStep] = useState<'identify' | 'punch'>('identify');
-  const [pin, setPin] = useState('');
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [recentPunches, setRecentPunches] = useState<Punch[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [punchingType, setPunchingType] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingLookupId, setSavingLookupId] = useState<string | null>(null);
+  const [context, setContext] = useState<ContextPayload | null>(null);
+  const [lastMarkAt, setLastMarkAt] = useState<string | null>(null);
+  const [defaultPunchStatusId, setDefaultPunchStatusId] = useState('');
+  const [clockNow, setClockNow] = useState<Date>(new Date());
+  const [photoFailed, setPhotoFailed] = useState(false);
 
-  const BASE_URL = `http://localhost:3001/make-server-e19f2094`;
+  const request = async (path: string, init?: RequestInit) => {
+    const api = createClient();
+    const { data: { session } } = await api.auth.getSession();
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) throw new Error('No hay sesion activa. Inicia sesion para marcar.');
 
-  // Identificar empleado por PIN
-  const handleIdentify = async () => {
-    if (!pin || pin.length !== 4) {
-      toast.error('PIN debe tener 4 dígitos');
-      return;
-    }
+    const response = await fetch(`http://localhost:3001${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    return payload;
+  };
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setClockNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const orderedPunchKeys = useMemo(() => {
+    const items = context?.punch_keys || [];
+    return [...items]
+      .filter((item) => Number.isFinite(Number(item.punch_key_value)))
+      .sort((a, b) => Number(a.punch_key_value) - Number(b.punch_key_value))
+      .slice(0, 6);
+  }, [context]);
+
+  const movementByKey = useMemo(() => {
+    const map = new Map<number, SelectOption>();
+    orderedPunchKeys.forEach((item) => {
+      map.set(Number(item.punch_key_value), item);
+    });
+    return map;
+  }, [orderedPunchKeys]);
+
+  const currentCompanyName = useMemo(() => {
+    if (!context) return '-';
+    const employeeCompanyId = context.employee.company_id;
+    if (!employeeCompanyId) return context.employee.company_name || '-';
+    const matched = context.companies.find((company) => company.id === employeeCompanyId);
+    return matched?.company_name || context.employee.company_name || '-';
+  }, [context]);
+
+  const fixedDeviceLabel = useMemo(() => {
+    if (!context) return FIXED_DEVICE_ID;
+    const matched = context.devices.find((device) => device.id === FIXED_DEVICE_ID);
+    if (!matched) return FIXED_DEVICE_ID;
+    return `${matched.device_name || 'Dispositivo'}${matched.device_serial_number ? ` (${matched.device_serial_number})` : ''}`;
+  }, [context]);
+
+  const employeePhoto = useMemo(() => {
+    const raw = context?.employee?.employee_photo_path;
+    if (!raw) return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    return `/${trimmed.replace(/^\/+/, '')}`;
+  }, [context]);
+
+  const loadContext = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${BASE_URL}/kiosk/identify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicApiToken}`
-        },
-        body: JSON.stringify({ pin })
-      });
+      const payload = (await request('/kiosk/mark/context')) as ContextPayload;
+      setContext(payload);
+      setPhotoFailed(false);
+      setDefaultPunchStatusId(payload.punch_statuses?.[0]?.id || '');
 
-      const result = await response.json();
-
-      if (!result.ok || result.error) {
-        toast.error(result.error || 'Error al identificar empleado');
-        return;
-      }
-
-      setEmployee(result.data);
-      setStep('punch');
-      toast.success(`Bienvenido, ${result.data.full_name}`);
-
-      // Cargar marcaciones recientes
-      loadRecentPunches();
+      const recent = await request('/kiosk/my-punches?limit=1');
+      const latest = recent?.data?.[0];
+      setLastMarkAt(latest?.punch_datetime || null);
     } catch (err: any) {
-      console.error('[KIOSK] Error identificando:', err);
-      toast.error('Error de conexión. Intente nuevamente.');
+      toast.error(err?.message || 'No se pudo cargar datos de marcacion');
     } finally {
       setLoading(false);
     }
   };
 
-  // Cargar marcaciones recientes
-  const loadRecentPunches = async () => {
-    try {
-      const ApiClient = createClient();
-      const { data: { session } } = await ApiClient.auth.getSession();
+  useEffect(() => {
+    void loadContext();
+  }, []);
 
-      const response = await fetch(`${BASE_URL}/kiosk/my-punches?limit=5`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token || publicApiToken}`
-        }
-      });
-
-      const result = await response.json();
-
-      if (result.ok && result.data) {
-        setRecentPunches(result.data);
-      }
-    } catch (err) {
-      console.error('[KIOSK] Error cargando punches:', err);
+  const submitPunch = async (punchKeyLookupId: string) => {
+    if (!context?.employee?.company_id) {
+      toast.error('No se pudo determinar la empresa del empleado');
+      return;
     }
-  };
 
-  // Realizar marcación
-  const handlePunch = async (punchType: string) => {
-    if (!employee) return;
-
-    setPunchingType(punchType);
+    setSavingLookupId(punchKeyLookupId);
     try {
-      const ApiClient = createClient();
-      const { data: { session } } = await ApiClient.auth.getSession();
-
-      const response = await fetch(`${BASE_URL}/kiosk/punch`, {
+      await request('/kiosk/mark/punch', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token || publicApiToken}`
-        },
         body: JSON.stringify({
-          employee_id: employee.employee_id,
-          punch_type: punchType,
-          source: 'KIOSK_WEB'
-        })
+          company_id: context.employee.company_id,
+          time_clock_device_id: FIXED_DEVICE_ID,
+          punch_key_lookup_id: punchKeyLookupId,
+          time_punch_status_id: defaultPunchStatusId || null,
+        }),
       });
-
-      const result = await response.json();
-
-      if (!result.ok || result.error) {
-        toast.error(result.error || 'Error al registrar marcación');
-        return;
-      }
-
-      toast.success('Marcación registrada exitosamente');
-      
-      // Recargar datos
-      await loadRecentPunches();
-      
-      // Volver a identificar después de 2 segundos
-      setTimeout(() => {
-        setEmployee(null);
-        setPin('');
-        setStep('identify');
-        setPunchingType(null);
-      }, 2000);
+      setLastMarkAt(new Date().toISOString());
+      toast.success('Marcacion registrada correctamente');
     } catch (err: any) {
-      console.error('[KIOSK] Error en marcación:', err);
-      toast.error('Error de conexión. Intente nuevamente.');
+      toast.error(err?.message || 'No se pudo registrar la marcacion');
     } finally {
-      setPunchingType(null);
+      setSavingLookupId(null);
     }
   };
 
-  // Logout
-  const handleLogout = () => {
-    setEmployee(null);
-    setPin('');
-    setStep('identify');
-    setRecentPunches([]);
-  };
+  const renderKeyButton = (keyNumber: number) => {
+    const item = movementByKey.get(keyNumber);
+    const isSaving = item?.id ? savingLookupId === item.id : false;
+    const disabled = !item || !!savingLookupId;
 
-  // Formatear fecha/hora
-  const formatDateTime = (datetime: string) => {
-    const date = new Date(datetime);
-    return date.toLocaleString('es-ES', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+    const isStartKey = keyNumber <= 3;
+    const toneClass = isStartKey
+      ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
+      : 'border-rose-400 bg-rose-50 hover:bg-rose-100';
+    const bubbleClass = isStartKey
+      ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
+      : 'bg-rose-100 border-rose-300 text-rose-800';
 
-  // ============================================================================
-  // RENDER: IDENTIFICACIÓN
-  // ============================================================================
-
-  if (step === 'identify') {
     return (
-      <div className="flex items-center justify-center min-h-[80vh]">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <div className="w-20 h-20 bg-[#0074D9] rounded-full flex items-center justify-center mx-auto mb-4">
-              <User className="w-10 h-10 text-white" />
-            </div>
-            <CardTitle className="text-2xl">Identificación</CardTitle>
-            <CardDescription>Ingrese su PIN de 4 dígitos</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Input
-                type="password"
-                inputMode="numeric"
-                maxLength={4}
-                value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="****"
-                className="text-center text-2xl tracking-widest"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && pin.length === 4) {
-                    handleIdentify();
-                  }
-                }}
-                autoFocus
-              />
-            </div>
+      <Button
+        key={keyNumber}
+        onClick={() => item?.id && void submitPunch(item.id)}
+        disabled={disabled}
+        variant="outline"
+        className={`h-24 w-full rounded-xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center ${toneClass}`}
+      >
+        {isSaving ? (
+          <Loader2 className="w-5 h-5 animate-spin mb-2" />
+        ) : (
+          <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full border text-sm font-semibold mb-2 ${bubbleClass}`}>
+            {keyNumber}
+          </span>
+        )}
+        <span className="text-sm font-medium leading-tight">
+          {item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
+        </span>
+      </Button>
+    );
+  };
 
-            <Button
-              onClick={handleIdentify}
-              disabled={pin.length !== 4 || loading}
-              className="w-full bg-[#0074D9] hover:bg-[#0056A3] h-12 text-lg"
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  Identificando...
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-5 h-5 mr-2" />
-                  Continuar
-                </>
-              )}
-            </Button>
-
-            <p className="text-xs text-center text-gray-500 mt-4">
-              Si no recuerda su PIN, contacte a RRHH
-            </p>
-          </CardContent>
-        </Card>
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Loader2 className="w-7 h-7 animate-spin text-blue-600" />
       </div>
     );
   }
 
-  // ============================================================================
-  // RENDER: MARCACIÓN
-  // ============================================================================
-
-  return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header del empleado */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 bg-[#0074D9] rounded-full flex items-center justify-center">
-                <User className="w-8 h-8 text-white" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">{employee?.full_name}</h2>
-                <p className="text-sm text-gray-600">{employee?.employee_code}</p>
-                <p className="text-sm text-gray-600">{employee?.company_name}</p>
-              </div>
-            </div>
-
-            <Button variant="outline" onClick={handleLogout}>
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Salir
-            </Button>
-          </div>
-
-          {employee?.current_shift_name && (
-            <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
-              <Clock className="w-4 h-4" />
-              <span>Turno actual: <strong>{employee.current_shift_name}</strong></span>
-            </div>
-          )}
-
-          {employee?.last_punch_datetime && (
-            <div className="mt-2 flex items-center gap-2 text-sm text-gray-600">
-              <Calendar className="w-4 h-4" />
-              <span>
-                Última marcación: <strong>{employee.last_punch_type}</strong> - {formatDateTime(employee.last_punch_datetime)}
-              </span>
-            </div>
-          )}
+  if (!context) {
+    return (
+      <Card className="max-w-5xl mx-auto">
+        <CardContent className="py-10 text-center">
+          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-3" />
+          <p className="text-sm text-gray-700">No fue posible cargar la informacion de marcacion.</p>
         </CardContent>
       </Card>
+    );
+  }
 
-      {/* Botones de marcación */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow">
-          <CardContent className="pt-6">
-            <Button
-              onClick={() => handlePunch('ENTRY')}
-              disabled={!!punchingType}
-              className="w-full h-32 flex flex-col items-center justify-center bg-green-600 hover:bg-green-700 text-white text-lg"
-            >
-              {punchingType === 'ENTRY' ? (
-                <Loader2 className="w-12 h-12 animate-spin" />
-              ) : (
-                <>
-                  <LogIn className="w-12 h-12 mb-2" />
-                  Entrada
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
+  const employeeName = getFullName(context.employee);
 
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow">
-          <CardContent className="pt-6">
-            <Button
-              onClick={() => handlePunch('LUNCH_START')}
-              disabled={!!punchingType}
-              className="w-full h-32 flex flex-col items-center justify-center bg-amber-600 hover:bg-amber-700 text-white text-lg"
-            >
-              {punchingType === 'LUNCH_START' ? (
-                <Loader2 className="w-12 h-12 animate-spin" />
-              ) : (
-                <>
-                  <Coffee className="w-12 h-12 mb-2" />
-                  Inicio Almuerzo
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="cursor-pointer hover:shadow-lg transition-shadow">
-          <CardContent className="pt-6">
-            <Button
-              onClick={() => handlePunch('EXIT')}
-              disabled={!!punchingType}
-              className="w-full h-32 flex flex-col items-center justify-center bg-red-600 hover:bg-red-700 text-white text-lg"
-            >
-              {punchingType === 'EXIT' ? (
-                <Loader2 className="w-12 h-12 animate-spin" />
-              ) : (
-                <>
-                  <LogOut className="w-12 h-12 mb-2" />
-                  Salida
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Marcaciones recientes */}
-      {recentPunches.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Marcaciones Recientes</CardTitle>
-            <CardDescription>Últimas 5 marcaciones registradas</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {recentPunches.map((punch) => (
-                <div
-                  key={punch.id}
-                  className="flex items-center justify-between py-3 border-b border-gray-100 last:border-0"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${
-                      punch.is_anomaly ? 'bg-red-500' : 'bg-green-500'
-                    }`} />
-                    <div>
-                      <p className="font-medium text-gray-900">{punch.punch_type_name}</p>
-                      <p className="text-sm text-gray-600">{formatDateTime(punch.punch_datetime)}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">{punch.source_code}</Badge>
-                    {punch.is_anomaly && (
-                      <Badge variant="destructive">
-                        <AlertCircle className="w-3 h-3 mr-1" />
-                        Anomalía
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-              ))}
+  return (
+    <div className="max-w-6xl mx-auto space-y-5">
+      <Card className="border-2 border-slate-300 shadow-lg">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-2xl">Marcar</CardTitle>
+          <CardDescription>Interfaz de marcacion tipo reloj biometrico.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-xl border bg-slate-50 p-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
+                {employeePhoto && !photoFailed ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={employeePhoto}
+                    alt={employeeName}
+                    className="w-full h-full object-cover"
+                    onError={() => setPhotoFailed(true)}
+                  />
+                ) : (
+                  <User className="w-7 h-7" />
+                )}
+              </div>
+              <div>
+                <p className="font-semibold text-slate-900">{employeeName}</p>
+                <p className="text-sm text-slate-600">Codigo: {context.employee.employee_code || '-'}</p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <div className="text-sm text-slate-700 space-y-1">
+              <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
+              <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {fixedDeviceLabel}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
+            <div className="space-y-3 lg:col-span-1">
+              {renderKeyButton(1)}
+              {renderKeyButton(4)}
+            </div>
+
+            <div className="lg:col-span-2 rounded-2xl border-2 border-slate-800 bg-slate-900 text-white p-6 flex flex-col items-center justify-center shadow-inner">
+              <p className="text-slate-300 text-sm uppercase tracking-widest mb-2">Hora del sistema</p>
+              <p className="text-5xl md:text-6xl font-semibold tabular-nums leading-none">{formatTime(clockNow)}</p>
+              <p className="mt-3 text-slate-300 capitalize">{formatDate(clockNow)}</p>
+              {lastMarkAt && (
+                <p className="mt-4 text-xs text-slate-300">
+                  Ultima marcacion: {new Date(lastMarkAt).toLocaleString('es-EC')}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-3 lg:col-span-1">
+              {renderKeyButton(2)}
+              {renderKeyButton(3)}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {renderKeyButton(5)}
+            {renderKeyButton(6)}
+          </div>
+
+          <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <p><span className="font-medium">Fuente:</span> Aplicacion Web</p>
+            <p><span className="font-medium">Notas:</span> marcacion manual via web</p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

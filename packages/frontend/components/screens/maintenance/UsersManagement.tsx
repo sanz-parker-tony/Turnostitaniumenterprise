@@ -1,4 +1,4 @@
-/**
+﻿/**
  * UsersManagement.tsx - Gestión de Usuarios
  * Turnos Titanium Enterprise
  *
@@ -15,8 +15,8 @@
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
-  Users, RefreshCw, ChevronDown, ChevronUp, User, Shield,
-  Layers, Key, Clock, CheckCircle, XCircle, ChevronRight,
+  Users, RefreshCw, User, Shield,
+  Key, Clock, ChevronRight, Trash2,
   Mail, Phone, Globe, Building,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
@@ -81,6 +81,13 @@ interface UserRoleScope {
   scope_type_name?: string | null;
 }
 
+interface UserRoleSummary {
+  user_id: string;
+  primary_role_name: string | null;
+  primary_role_key: string | null;
+  role_count: number;
+}
+
 interface Tenant { id: string; tenant_key: string; tenant_name: string; }
 interface Role { id: string; role_key: string; role_name: string; role_scope: string; tenant_id: string; }
 interface ScopeType { id: string; scope_type_key: string; scope_type_name: string; }
@@ -88,7 +95,7 @@ interface Company { id: string; company_name: string; tenant_id: string; }
 interface Language { code: string; language_name: string; }
 
 type MainTab = 'users' | 'all-roles' | 'all-scopes';
-type UserDetailTab = 'info' | 'roles' | 'scopes';
+type UserDetailTab = 'info' | 'roles';
 
 function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
@@ -102,6 +109,25 @@ const SCOPE_COLORS: Record<string, string> = {
   SCOPE: 'bg-green-100 text-green-700',
   SELF: 'bg-gray-100 text-gray-600',
 };
+
+const ROLE_SCOPE_LABELS: Record<string, string> = {
+  SYSTEM: 'Sistema',
+  TENANT: 'Tenant',
+  SCOPE: 'Alcance',
+  SELF: 'Propio',
+};
+
+const DATA_SCOPE_LABELS: Record<string, string> = {
+  ALL: 'Todos los datos',
+  DIRECT_REPORTS: 'Reportes directos',
+  SELF: 'Solo propio',
+};
+
+function shortId(value?: string | null): string {
+  if (!value) return '-';
+  const s = String(value);
+  return s.length <= 12 ? s : `${s.slice(0, 8)}...${s.slice(-4)}`;
+}
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -117,19 +143,20 @@ export function UsersManagement() {
   const [scopeTypes, setScopeTypes] = useState<ScopeType[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [languages, setLanguages] = useState<Language[]>([]);
+  const [userRoleSummaries, setUserRoleSummaries] = useState<Record<string, UserRoleSummary>>({});
 
   // Estado del usuario seleccionado y sus sub-datos
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
   const [userRoles, setUserRoles] = useState<UserRole[]>([]);
   const [selectedUserRole, setSelectedUserRole] = useState<UserRole | null>(null);
-  const [userRoleScopes, setUserRoleScopes] = useState<UserRoleScope[]>([]);
+  const [roleScopesByUserRoleId, setRoleScopesByUserRoleId] = useState<Record<string, UserRoleScope[]>>({});
 
   // UI state
   const [mainTab, setMainTab] = useState<MainTab>('users');
   const [userDetailTab, setUserDetailTab] = useState<UserDetailTab>('info');
   const [loading, setLoading] = useState(true);
   const [userRolesLoading, setUserRolesLoading] = useState(false);
-  const [scopesLoading, setScopesLoading] = useState(false);
+  const [scopeLoadingByRoleId, setScopeLoadingByRoleId] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
@@ -158,6 +185,8 @@ export function UsersManagement() {
   const [roleSaving, setRoleSaving] = useState(false);
 
   const [isScopeModalOpen, setIsScopeModalOpen] = useState(false);
+  const [editingScope, setEditingScope] = useState<UserRoleScope | null>(null);
+  const [scopeTargetUserRoleId, setScopeTargetUserRoleId] = useState<string>('');
   const [scopeForm, setScopeForm] = useState({ tenant_id: '', scope_type_id: '', scope_entity_id: '', is_active: true });
   const [scopeFormErrors, setScopeFormErrors] = useState<Record<string, string>>({});
   const [scopeSaving, setScopeSaving] = useState(false);
@@ -168,6 +197,45 @@ export function UsersManagement() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+
+  const tenantsById = new Map(tenants.map((t) => [t.id, t.tenant_name]));
+  const companiesById = new Map(companies.map((c) => [c.id, c.company_name]));
+  const scopeTypesById = new Map(scopeTypes.map((st) => [st.id, st]));
+
+  const resolveScopeEntityLabel = (scope: UserRoleScope): string => {
+    const key = String(scope.scope_type_key || '').toUpperCase();
+    const entityId = scope.scope_entity_id;
+    if (!entityId) return 'Entidad no definida';
+
+    if (key.includes('TENANT')) {
+      const name = tenantsById.get(entityId);
+      return name ? `Tenant: ${name}` : `Tenant ID: ${shortId(entityId)}`;
+    }
+    if (key.includes('COMPANY') || key.includes('EMPRESA')) {
+      const name = companiesById.get(entityId);
+      return name ? `Empresa: ${name}` : `Empresa ID: ${shortId(entityId)}`;
+    }
+
+    const scopeType = scope.scope_type_name || scope.scope_type_key || 'Entidad';
+    return `${scopeType}: ${shortId(entityId)}`;
+  };
+
+  const resolveScopeTypeLabel = (scope: UserRoleScope): string => {
+    const byJoin = scope.scope_type_name || scope.scope_type_key;
+    if (byJoin) return byJoin;
+    const fromCatalog = scopeTypesById.get(scope.scope_type_id);
+    if (fromCatalog) {
+      return `${fromCatalog.scope_type_name} (${fromCatalog.scope_type_key})`;
+    }
+    return `Scope ID: ${shortId(scope.scope_type_id)}`;
+  };
+
+  const getUserRoleLabel = (userId: string): string => {
+    const summary = userRoleSummaries[userId];
+    if (!summary) return 'Sin rol asignado';
+    const roleName = summary.primary_role_name || summary.primary_role_key || 'Rol sin nombre';
+    return summary.role_count > 1 ? `${roleName} +${summary.role_count - 1}` : roleName;
+  };
 
   // ============================================================================
   // CARGA INICIAL
@@ -183,7 +251,7 @@ export function UsersManagement() {
     try {
       await Promise.all([
         loadUsers(), loadTenants(), loadRoles(),
-        loadScopeTypes(), loadCompanies(), loadLanguages(),
+        loadScopeTypes(), loadCompanies(), loadLanguages(), loadUserRoleSummaries(),
       ]);
     } catch (err: any) {
       setError(err.message || 'Error cargando datos');
@@ -237,13 +305,28 @@ export function UsersManagement() {
     setLanguages(data.languages || []);
   };
 
+  const loadUserRoleSummaries = async () => {
+    const res = await fetch(`${API_BASE}/catalogs/user-role-summaries`, { headers: { Authorization: `Bearer ${getToken()}` } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const summaries = Array.isArray(data.summaries) ? data.summaries : [];
+    const byUser: Record<string, UserRoleSummary> = {};
+    for (const summary of summaries) {
+      if (summary?.user_id) byUser[summary.user_id] = summary;
+    }
+    setUserRoleSummaries(byUser);
+  };
+
   const loadUserRoles = async (userId: string) => {
     setUserRolesLoading(true);
     try {
       const res = await fetch(`${API_BASE}/${userId}/roles`, { headers: { Authorization: `Bearer ${getToken()}` } });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setUserRoles(data.userRoles || []);
+      const rolesData: UserRole[] = data.userRoles || [];
+      setUserRoles(rolesData);
+      setRoleScopesByUserRoleId({});
+      await Promise.all(rolesData.map((role) => loadRoleScopes(role.id)));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -252,16 +335,16 @@ export function UsersManagement() {
   };
 
   const loadRoleScopes = async (userRoleId: string) => {
-    setScopesLoading(true);
+    setScopeLoadingByRoleId((prev) => ({ ...prev, [userRoleId]: true }));
     try {
       const res = await fetch(`${API_BASE}/user-roles/${userRoleId}/scopes`, { headers: { Authorization: `Bearer ${getToken()}` } });
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
-      setUserRoleScopes(data.scopes || []);
+      setRoleScopesByUserRoleId((prev) => ({ ...prev, [userRoleId]: data.scopes || [] }));
     } catch (err: any) {
       setError(err.message);
     } finally {
-      setScopesLoading(false);
+      setScopeLoadingByRoleId((prev) => ({ ...prev, [userRoleId]: false }));
     }
   };
 
@@ -272,14 +355,15 @@ export function UsersManagement() {
   const selectUser = async (user: AppUser) => {
     setSelectedUser(user);
     setSelectedUserRole(null);
-    setUserRoleScopes([]);
+    setRoleScopesByUserRoleId({});
+    setScopeLoadingByRoleId({});
     setUserDetailTab('info');
     await loadUserRoles(user.id);
   };
 
   const selectUserRole = async (ur: UserRole) => {
     setSelectedUserRole(ur);
-    setUserDetailTab('scopes');
+    setUserDetailTab('roles');
     await loadRoleScopes(ur.id);
   };
 
@@ -301,6 +385,21 @@ export function UsersManagement() {
       const va = String(a[sortField] || ''); const vb = String(b[sortField] || '');
       return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
     });
+
+  const totalRoleScopes = Object.values(roleScopesByUserRoleId).reduce((acc, scopes) => acc + scopes.length, 0);
+  const availableRolesForForm: Role[] = (() => {
+    if (!editingUserRole) return roles;
+    const exists = roles.some((r) => r.id === editingUserRole.role_id);
+    if (exists) return roles;
+    return [{
+      id: editingUserRole.role_id,
+      role_key: editingUserRole.role_key || `ROLE_${shortId(editingUserRole.role_id)}`,
+      role_name: editingUserRole.role_name || `Rol ${shortId(editingUserRole.role_id)}`,
+      role_scope: editingUserRole.role_scope || 'TENANT',
+      tenant_id: editingUserRole.tenant_id,
+    }, ...roles];
+  })();
+  const selectedRoleInForm = availableRolesForForm.find((r) => r.id === roleForm.role_id);
 
   const toggleSort = (field: keyof AppUser) => {
     if (sortField === field) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -373,6 +472,7 @@ export function UsersManagement() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al guardar');
       await loadUsers();
+      await loadUserRoleSummaries();
       setIsUserModalOpen(false);
       if (selectedUser?.id === editingUser?.id) {
         const updated = users.find(u => u.id === editingUser?.id);
@@ -444,6 +544,9 @@ export function UsersManagement() {
           method: 'PUT',
           headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            tenant_id: roleForm.tenant_id,
+            role_id: roleForm.role_id,
+            company_id: roleForm.company_id || null,
             valid_from: roleForm.valid_from || null,
             valid_to: roleForm.valid_to || null,
             is_active: roleForm.is_active,
@@ -466,6 +569,7 @@ export function UsersManagement() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al guardar');
       await loadUserRoles(selectedUser!.id);
+      await loadUserRoleSummaries();
       setIsRoleModalOpen(false);
     } catch (err: any) {
       setRoleFormErrors({ general: err.message });
@@ -485,6 +589,30 @@ export function UsersManagement() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al cambiar estado');
       await loadUserRoles(selectedUser!.id);
+      await loadUserRoleSummaries();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleDeleteUserRole = async (ur: UserRole) => {
+    const roleLabel = ur.role_name || ur.role_key || shortId(ur.role_id);
+    const confirmed = window.confirm(`¿Desasignar el rol "${roleLabel}" de este usuario?`);
+    if (!confirmed) return;
+
+    setTogglingId(ur.id);
+    try {
+      const res = await fetch(`${API_BASE}/user-roles/${ur.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al desasignar rol');
+
+      await loadUserRoles(selectedUser!.id);
+      await loadUserRoleSummaries();
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -496,8 +624,25 @@ export function UsersManagement() {
   // CRUD USER_ROLE_SCOPES
   // ============================================================================
 
-  const openCreateScope = () => {
+  const openCreateScope = (ur?: UserRole) => {
+    if (ur) setSelectedUserRole(ur);
+    setEditingScope(null);
+    setScopeTargetUserRoleId(ur?.id || selectedUserRole?.id || '');
     setScopeForm({ tenant_id: selectedUser?.tenant_id || '', scope_type_id: '', scope_entity_id: '', is_active: true });
+    setScopeFormErrors({});
+    setIsScopeModalOpen(true);
+  };
+
+  const openEditScope = (scope: UserRoleScope, ur: UserRole) => {
+    setSelectedUserRole(ur);
+    setEditingScope(scope);
+    setScopeTargetUserRoleId(scope.user_role_id);
+    setScopeForm({
+      tenant_id: scope.tenant_id,
+      scope_type_id: scope.scope_type_id,
+      scope_entity_id: scope.scope_entity_id,
+      is_active: scope.is_active,
+    });
     setScopeFormErrors({});
     setIsScopeModalOpen(true);
   };
@@ -511,14 +656,28 @@ export function UsersManagement() {
 
     setScopeSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/user-roles/${selectedUserRole!.id}/scopes`, {
-        method: 'POST',
+      if (!scopeTargetUserRoleId) throw new Error('No se encontró el rol objetivo para el alcance');
+
+      const endpoint = editingScope
+        ? `${API_BASE}/scopes/${editingScope.id}`
+        : `${API_BASE}/user-roles/${scopeTargetUserRoleId}/scopes`;
+      const method = editingScope ? 'PUT' : 'POST';
+
+      const res = await fetch(endpoint, {
+        method,
         headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(scopeForm),
+        body: JSON.stringify(editingScope
+          ? { ...scopeForm, user_role_id: scopeTargetUserRoleId }
+          : scopeForm),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error al guardar');
-      await loadRoleScopes(selectedUserRole!.id);
+      await loadRoleScopes(scopeTargetUserRoleId);
+      if (editingScope && selectedUserRole?.id !== scopeTargetUserRoleId) {
+        await loadRoleScopes(selectedUserRole?.id || scopeTargetUserRoleId);
+      }
+      setEditingScope(null);
+      setScopeTargetUserRoleId('');
       setIsScopeModalOpen(false);
     } catch (err: any) {
       setScopeFormErrors({ general: err.message });
@@ -537,7 +696,7 @@ export function UsersManagement() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error');
-      await loadRoleScopes(selectedUserRole!.id);
+      await loadRoleScopes(scope.user_role_id);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -685,10 +844,11 @@ export function UsersManagement() {
                       <p className="font-semibold text-gray-900 text-sm truncate">
                         {user.display_name || user.username}
                       </p>
-                      <p className="text-xs text-gray-500 truncate">@{user.username}</p>
+                      <p className="text-xs text-gray-500 truncate">Usuario: @{user.username}</p>
+                      <p className="text-xs text-gray-500 truncate">Rol: {getUserRoleLabel(user.id)}</p>
                       {user.email && (
                         <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
-                          <Mail className="w-3 h-3" />{user.email}
+                          <Mail className="w-3 h-3" />Email: {user.email}
                         </p>
                       )}
                     </div>
@@ -706,7 +866,7 @@ export function UsersManagement() {
                 {user.tenant_name && (
                   <div className="mt-2 flex items-center gap-1">
                     <Building className="w-3 h-3 text-gray-400" />
-                    <span className="text-xs text-gray-400">{user.tenant_name}</span>
+                    <span className="text-xs text-gray-400">Tenant: {user.tenant_name}</span>
                   </div>
                 )}
               </div>
@@ -726,7 +886,7 @@ export function UsersManagement() {
               </div>
               <div>
                 <p className="font-semibold text-gray-900 text-sm">{selectedUser.display_name || selectedUser.username}</p>
-                <p className="text-xs text-gray-500">@{selectedUser.username}</p>
+                <p className="text-xs text-gray-500">@{selectedUser.username} · Rol: {getUserRoleLabel(selectedUser.id)}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -753,7 +913,7 @@ export function UsersManagement() {
                 {selectedUser.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
               </button>
               <button
-                onClick={() => { setSelectedUser(null); setUserRoles([]); setSelectedUserRole(null); setUserRoleScopes([]); }}
+                onClick={() => { setSelectedUser(null); setUserRoles([]); setSelectedUserRole(null); setRoleScopesByUserRoleId({}); setScopeLoadingByRoleId({}); }}
                 className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"
                 title="Cerrar"
               >
@@ -766,8 +926,7 @@ export function UsersManagement() {
           <div className="flex border-b border-gray-200 bg-white">
             {[
               { key: 'info', label: 'Información', icon: User },
-              { key: 'roles', label: `Roles (${userRoles.length})`, icon: Shield },
-              { key: 'scopes', label: `Alcances${selectedUserRole ? ` (${userRoleScopes.length})` : ''}`, icon: Layers },
+              { key: 'roles', label: `Roles y Alcances (${userRoles.length}/${totalRoleScopes})`, icon: Shield },
             ].map(tab => (
               <button
                 key={tab.key}
@@ -791,11 +950,11 @@ export function UsersManagement() {
               <div className="p-4 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <InfoField icon={User} label="Usuario" value={selectedUser.username} mono />
-                  <InfoField icon={User} label="Nombre" value={selectedUser.display_name || '—'} />
-                  <InfoField icon={Mail} label="Email" value={selectedUser.email || '—'} />
-                  <InfoField icon={Phone} label="Teléfono" value={selectedUser.phone || '—'} />
-                  <InfoField icon={Globe} label="Idioma" value={selectedUser.language_name || selectedUser.preferred_language_code || '—'} />
-                  <InfoField icon={Building} label="Tenant" value={selectedUser.tenant_name || '—'} />
+                  <InfoField icon={User} label="Nombre" value={selectedUser.display_name || '-'} />
+                  <InfoField icon={Mail} label="Email" value={selectedUser.email || '-'} />
+                  <InfoField icon={Phone} label="Teléfono" value={selectedUser.phone || '-'} />
+                  <InfoField icon={Globe} label="Idioma" value={selectedUser.language_name || selectedUser.preferred_language_code || '-'} />
+                  <InfoField icon={Building} label="Tenant" value={selectedUser.tenant_name || '-'} />
                   <InfoField
                     icon={Clock}
                     label="Último Login"
@@ -812,11 +971,11 @@ export function UsersManagement() {
               </div>
             )}
 
-            {/* Tab: Roles */}
+            {/* Tab: Roles y Alcances */}
             {userDetailTab === 'roles' && (
               <div className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-medium text-gray-700">Roles Asignados</p>
+                  <p className="text-sm font-medium text-gray-700">Roles y Alcances Asignados</p>
                   <button
                     onClick={openCreateRole}
                     className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[#0074D9] text-white rounded-lg hover:bg-[#005bb5]"
@@ -836,160 +995,151 @@ export function UsersManagement() {
                     <p className="text-sm">Sin roles asignados</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {userRoles.map(ur => (
-                      <div
-                        key={ur.id}
-                        className={`border rounded-lg p-3 cursor-pointer transition-all hover:shadow-sm ${
-                          selectedUserRole?.id === ur.id
-                            ? 'border-[#2ECC71] bg-green-50'
-                            : 'border-gray-200 hover:border-gray-300 bg-white'
-                        } ${!ur.is_active ? 'opacity-60' : ''}`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div
-                            className="flex-1"
-                            onClick={() => selectUserRole(ur)}
-                          >
-                            <div className="flex items-center gap-2">
-                              <p className="text-sm font-semibold text-gray-900">{ur.role_name}</p>
-                              {ur.role_scope && (
-                                <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${SCOPE_COLORS[ur.role_scope] || 'bg-gray-100 text-gray-600'}`}>
-                                  {ur.role_scope}
-                                </span>
+                  <div className="space-y-3">
+                    {userRoles.map((ur) => {
+                      const roleScopes = roleScopesByUserRoleId[ur.id] || [];
+                      const isScopeLoading = !!scopeLoadingByRoleId[ur.id];
+                      return (
+                        <div
+                          key={ur.id}
+                          className={`border rounded-lg p-3 transition-all hover:shadow-sm ${
+                            selectedUserRole?.id === ur.id
+                              ? 'border-[#2ECC71] bg-green-50'
+                              : 'border-gray-200 hover:border-gray-300 bg-white'
+                          } ${!ur.is_active ? 'opacity-60' : ''}`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1 cursor-pointer" onClick={() => selectUserRole(ur)}>
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-semibold text-gray-900">{ur.role_name || ur.role_key || `Rol sin nombre (${shortId(ur.role_id)})`}</p>
+                                {ur.role_scope && (
+                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${SCOPE_COLORS[ur.role_scope] || 'bg-gray-100 text-gray-600'}`}>
+                                    Scope: {ROLE_SCOPE_LABELS[ur.role_scope] || ur.role_scope}
+                                  </span>
+                                )}
+                                {ur.data_scope && (
+                                  <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
+                                    Datos: {DATA_SCOPE_LABELS[ur.data_scope] || ur.data_scope}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                Clave de rol: <span className="font-mono">{ur.role_key || shortId(ur.role_id)}</span>
+                              </p>
+                              {ur.company_name && (
+                                <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                                  <Building className="w-3 h-3" />Empresa: {ur.company_name}
+                                </p>
+                              )}
+                              {(ur.valid_from || ur.valid_to) && (
+                                <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                                  <Clock className="w-3 h-3" />
+                                  {ur.valid_from ? new Date(ur.valid_from).toLocaleDateString('es-ES') : '...'} →{' '}
+                                  {ur.valid_to ? new Date(ur.valid_to).toLocaleDateString('es-ES') : '...'}
+                                </p>
                               )}
                             </div>
-                            <p className="text-xs text-gray-500 font-mono mt-0.5">{ur.role_key}</p>
-                            {ur.company_name && (
-                              <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
-                                <Building className="w-3 h-3" />{ur.company_name}
-                              </p>
-                            )}
-                            {(ur.valid_from || ur.valid_to) && (
-                              <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
-                                <Clock className="w-3 h-3" />
-                                {ur.valid_from ? new Date(ur.valid_from).toLocaleDateString('es-ES') : '...'} →{' '}
-                                {ur.valid_to ? new Date(ur.valid_to).toLocaleDateString('es-ES') : '...'}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 ml-2 shrink-0">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); openEditUserRole(ur); }}
-                              className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
-                              title="Editar"
-                            >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleToggleUserRoleStatus(ur); }}
-                              disabled={togglingId === ur.id}
-                              className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
-                              title={ur.is_active ? 'Desactivar' : 'Activar'}
-                            >
-                              {ur.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              onClick={() => selectUserRole(ur)}
-                              className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
-                              title="Ver alcances"
-                            >
-                              <Layers className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Tab: Alcances */}
-            {userDetailTab === 'scopes' && (
-              <div className="p-4">
-                {!selectedUserRole ? (
-                  <div className="text-center py-10 text-gray-400">
-                    <Layers className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Selecciona un rol para ver sus alcances</p>
-                    <button
-                      onClick={() => setUserDetailTab('roles')}
-                      className="mt-3 text-sm text-[#0074D9] hover:underline"
-                    >
-                      Ir a Roles
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    {/* Info del rol seleccionado */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <p className="text-xs text-gray-500">Alcances para el rol:</p>
-                        <p className="text-sm font-semibold text-gray-900">
-                          {selectedUserRole.role_name}
-                          <span className="ml-2 text-xs font-normal text-gray-500 font-mono">({selectedUserRole.role_key})</span>
-                        </p>
-                      </div>
-                      <button
-                        onClick={openCreateScope}
-                        className="flex items-center gap-1 px-3 py-1.5 text-xs bg-[#0074D9] text-white rounded-lg hover:bg-[#005bb5]"
-                      >
-                        <Plus className="w-3 h-3" />
-                        Agregar Alcance
-                      </button>
-                    </div>
-
-                    {scopesLoading ? (
-                      <div className="flex justify-center py-8">
-                        <div className="animate-spin w-6 h-6 border-3 border-[#0074D9] border-t-transparent rounded-full" />
-                      </div>
-                    ) : userRoleScopes.length === 0 ? (
-                      <div className="text-center py-10 text-gray-400">
-                        <Layers className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">Sin alcances configurados</p>
-                        <p className="text-xs mt-1">El rol se aplicará sin restricciones de alcance</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {userRoleScopes.map(scope => (
-                          <div
-                            key={scope.id}
-                            className={`border rounded-lg p-3 bg-white ${!scope.is_active ? 'opacity-60' : ''}`}
-                          >
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">
-                                    {scope.scope_type_name || scope.scope_type_key}
-                                  </span>
-                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                                    scope.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                                  }`}>
-                                    <span className={`w-1.5 h-1.5 rounded-full ${scope.is_active ? 'bg-green-500' : 'bg-red-400'}`} />
-                                    {scope.is_active ? 'Activo' : 'Inactivo'}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-gray-500 font-mono mt-1">
-                                  Entity ID: {scope.scope_entity_id}
-                                </p>
-                                <p className="text-xs text-gray-400 mt-0.5">
-                                  Creado: {new Date(scope.created_at).toLocaleDateString('es-ES')}
-                                </p>
-                              </div>
+                            <div className="flex items-center gap-1 ml-2 shrink-0">
                               <button
-                                onClick={() => handleToggleScopeStatus(scope)}
-                                disabled={togglingId === scope.id}
-                                className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
-                                title={scope.is_active ? 'Desactivar' : 'Activar'}
+                                onClick={(e) => { e.stopPropagation(); openEditUserRole(ur); }}
+                                className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                                title="Editar"
                               >
-                                {scope.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleToggleUserRoleStatus(ur); }}
+                                disabled={togglingId === ur.id}
+                                className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                title={ur.is_active ? 'Desactivar' : 'Activar'}
+                              >
+                                {ur.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openCreateScope(ur);
+                                }}
+                                className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
+                                title="Agregar alcance"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteUserRole(ur); }}
+                                disabled={togglingId === ur.id}
+                                className="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                title="Desasignar rol"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </>
+
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-xs font-medium text-gray-600">Alcances del rol</p>
+                              <button
+                                onClick={() => loadRoleScopes(ur.id)}
+                                className="text-xs text-[#0074D9] hover:underline"
+                              >
+                                Recargar
+                              </button>
+                            </div>
+                            {isScopeLoading ? (
+                              <div className="py-2 text-xs text-gray-500">Cargando alcances...</div>
+                            ) : roleScopes.length === 0 ? (
+                              <div className="py-2 text-xs text-gray-400">Sin alcances configurados (aplica sin restricción).</div>
+                            ) : (
+                              <div className="space-y-2">
+                                {roleScopes.map((scope) => (
+                                  <div key={scope.id} className={`border rounded-lg p-2 bg-white ${!scope.is_active ? 'opacity-60' : ''}`}>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div>
+                                        <div className="flex items-center gap-2">
+                                          <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">
+                                            {resolveScopeTypeLabel(scope)}
+                                          </span>
+                                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                            scope.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+                                          }`}>
+                                            <span className={`w-1.5 h-1.5 rounded-full ${scope.is_active ? 'bg-green-500' : 'bg-red-400'}`} />
+                                            {scope.is_active ? 'Activo' : 'Inactivo'}
+                                          </span>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                          Scope seleccionado: <span className="font-medium">{resolveScopeTypeLabel(scope)}</span>
+                                        </p>
+                                        <p className="text-xs text-gray-500 mt-1">{resolveScopeEntityLabel(scope)}</p>
+                                        <p className="text-xs text-gray-400 font-mono mt-0.5">ID: {scope.scope_entity_id}</p>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <button
+                                          onClick={() => openEditScope(scope, ur)}
+                                          className="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+                                          title="Editar alcance"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          onClick={() => handleToggleScopeStatus(scope)}
+                                          disabled={togglingId === scope.id}
+                                          className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                          title={scope.is_active ? 'Desactivar' : 'Activar'}
+                                        >
+                                          {scope.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             )}
@@ -1114,26 +1264,29 @@ export function UsersManagement() {
               {roleFormErrors.general && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{roleFormErrors.general}</div>
               )}
-              {!editingUserRole && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Rol <span className="text-red-500">*</span></label>
-                    <select value={roleForm.role_id} onChange={e => setRoleForm(f => ({ ...f, role_id: e.target.value }))}
-                      className={`w-full px-3 py-2 border rounded-lg text-sm ${roleFormErrors.role_id ? 'border-red-400' : 'border-gray-300'}`}>
-                      <option value="">Seleccionar rol...</option>
-                      {roles.map(r => <option key={r.id} value={r.id}>{r.role_name} ({r.role_key})</option>)}
-                    </select>
-                    {roleFormErrors.role_id && <p className="text-xs text-red-500 mt-1">{roleFormErrors.role_id}</p>}
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Empresa (opcional)</label>
-                    <select value={roleForm.company_id} onChange={e => setRoleForm(f => ({ ...f, company_id: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
-                      <option value="">Sin restricción de empresa</option>
-                      {companies.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
-                    </select>
-                  </div>
-                </>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rol <span className="text-red-500">*</span></label>
+                <select value={roleForm.role_id} onChange={e => setRoleForm(f => ({ ...f, role_id: e.target.value }))}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm ${roleFormErrors.role_id ? 'border-red-400' : 'border-gray-300'}`}>
+                  <option value="">Seleccionar rol...</option>
+                  {availableRolesForForm.map(r => <option key={r.id} value={r.id}>{r.role_name} ({r.role_key})</option>)}
+                </select>
+                {roleFormErrors.role_id && <p className="text-xs text-red-500 mt-1">{roleFormErrors.role_id}</p>}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Empresa (opcional)</label>
+                <select value={roleForm.company_id} onChange={e => setRoleForm(f => ({ ...f, company_id: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                  <option value="">Sin restricción de empresa</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.company_name}</option>)}
+                </select>
+              </div>
+              {selectedRoleInForm && (
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 space-y-1">
+                  <p><strong>Rol:</strong> {selectedRoleInForm.role_name} ({selectedRoleInForm.role_key})</p>
+                  <p><strong>Scope:</strong> {ROLE_SCOPE_LABELS[selectedRoleInForm.role_scope] || selectedRoleInForm.role_scope}</p>
+                  <p className="text-blue-600">El alcance específico se configura en “Agregar alcance” dentro de la tarjeta del rol.</p>
+                </div>
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -1168,14 +1321,14 @@ export function UsersManagement() {
       )}
 
       {/* ================================================================ */}
-      {/* MODAL: Agregar Alcance */}
+      {/* MODAL: Agregar/Editar Alcance */}
       {/* ================================================================ */}
       {isScopeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <h2 className="text-lg font-semibold text-gray-900">Agregar Alcance de Rol</h2>
-              <button onClick={() => setIsScopeModalOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">{editingScope ? 'Editar Alcance de Rol' : 'Agregar Alcance de Rol'}</h2>
+              <button onClick={() => { setIsScopeModalOpen(false); setEditingScope(null); setScopeTargetUserRoleId(''); }} className="p-1.5 rounded-lg hover:bg-gray-100">
                 <X className="w-5 h-5 text-gray-500" />
               </button>
             </div>
@@ -1184,7 +1337,7 @@ export function UsersManagement() {
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{scopeFormErrors.general}</div>
               )}
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
-                Definiendo alcance para el rol: <strong>{selectedUserRole?.role_name}</strong>
+                Definiendo alcance para el rol: <strong>{selectedUserRole?.role_name || selectedUserRole?.role_key || 'Sin rol seleccionado'}</strong>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Alcance <span className="text-red-500">*</span></label>
@@ -1213,10 +1366,10 @@ export function UsersManagement() {
               </div>
             </div>
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-              <button onClick={() => setIsScopeModalOpen(false)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancelar</button>
+              <button onClick={() => { setIsScopeModalOpen(false); setEditingScope(null); setScopeTargetUserRoleId(''); }} className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancelar</button>
               <button onClick={handleSaveScope} disabled={scopeSaving} className="px-5 py-2 text-sm bg-[#0074D9] text-white rounded-lg font-medium hover:bg-[#005bb5] disabled:opacity-60 flex items-center gap-2">
                 {scopeSaving && <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />}
-                {scopeSaving ? 'Guardando...' : 'Agregar Alcance'}
+                {scopeSaving ? 'Guardando...' : editingScope ? 'Actualizar Alcance' : 'Agregar Alcance'}
               </button>
             </div>
           </div>
@@ -1282,4 +1435,5 @@ function InfoField({ icon: Icon, label, value, mono }: { icon: any; label: strin
     </div>
   );
 }
+
 
