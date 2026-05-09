@@ -7,7 +7,8 @@ const PUNCH_KEY_GROUP_ID = 'a349d449-b3c1-475a-91bd-c687b49e97cc';
 const PUNCH_SOURCE_GROUP_ID = 'd0c3806b-de4b-a91d-13d6-bc565264c183';
 const TIME_PUNCH_STATUS_GROUP_ID = '0949d7d5-c2b1-56e9-6010-5909cc7af8b7';
 const REQUEST_STATUS_GROUP_ID = '9f904369-9998-83ab-6996-635363513a9f';
-const ABSENCE_TRANSACTION_TYPE_GROUP_KEY = 'ABSENCE_TRANSACTION_TYPE';
+const ABSENCE_DISCOUNT_METHOD_GROUP_ID = '1d3d598e-5003-4a36-a93d-306e0cbb3c7b';
+const EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID = 'd41aff61-6de9-200e-922e-3c651cc5446c';
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
 const FIXED_NOTES = 'marcación manual vía web';
@@ -22,6 +23,12 @@ type EmployeeContext = {
   employee_photo_path: string | null;
   company_id: string | null;
   company_name: string | null;
+};
+
+type UserContext = {
+  user_id: string;
+  tenant_id: string;
+  email: string | null;
 };
 
 function getActor(req: Request): string {
@@ -44,24 +51,22 @@ function isValidDateTime(value: string): boolean {
   return Number.isFinite(date.getTime());
 }
 
-async function isLookupValueInGroupByKey(
+async function isLookupValueInGroupById(
   lookupValueId: string,
-  lookupGroupKey: string,
+  lookupGroupId: string,
   tenantId: string
 ): Promise<boolean> {
   const result = await pool.query(
     `
       SELECT lv.id
       FROM public.lookup_values lv
-      INNER JOIN public.lookup_groups lg
-        ON lg.id = lv.lookup_group_id
       WHERE lv.id = $1::uuid
-        AND lg.lookup_group_key = $2
+        AND lv.lookup_group_id = $2::uuid
         AND lv.is_active = true
         AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
       LIMIT 1
     `,
-    [lookupValueId, lookupGroupKey, tenantId]
+    [lookupValueId, lookupGroupId, tenantId]
   );
   return Boolean(result.rows[0]);
 }
@@ -119,6 +124,16 @@ async function resolveDefaultRequestStatusId(tenantId: string): Promise<string |
   return fallback.rows[0]?.id || null;
 }
 
+function isPendingRequestStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO'].includes(key);
+}
+
+function isClosedRequestStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return ['APPROVED', 'APROBADO', 'REJECTED', 'RECHAZADO', 'CANCELLED', 'CANCELED', 'CANCELADO'].includes(key);
+}
+
 async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | null> {
   const user = (req as any).user;
   if (!user?.id) return null;
@@ -159,6 +174,50 @@ async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | n
   );
 
   return (result.rows[0] as EmployeeContext | undefined) || null;
+}
+
+async function resolveUserContext(req: Request): Promise<UserContext | null> {
+  const user = (req as any).user;
+  if (!user?.id) return null;
+
+  const result = await pool.query(
+    `
+      SELECT
+        u.id AS user_id,
+        u.tenant_id,
+        u.email
+      FROM public.users u
+      WHERE u.auth_user_id = $1
+        AND u.is_active = true
+      LIMIT 1
+    `,
+    [user.id]
+  );
+
+  return (result.rows[0] as UserContext | undefined) || null;
+}
+
+async function getApproverRoleKeys(tenantId: string, userId: string): Promise<string[]> {
+  const result = await pool.query(
+    `
+      SELECT DISTINCT r.role_key
+      FROM public.user_roles ur
+      INNER JOIN public.roles r
+        ON r.id = ur.role_id
+      WHERE ur.tenant_id = $1::uuid
+        AND ur.user_id = $2::uuid
+        AND ur.is_active = true
+        AND r.is_active = true
+        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+    `,
+    [tenantId, userId]
+  );
+  return result.rows.map((row) => String(row.role_key || '').toUpperCase()).filter(Boolean);
+}
+
+function hasApprovalPermission(roleKeys: string[]): boolean {
+  return roleKeys.some((roleKey) => ['SUPERVISOR', 'RHADMIN'].includes(roleKey));
 }
 
 async function getEmployeeCompanies(tenantId: string, employeeId: string) {
@@ -745,7 +804,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
     }
 
-    const [justificationsResult, attendanceEventsResult, statusesResult, transactionTypesResult] = await Promise.all([
+    const [justificationsResult, attendanceEventsResult, statusesResult, discountMethodsResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -760,9 +819,13 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
             ON ae.id = jt.attendance_event_id
           WHERE jt.tenant_id = $1
             AND jt.is_active = true
+            AND (
+              jt.attendance_event_id IS NULL
+              OR ae.transaction_direction_id = $2::uuid
+            )
           ORDER BY jt.justification_name ASC
         `,
-        [context.tenant_id]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID]
       ),
       pool.query(
         `
@@ -773,9 +836,10 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
           FROM public.attendance_events
           WHERE tenant_id = $1
             AND is_active = true
+            AND transaction_direction_id = $2::uuid
           ORDER BY event_name ASC
         `,
-        [context.tenant_id]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID]
       ),
       pool.query(
         `
@@ -801,14 +865,12 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
             lv.lookup_short_label,
             lv.sort_order
           FROM public.lookup_values lv
-          INNER JOIN public.lookup_groups lg
-            ON lg.id = lv.lookup_group_id
-          WHERE lg.lookup_group_key = $1
+          WHERE lv.lookup_group_id = $1::uuid
             AND lv.is_active = true
             AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [ABSENCE_TRANSACTION_TYPE_GROUP_KEY, context.tenant_id]
+        [ABSENCE_DISCOUNT_METHOD_GROUP_ID, context.tenant_id]
       ),
     ]);
 
@@ -822,7 +884,8 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       justification_types: justificationsResult.rows,
       attendance_events: attendanceEventsResult.rows,
       request_statuses: statusesResult.rows,
-      transaction_types: transactionTypesResult.rows,
+      discount_methods: discountMethodsResult.rows,
+      transaction_types: discountMethodsResult.rows,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -872,9 +935,9 @@ router.get('/requests', async (req: Request, res: Response) => {
           r.attendance_event_id,
           ae.event_name,
           ae.event_short_name,
-          r.transaction_type_id,
-          trx.lookup_key AS transaction_type_key,
-          trx.lookup_label AS transaction_type_label,
+          r.justify_method_id,
+          trx.lookup_key AS justify_method_key,
+          trx.lookup_label AS justify_method_label,
           r.start_datetime,
           r.end_datetime,
           r.start_time,
@@ -883,6 +946,11 @@ router.get('/requests', async (req: Request, res: Response) => {
           r.request_status_id,
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
+          r.approval_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
           r.is_active,
           r.created_at,
           r.updated_at
@@ -894,9 +962,11 @@ router.get('/requests', async (req: Request, res: Response) => {
         LEFT JOIN public.attendance_events ae
           ON ae.id = r.attendance_event_id
         LEFT JOIN public.lookup_values trx
-          ON trx.id = r.transaction_type_id
+          ON trx.id = r.justify_method_id
         LEFT JOIN public.lookup_values rs
           ON rs.id = r.request_status_id
+        LEFT JOIN public.users au
+          ON au.id = r.approved_by
         WHERE r.tenant_id = $1
           AND r.employee_id = $2
           AND ($3::boolean = true OR r.is_active = true)
@@ -924,7 +994,7 @@ router.post('/requests', async (req: Request, res: Response) => {
 
     const justificationTypeId = normalizeNullableText(req.body?.justification_type_id);
     const attendanceEventId = normalizeNullableText(req.body?.attendance_event_id);
-    const transactionTypeId = normalizeNullableText(req.body?.transaction_type_id);
+    const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = normalizeNullableText(req.body?.start_datetime);
     const endDateTime = normalizeNullableText(req.body?.end_datetime);
     const startTime = normalizeNullableText(req.body?.start_time);
@@ -932,12 +1002,23 @@ router.post('/requests', async (req: Request, res: Response) => {
     const notes = normalizeNullableText(req.body?.notes);
     const actor = getActor(req);
 
+    if (req.body?.request_status_id !== undefined) {
+      return res.status(400).json({
+        error: 'request_status_id no puede ser definido por el empleado',
+      });
+    }
+    if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
+      return res.status(400).json({
+        error: 'Los datos de aprobación solo pueden ser definidos por Supervisor/RRHH',
+      });
+    }
+
     if (!context.company_id) {
       return res.status(400).json({ error: 'El empleado no tiene empresa activa asignada' });
     }
     if (!justificationTypeId) return res.status(400).json({ error: 'justification_type_id es obligatorio' });
     if (!attendanceEventId) return res.status(400).json({ error: 'attendance_event_id es obligatorio' });
-    if (!transactionTypeId) return res.status(400).json({ error: 'transaction_type_id es obligatorio' });
+    if (!justifyMethodId) return res.status(400).json({ error: 'justify_method_id es obligatorio' });
     if (!startDateTime || !isValidDateTime(startDateTime)) return res.status(400).json({ error: 'start_datetime invalido' });
     if (!endDateTime || !isValidDateTime(endDateTime)) return res.status(400).json({ error: 'end_datetime invalido' });
     if (new Date(startDateTime).getTime() > new Date(endDateTime).getTime()) {
@@ -979,13 +1060,13 @@ router.post('/requests', async (req: Request, res: Response) => {
       });
     }
 
-    const isValidTransactionType = await isLookupValueInGroupByKey(
-      transactionTypeId,
-      ABSENCE_TRANSACTION_TYPE_GROUP_KEY,
+    const isValidTransactionType = await isLookupValueInGroupById(
+      justifyMethodId,
+      ABSENCE_DISCOUNT_METHOD_GROUP_ID,
       context.tenant_id
     );
     if (!isValidTransactionType) {
-      return res.status(400).json({ error: 'transaction_type_id no valido' });
+      return res.status(400).json({ error: 'justify_method_id no valido' });
     }
 
     const pendingStatusId = await resolveDefaultRequestStatusId(context.tenant_id);
@@ -1002,7 +1083,7 @@ router.post('/requests', async (req: Request, res: Response) => {
           employee_id,
           justification_type_id,
           attendance_event_id,
-          transaction_type_id,
+          justify_method_id,
           start_datetime,
           end_datetime,
           start_time,
@@ -1024,7 +1105,7 @@ router.post('/requests', async (req: Request, res: Response) => {
         context.employee_id,
         justificationTypeId,
         attendanceEventId,
-        transactionTypeId,
+        justifyMethodId,
         startDateTime,
         endDateTime,
         startTime,
@@ -1051,13 +1132,24 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     const requestId = normalizeNullableText(req.params.id);
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
 
+    if (req.body?.request_status_id !== undefined) {
+      return res.status(400).json({
+        error: 'request_status_id no puede ser modificado por el empleado',
+      });
+    }
+    if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
+      return res.status(400).json({
+        error: 'Los datos de aprobación solo pueden ser modificados por Supervisor/RRHH',
+      });
+    }
+
     const currentResult = await pool.query(
       `
         SELECT
           r.id,
           r.justification_type_id,
           r.attendance_event_id,
-          r.transaction_type_id,
+          r.justify_method_id,
           rs.lookup_key AS request_status_key
         FROM public.employee_absence_requests r
         LEFT JOIN public.lookup_values rs
@@ -1073,13 +1165,14 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
 
     const statusKey = String(current.request_status_key || '').toUpperCase();
-    if (['APPROVED', 'REJECTED', 'CANCELLED', 'CANCELED'].includes(statusKey)) {
-      return res.status(400).json({ error: 'La solicitud no puede modificarse en su estado actual' });
+    if (!isPendingRequestStatusKey(statusKey)) {
+      return res.status(400).json({ error: 'Solo se pueden modificar solicitudes en estado Pendiente' });
     }
 
     const justificationTypeId = req.body?.justification_type_id === undefined ? undefined : normalizeNullableText(req.body?.justification_type_id);
     const attendanceEventId = req.body?.attendance_event_id === undefined ? undefined : normalizeNullableText(req.body?.attendance_event_id);
-    const transactionTypeId = req.body?.transaction_type_id === undefined ? undefined : normalizeNullableText(req.body?.transaction_type_id);
+    const justifyMethodId =
+      req.body?.justify_method_id === undefined ? undefined : normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = req.body?.start_datetime === undefined ? undefined : normalizeNullableText(req.body?.start_datetime);
     const endDateTime = req.body?.end_datetime === undefined ? undefined : normalizeNullableText(req.body?.end_datetime);
     const startTime = req.body?.start_time === undefined ? undefined : normalizeNullableText(req.body?.start_time);
@@ -1131,15 +1224,15 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
       }
     }
 
-    const effectiveTransactionTypeId = transactionTypeId ?? current.transaction_type_id;
-    if (effectiveTransactionTypeId) {
-      const isValidTransactionType = await isLookupValueInGroupByKey(
-        effectiveTransactionTypeId,
-        ABSENCE_TRANSACTION_TYPE_GROUP_KEY,
+    const effectiveJustifyMethodId = justifyMethodId ?? current.justify_method_id;
+    if (effectiveJustifyMethodId) {
+      const isValidTransactionType = await isLookupValueInGroupById(
+        effectiveJustifyMethodId,
+        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
         context.tenant_id
       );
       if (!isValidTransactionType) {
-        return res.status(400).json({ error: 'transaction_type_id no valido' });
+        return res.status(400).json({ error: 'justify_method_id no valido' });
       }
     }
 
@@ -1155,9 +1248,9 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
       updates.push(`attendance_event_id = $${paramIndex++}`);
       params.push(attendanceEventId);
     }
-    if (transactionTypeId !== undefined) {
-      updates.push(`transaction_type_id = $${paramIndex++}`);
-      params.push(transactionTypeId);
+    if (justifyMethodId !== undefined) {
+      updates.push(`justify_method_id = $${paramIndex++}`);
+      params.push(justifyMethodId);
     }
     if (startDateTime !== undefined) {
       updates.push(`start_datetime = $${paramIndex++}`);
@@ -1220,6 +1313,27 @@ router.patch('/requests/:id/cancel', async (req: Request, res: Response) => {
     const requestId = normalizeNullableText(req.params.id);
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
 
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          rs.lookup_key AS request_status_key
+        FROM public.employee_absence_requests r
+        LEFT JOIN public.lookup_values rs
+          ON rs.id = r.request_status_id
+        WHERE r.id = $1
+          AND r.tenant_id = $2
+          AND r.employee_id = $3
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!isPendingRequestStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'Solo se pueden cancelar solicitudes en estado Pendiente' });
+    }
+
     const cancelStatusId =
       (await resolveRequestStatusIdByKeys(context.tenant_id, ['CANCELLED', 'CANCELED', 'ANULADO', 'CANCELADO'])) ||
       null;
@@ -1255,6 +1369,27 @@ router.delete('/requests/:id', async (req: Request, res: Response) => {
     const requestId = normalizeNullableText(req.params.id);
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
 
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          rs.lookup_key AS request_status_key
+        FROM public.employee_absence_requests r
+        LEFT JOIN public.lookup_values rs
+          ON rs.id = r.request_status_id
+        WHERE r.id = $1
+          AND r.tenant_id = $2
+          AND r.employee_id = $3
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!isPendingRequestStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'Solo se pueden eliminar solicitudes en estado Pendiente' });
+    }
+
     const result = await pool.query(
       `
         DELETE FROM public.employee_absence_requests
@@ -1267,6 +1402,310 @@ router.delete('/requests/:id', async (req: Request, res: Response) => {
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Solicitud no encontrada' });
     return res.status(200).json({ success: true, deleted_id: result.rows[0].id });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/requests/approvals', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+
+    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+    const canApprove = hasApprovalPermission(roleKeys);
+    if (!canApprove) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
+    }
+
+    const status = String(req.query.status || 'pending').toUpperCase();
+    const statusKeys =
+      status === 'APPROVED'
+        ? ['APPROVED', 'APROBADO']
+        : status === 'REJECTED'
+        ? ['REJECTED', 'RECHAZADO']
+        : status === 'ALL'
+        ? []
+        : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN'];
+
+    const params: any[] = [userContext.tenant_id];
+    let whereStatus = '';
+
+    if (statusKeys.length > 0) {
+      params.push(statusKeys);
+      whereStatus = ` AND UPPER(COALESCE(rs.lookup_key, '')) = ANY ($${params.length}::text[])`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.company_id,
+          c.company_name,
+          r.employee_id,
+          e.employee_code,
+          e.employee_name,
+          e.employee_lastname,
+          u.display_name AS employee_user_display_name,
+          u.username AS employee_username,
+          r.justification_type_id,
+          jt.justification_name,
+          r.attendance_event_id,
+          ae.event_name,
+          r.justify_method_id,
+          jm.lookup_label AS justify_method_label,
+          r.start_datetime,
+          r.end_datetime,
+          r.start_time,
+          r.end_time,
+          r.notes,
+          r.request_status_id,
+          rs.lookup_key AS request_status_key,
+          rs.lookup_label AS request_status_label,
+          r.approval_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          r.is_active,
+          r.created_at,
+          r.updated_at
+        FROM public.employee_absence_requests r
+        LEFT JOIN public.companies c ON c.id = r.company_id
+        LEFT JOIN public.employees e ON e.id = r.employee_id
+        LEFT JOIN public.users u
+          ON u.id = e.user_id
+        LEFT JOIN public.justification_types jt ON jt.id = r.justification_type_id
+        LEFT JOIN public.attendance_events ae ON ae.id = r.attendance_event_id
+        LEFT JOIN public.lookup_values jm ON jm.id = r.justify_method_id
+        LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
+        LEFT JOIN public.users au ON au.id = r.approved_by
+        WHERE r.tenant_id = $1::uuid
+          AND r.is_active = true
+          ${whereStatus}
+        ORDER BY r.created_at DESC
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, requests: result.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/requests/approvals/catalogs', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+    if (!hasApprovalPermission(roleKeys)) {
+      return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
+    }
+
+    const methods = await pool.query(
+      `
+        SELECT
+          id,
+          lookup_key,
+          lookup_label,
+          lookup_short_label,
+          sort_order
+        FROM public.lookup_values
+        WHERE lookup_group_id = $1::uuid
+          AND is_active = true
+          AND (tenant_id IS NULL OR tenant_id = $2::uuid)
+        ORDER BY sort_order ASC, lookup_label ASC
+      `,
+      [ABSENCE_DISCOUNT_METHOD_GROUP_ID, userContext.tenant_id]
+    );
+
+    return res.status(200).json({ success: true, discount_methods: methods.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/requests/:id/review-fields', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+    if (!hasApprovalPermission(roleKeys)) {
+      return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const justifyMethodId =
+      req.body?.justify_method_id === undefined ? undefined : normalizeNullableText(req.body?.justify_method_id);
+    const approvalNotes =
+      req.body?.approval_notes === undefined ? undefined : normalizeNullableText(req.body?.approval_notes);
+
+    if (justifyMethodId === undefined && approvalNotes === undefined) {
+      return res.status(400).json({ error: 'Debe enviar justify_method_id o approval_notes' });
+    }
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          rs.lookup_key AS request_status_key
+        FROM public.employee_absence_requests r
+        LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+        LIMIT 1
+      `,
+      [requestId, userContext.tenant_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (isClosedRequestStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya tiene estado final' });
+    }
+
+    if (justifyMethodId) {
+      const isValid = await isLookupValueInGroupById(
+        justifyMethodId,
+        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
+        userContext.tenant_id
+      );
+      if (!isValid) return res.status(400).json({ error: 'justify_method_id no valido' });
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [requestId, userContext.tenant_id];
+    let next = 3;
+
+    if (justifyMethodId !== undefined) {
+      updates.push(`justify_method_id = $${next++}::uuid`);
+      params.push(justifyMethodId);
+    }
+    if (approvalNotes !== undefined) {
+      updates.push(`approval_notes = $${next++}`);
+      params.push(approvalNotes);
+    }
+
+    updates.push(`updated_by = $${next++}`);
+    params.push(getActor(req));
+    updates.push('updated_at = now()');
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_absence_requests
+        SET ${updates.join(', ')}
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+        RETURNING *
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+
+    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+    const canApprove = hasApprovalPermission(roleKeys);
+    if (!canApprove) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    const decision = String(req.body?.decision || '').toUpperCase();
+    const approvalNotes = normalizeNullableText(req.body?.approval_notes);
+    const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+    if (!['APPROVE', 'REJECT'].includes(decision)) {
+      return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    const resolvedApprovalNotes =
+      approvalNotes || (decision === 'APPROVE' ? 'Aprobada por supervisor' : 'Denegada por supervisor');
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.request_status_id,
+          rs.lookup_key AS request_status_key
+        FROM public.employee_absence_requests r
+        LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+        LIMIT 1
+      `,
+      [requestId, userContext.tenant_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+
+    const currentStatusKey = String(current.request_status_key || '').toUpperCase();
+    if (isClosedRequestStatusKey(currentStatusKey)) {
+      return res.status(400).json({ error: 'La solicitud ya tiene estado final' });
+    }
+
+    if (justifyMethodId) {
+      const isValid = await isLookupValueInGroupById(
+        justifyMethodId,
+        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
+        userContext.tenant_id
+      );
+      if (!isValid) return res.status(400).json({ error: 'justify_method_id no valido' });
+    }
+
+    const targetStatusId =
+      decision === 'APPROVE'
+        ? await resolveRequestStatusIdByKeys(userContext.tenant_id, ['APPROVED', 'APROBADO'])
+        : await resolveRequestStatusIdByKeys(userContext.tenant_id, ['REJECTED', 'RECHAZADO']);
+
+    if (!targetStatusId) {
+      return res.status(400).json({ error: 'No existe estado de decisión configurado' });
+    }
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_absence_requests
+        SET
+          request_status_id = $3::uuid,
+          approval_notes = $4,
+          justify_method_id = COALESCE($5::uuid, justify_method_id),
+          approved_by = $6::uuid,
+          approved_at = now(),
+          updated_by = $7,
+          updated_at = now()
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+        RETURNING *
+      `,
+      [
+        requestId,
+        userContext.tenant_id,
+        targetStatusId,
+        resolvedApprovalNotes,
+        justifyMethodId,
+        userContext.user_id,
+        getActor(req),
+      ]
+    );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
@@ -1301,15 +1740,21 @@ router.get('/my-requests', async (req: Request, res: Response) => {
           r.start_datetime,
           r.end_datetime,
           r.notes,
-          trx.lookup_label AS transaction_type_label,
+          r.approval_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          trx.lookup_label AS justify_method_label,
           jt.justification_name,
           ae.event_name,
           rs.lookup_label AS request_status_label
         FROM public.employee_absence_requests r
-        LEFT JOIN public.lookup_values trx ON trx.id = r.transaction_type_id
+        LEFT JOIN public.lookup_values trx ON trx.id = r.justify_method_id
         LEFT JOIN public.justification_types jt ON jt.id = r.justification_type_id
         LEFT JOIN public.attendance_events ae ON ae.id = r.attendance_event_id
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
+        LEFT JOIN public.users au ON au.id = r.approved_by
         WHERE r.tenant_id = $1
           AND r.employee_id = $2
           ${whereExtra}

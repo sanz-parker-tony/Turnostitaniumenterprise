@@ -32,6 +32,7 @@ interface PermissionsContextType {
 const PermissionsContext = createContext<PermissionsContextType | undefined>(undefined);
 const EXCLUDED_MENU_ROUTES = new Set(['/dashboard/org/employees', '/dashboard/config/shifts']);
 const EXCLUDED_SCREEN_KEYS = new Set(['ORG_EMPLOYEES', 'SCHEDULE_MANAGEMENT']);
+const APPROVAL_ALLOWED_ROLES = new Set(['SUPERVISOR', 'RHADMIN']);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile, session } = useAuth();
@@ -100,11 +101,16 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
           }
           return a.screen_sort_order - b.screen_sort_order;
         });
-        const filteredScreens = sortedScreens.filter(
-          (screen: MenuScreen) =>
-            !EXCLUDED_MENU_ROUTES.has(screen.route_path) &&
-            !EXCLUDED_SCREEN_KEYS.has(screen.screen_key)
-        );
+        const currentRoleKey = String(profile?.role_key || '').trim().toUpperCase();
+        const filteredScreens = sortedScreens.filter((screen: MenuScreen) => {
+          if (EXCLUDED_MENU_ROUTES.has(screen.route_path) || EXCLUDED_SCREEN_KEYS.has(screen.screen_key)) {
+            return false;
+          }
+          if (screen.screen_key === 'REQUESTS_MANAGEMENT' && !APPROVAL_ALLOWED_ROLES.has(currentRoleKey)) {
+            return false;
+          }
+          return true;
+        });
 
         if (isMounted) {
           setMenuScreens(filteredScreens);

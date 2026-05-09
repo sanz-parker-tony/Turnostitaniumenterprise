@@ -38,6 +38,7 @@ import SubscriptionPlansManagement from './screens/security/SubscriptionPlansMan
 import KioskPunch from './kiosk/KioskPunch';
 import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
+import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 
 export function Router() {
   const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
@@ -132,9 +133,11 @@ export function Router() {
 
     // ── Empleados ────────────────────────────────────────────────────────────
     '/dashboard/employees/shift-planning': <EmployeeShiftPlanningManagement />,
+    '/dashboard/employees/requests': <RequestsApprovalsManagement />,
     '/dashboard/attendance/shifts': <EmployeeShiftPlanningManagement />,
     '/dashboard/attendance/timeclock': <TimePunchesManagement />,
     '/dashboard/attendance/time-punches': <TimePunchesManagement />,
+    '/dashboard/attendance/approvals': <RequestsApprovalsManagement />,
 
     // ── Kiosko ───────────────────────────────────────────────────────────────
     '/dashboard/kiosk/timeclock': <KioskPunch />,

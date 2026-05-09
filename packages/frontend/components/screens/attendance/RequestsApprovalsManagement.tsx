@@ -1,0 +1,246 @@
+﻿'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { createClient } from '@/utils/backend/client';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Search } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAuth } from '@/contexts/AuthContext';
+
+type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
+
+type Row = {
+  id: string;
+  employee_name: string | null;
+  employee_lastname: string | null;
+  employee_code: string | null;
+  justification_name: string | null;
+  event_name: string | null;
+  start_datetime: string;
+  end_datetime: string;
+  notes: string | null;
+  request_status_key: string | null;
+  request_status_label: string | null;
+  approval_notes: string | null;
+  approved_by_display_name: string | null;
+  approved_by_username: string | null;
+  approved_at: string | null;
+};
+
+export default function RequestsApprovalsManagement() {
+  const { profile } = useAuth();
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
+
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [workingId, setWorkingId] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusFilter>('PENDING');
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+
+  const request = async (path: string, init?: RequestInit) => {
+    const api = createClient();
+    const {
+      data: { session },
+    } = await api.auth.getSession();
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) throw new Error('No hay sesion activa');
+
+    const response = await fetch(`http://localhost:3001${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    return payload;
+  };
+
+  const load = async () => {
+    if (!canUse) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload = await request(`/kiosk/requests/approvals?status=${status}`);
+      const nextRows = (payload?.requests || []) as Row[];
+      setRows(nextRows);
+      setReviewNotes((prev) => {
+        const copy = { ...prev };
+        for (const row of nextRows) {
+          if (copy[row.id] === undefined) {
+            copy[row.id] = row.approval_notes || '';
+          }
+        }
+        return copy;
+      });
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo cargar solicitudes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUse, status]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => {
+      const full = `${r.employee_name || ''} ${r.employee_lastname || ''}`.toLowerCase();
+      return (
+        full.includes(q) ||
+        String(r.employee_code || '').toLowerCase().includes(q) ||
+        String(r.justification_name || '').toLowerCase().includes(q) ||
+        String(r.event_name || '').toLowerCase().includes(q) ||
+        String(r.notes || '').toLowerCase().includes(q)
+      );
+    });
+  }, [rows, query]);
+
+  const isPending = (row: Row) => {
+    const key = String(row.request_status_key || '').trim().toUpperCase();
+    return ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION'].includes(key);
+  };
+
+  const decide = async (row: Row, decision: 'APPROVE' | 'REJECT') => {
+    const approvalNotes = (reviewNotes[row.id] || '').trim();
+    const resolvedApprovalNotes =
+      approvalNotes || (decision === 'APPROVE' ? 'Aprobada por supervisor' : 'Denegada por supervisor');
+
+    setWorkingId(row.id);
+    try {
+      await request(`/kiosk/requests/${row.id}/decision`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          decision,
+          approval_notes: resolvedApprovalNotes,
+        }),
+      });
+      toast.success(decision === 'APPROVE' ? 'Solicitud aprobada' : 'Solicitud denegada');
+      await load();
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo actualizar la solicitud');
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  if (!canUse) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+        Esta pantalla esta habilitada solo para los roles SUPERVISOR y RHADMIN.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Gestion de Solicitudes</h1>
+        <p className="text-sm text-gray-600">Aprobacion y denegacion con trazabilidad del aprobador.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant={status === 'PENDING' ? 'default' : 'outline'} onClick={() => setStatus('PENDING')}>Pendientes</Button>
+        <Button size="sm" variant={status === 'APPROVED' ? 'default' : 'outline'} onClick={() => setStatus('APPROVED')}>Aprobadas</Button>
+        <Button size="sm" variant={status === 'REJECTED' ? 'default' : 'outline'} onClick={() => setStatus('REJECTED')}>Denegadas</Button>
+        <Button size="sm" variant={status === 'ALL' ? 'default' : 'outline'} onClick={() => setStatus('ALL')}>Todas</Button>
+      </div>
+
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input className="pl-10" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar solicitud..." />
+      </div>
+
+      {loading ? (
+        <div className="rounded-lg border bg-white p-6 text-gray-600">Cargando solicitudes...</div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-lg border bg-white p-6 text-gray-600">No hay solicitudes para el filtro actual.</div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((r) => {
+            const fullName = `${r.employee_name || ''} ${r.employee_lastname || ''}`.trim() || 'Empleado';
+            const pending = isPending(r);
+            return (
+              <div key={r.id} className="rounded-lg border bg-white p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-gray-900">
+                      {fullName} {r.employee_code ? <span className="text-xs text-gray-500">({r.employee_code})</span> : null}
+                    </div>
+                    <div className="text-sm text-gray-600">{r.justification_name || '-'} · {r.event_name || '-'}</div>
+                  </div>
+                  <Badge variant="secondary">{r.request_status_label || '-'}</Badge>
+                </div>
+
+                <div className="mb-2 text-sm text-gray-600">
+                  Desde: {new Date(r.start_datetime).toLocaleString('es-EC')} · Hasta: {new Date(r.end_datetime).toLocaleString('es-EC')}
+                </div>
+
+                <div className="mb-2 text-sm">
+                  <span className="font-medium text-gray-800">Motivo de la justificacion:</span>{' '}
+                  <span className="text-gray-700">{r.notes || '-'}</span>
+                </div>
+
+                <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
+                  <div className="font-medium text-slate-800">Trazabilidad del aprobador</div>
+                  <div className="mt-1 text-slate-700">
+                    Aprobador: {r.approved_by_display_name || r.approved_by_username || '-'}
+                  </div>
+                  <div className="text-slate-700">
+                    Fecha decision: {r.approved_at ? new Date(r.approved_at).toLocaleString('es-EC') : '-'}
+                  </div>
+                  <div className="text-slate-700">
+                    Observacion aprobador: {r.approval_notes || '-'}
+                  </div>
+                </div>
+
+                {pending ? (
+                  <>
+                    <div className="mb-3">
+                      <label className="mb-1 block text-sm font-medium text-gray-700">Observacion del aprobador</label>
+                      <textarea
+                        value={reviewNotes[r.id] || ''}
+                        onChange={(e) =>
+                          setReviewNotes((prev) => ({
+                            ...prev,
+                            [r.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Escriba la observacion para trazabilidad..."
+                        className="min-h-[72px] w-full rounded border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={workingId === r.id} onClick={() => decide(r, 'APPROVE')}>
+                        Aprobar
+                      </Button>
+                      <Button size="sm" variant="outline" disabled={workingId === r.id} onClick={() => decide(r, 'REJECT')}>
+                        Denegar
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

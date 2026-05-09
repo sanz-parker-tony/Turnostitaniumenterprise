@@ -28,7 +28,7 @@ app.use(
   cors({
     origin: '*',
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Bootstrap-Token'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,
   })
 );

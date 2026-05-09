@@ -114,6 +114,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'EMPL_ABSENCE_REQUESTS': '/dashboard/employees/absence-requests',
   'EMPL_DOCUMENTS': '/dashboard/employees/documents',
   'EMPL_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
+  'REQUESTS_MANAGEMENT': '/dashboard/employees/requests',
   'EMPLOYEE_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
 
   // ========== ATTENDANCE ==========

@@ -1,4 +1,4 @@
--- Add transaction type catalog and relation for employee absence requests.
+﻿-- Add discount method catalog and relation for employee absence requests.
 -- Keys:
 -- - VACATION_CHARGE
 -- - PAID_LEAVE
@@ -63,23 +63,43 @@ SET
   is_active = true;
 
 ALTER TABLE IF EXISTS public.employee_absence_requests
-  ADD COLUMN IF NOT EXISTS transaction_type_id uuid;
+  ADD COLUMN IF NOT EXISTS justify_method_id uuid;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'employee_absence_requests'
+      AND column_name = 'transaction_type_id'
+  ) AND NOT EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'employee_absence_requests'
+      AND column_name = 'justify_method_id'
+  ) THEN
+    ALTER TABLE public.employee_absence_requests
+      RENAME COLUMN transaction_type_id TO justify_method_id;
+  END IF;
+END $$;
 
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
     FROM pg_constraint
-    WHERE conname = 'employee_absence_requests_transaction_type_id_fkey'
+    WHERE conname = 'employee_absence_requests_justify_method_id_fkey'
   ) THEN
     ALTER TABLE public.employee_absence_requests
-      ADD CONSTRAINT employee_absence_requests_transaction_type_id_fkey
-      FOREIGN KEY (transaction_type_id)
+      ADD CONSTRAINT employee_absence_requests_justify_method_id_fkey
+      FOREIGN KEY (justify_method_id)
       REFERENCES public.lookup_values (id)
       ON UPDATE NO ACTION
       ON DELETE NO ACTION;
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_employee_absence_requests_transaction_type
-  ON public.employee_absence_requests (transaction_type_id);
+CREATE INDEX IF NOT EXISTS idx_employee_absence_requests_justify_method
+  ON public.employee_absence_requests (justify_method_id);

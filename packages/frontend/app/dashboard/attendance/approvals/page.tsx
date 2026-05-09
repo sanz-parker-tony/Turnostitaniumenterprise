@@ -1,14 +1,14 @@
 /**
  * Attendance > Approvals
- * Bandeja de aprobaciones para RRHH_ADMIN / SUPERVISOR
+ * Bandeja de aprobaciones para SUPERVISOR / RHADMIN
  */
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { createClient } from '@/utils/backend/client';
+import { useEffect, useMemo, useState } from 'react';
 import ScreenPageShell from '@/components/ScreenPageShell';
+import { createClient } from '@/utils/backend/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -16,202 +16,269 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Search, CheckCircle, XCircle, Clock, User, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 
-interface PendingRequest {
+interface CatalogItem {
   id: string;
-  request_type: 'PERMISSION' | 'REGULARIZATION' | 'JUSTIFICATION' | 'SHIFT_CHANGE';
+  lookup_key?: string;
+  lookup_label?: string;
+}
+
+interface ApprovalRequestRow {
+  id: string;
   employee_id: string;
-  employee_name: string;
-  employee_code: string;
-  request_date: string;
-  request_reason: string;
-  requested_data: any;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  employee_code: string | null;
+  employee_name: string | null;
+  employee_lastname: string | null;
+  employee_user_display_name: string | null;
+  employee_username: string | null;
+  company_name: string | null;
+  justification_name: string | null;
+  event_name: string | null;
+  justify_method_id: string | null;
+  justify_method_label: string | null;
+  start_datetime: string;
+  end_datetime: string;
+  notes: string | null;
+  request_status_key: string | null;
+  request_status_label: string | null;
+  approval_notes: string | null;
+  approved_by: string | null;
+  approved_by_display_name: string | null;
+  approved_by_username: string | null;
+  approved_at: string | null;
   created_at: string;
 }
 
+type TabKey = 'pending' | 'approved' | 'rejected';
+
+function getApiStatusFromTab(tab: TabKey): 'PENDING' | 'APPROVED' | 'REJECTED' {
+  if (tab === 'approved') return 'APPROVED';
+  if (tab === 'rejected') return 'REJECTED';
+  return 'PENDING';
+}
+
 export default function ApprovalsPage() {
-  const { user } = useAuth();
-  const [requests, setRequests] = useState<PendingRequest[]>([]);
+  const { profile } = useAuth();
+  const [requests, setRequests] = useState<ApprovalRequestRow[]>([]);
+  const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'pending' | 'approved' | 'rejected'>('pending');
+  const [activeTab, setActiveTab] = useState<TabKey>('pending');
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [draftById, setDraftById] = useState<Record<string, { justify_method_id: string; approval_notes: string }>>({});
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const canUseApprovals = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
 
-  useEffect(() => {
-    loadRequests();
-  }, [activeTab]);
+  const request = async (path: string, init?: RequestInit) => {
+    const api = createClient();
+    const { data: { session } } = await api.auth.getSession();
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) throw new Error('No hay sesión activa');
 
-  async function loadRequests() {
+    const response = await fetch(`http://localhost:3001${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init?.headers || {}),
+      },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    return payload;
+  };
+
+  const loadRequests = async () => {
     setIsLoading(true);
-    const ApiClient = createClient();
-
     try {
-      // TODO: Reemplazar con query real cuando existan las tablas
-      // Por ahora mock data
-      const mockRequests: PendingRequest[] = [
-        {
-          id: '1',
-          request_type: 'PERMISSION',
-          employee_id: 'emp1',
-          employee_name: 'Juan Pérez',
-          employee_code: 'EMP001',
-          request_date: '2026-01-15',
-          request_reason: 'Cita médica',
-          requested_data: { hours: 2, start_time: '14:00' },
-          status: 'PENDING',
-          created_at: '2026-01-12T10:30:00Z'
-        },
-        {
-          id: '2',
-          request_type: 'REGULARIZATION',
-          employee_id: 'emp2',
-          employee_name: 'María González',
-          employee_code: 'EMP002',
-          request_date: '2026-01-13',
-          request_reason: 'Olvidé marcar salida',
-          requested_data: { punch_type: 'EXIT', time: '17:00' },
-          status: 'PENDING',
-          created_at: '2026-01-13T18:00:00Z'
-        },
-        {
-          id: '3',
-          request_type: 'JUSTIFICATION',
-          employee_id: 'emp3',
-          employee_name: 'Carlos Ramírez',
-          employee_code: 'EMP003',
-          request_date: '2026-01-12',
-          request_reason: 'Enfermedad',
-          requested_data: { document_url: 'cert_medico.pdf' },
-          status: 'PENDING',
-          created_at: '2026-01-13T09:00:00Z'
-        }
-      ];
-
-      // Filtrar por status
-      const filtered = mockRequests.filter(r => r.status === activeTab.toUpperCase());
-      setRequests(filtered);
-
+      const status = getApiStatusFromTab(activeTab);
+      const payload = await request(`/kiosk/requests/approvals?status=${status}`);
+      setRequests((payload?.requests || []) as ApprovalRequestRow[]);
     } catch (err: any) {
-      console.error('[APPROVALS] Error:', err);
-      toast.error('Error al cargar solicitudes: ' + err.message);
+      toast.error(err?.message || 'No se pudo cargar la bandeja de aprobaciones');
     } finally {
       setIsLoading(false);
     }
-  }
+  };
 
-  async function handleApprove(request: PendingRequest) {
-    if (!confirm(`¿Aprobar la solicitud de ${request.employee_name}?`)) {
+  const loadCatalogs = async () => {
+    try {
+      const payload = await request('/kiosk/requests/approvals/catalogs');
+      setDiscountMethods((payload?.discount_methods || []) as CatalogItem[]);
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo cargar catálogo de métodos de descuento');
+    }
+  };
+
+  useEffect(() => {
+    if (!canUseApprovals) return;
+    void loadRequests();
+    void loadCatalogs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, canUseApprovals]);
+
+  const openEditor = (row: ApprovalRequestRow) => {
+    setDraftById((prev) => ({
+      ...prev,
+      [row.id]: {
+        justify_method_id: row.justify_method_id || '',
+        approval_notes: row.approval_notes || '',
+      },
+    }));
+    setEditingRowId(row.id);
+  };
+
+  const saveReviewFields = async (row: ApprovalRequestRow) => {
+    const draft = draftById[row.id];
+    if (!draft) return;
+    setProcessingId(row.id);
+    try {
+      await request(`/kiosk/requests/${row.id}/review-fields`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          justify_method_id: draft.justify_method_id || null,
+          approval_notes: draft.approval_notes || null,
+        }),
+      });
+      toast.success('Revisión actualizada');
+      setEditingRowId(null);
+      await loadRequests();
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo actualizar la revisión');
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleApprove = async (row: ApprovalRequestRow) => {
+    if (!window.confirm(`¿Aprobar la solicitud de ${row.employee_name || row.employee_username || 'empleado'}?`)) {
       return;
     }
 
-    setProcessingId(request.id);
-    try {
-      // TODO: POST al endpoint de aprobación
-      const ApiClient = createClient();
-      
-      // Simular llamada
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    const draft = draftById[row.id];
+    const approvalNote = draft?.approval_notes ?? row.approval_notes ?? '';
+    const justifyMethodId = draft?.justify_method_id ?? row.justify_method_id ?? null;
 
-      toast.success('Solicitud aprobada exitosamente');
-      loadRequests();
+    setProcessingId(row.id);
+    try {
+      await request(`/kiosk/requests/${row.id}/decision`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          decision: 'APPROVE',
+          approval_notes: approvalNote || null,
+          justify_method_id: justifyMethodId || null,
+        }),
+      });
+      toast.success('Solicitud aprobada');
+      setEditingRowId(null);
+      await loadRequests();
     } catch (err: any) {
-      console.error('[APPROVALS] Error aprobando:', err);
-      toast.error('Error al aprobar solicitud');
+      toast.error(err?.message || 'No se pudo aprobar la solicitud');
     } finally {
       setProcessingId(null);
     }
-  }
+  };
 
-  async function handleReject(request: PendingRequest) {
-    const reason = prompt('Motivo del rechazo (opcional):');
-    
-    if (reason === null) return; // Canceló
+  const handleReject = async (row: ApprovalRequestRow) => {
+    if (!window.confirm(`¿Denegar la solicitud de ${row.employee_name || row.employee_username || 'empleado'}?`)) {
+      return;
+    }
 
-    setProcessingId(request.id);
+    const draft = draftById[row.id];
+    const approvalNote = (draft?.approval_notes ?? row.approval_notes ?? '').trim();
+    const justifyMethodId = draft?.justify_method_id ?? row.justify_method_id ?? null;
+    if (!approvalNote) {
+      toast.error('Debe registrar observación para denegar la solicitud');
+      openEditor(row);
+      return;
+    }
+
+    setProcessingId(row.id);
     try {
-      // TODO: POST al endpoint de rechazo
-      const ApiClient = createClient();
-      
-      // Simular llamada
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      toast.success('Solicitud rechazada');
-      loadRequests();
+      await request(`/kiosk/requests/${row.id}/decision`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          decision: 'REJECT',
+          approval_notes: approvalNote,
+          justify_method_id: justifyMethodId || null,
+        }),
+      });
+      toast.success('Solicitud denegada');
+      setEditingRowId(null);
+      await loadRequests();
     } catch (err: any) {
-      console.error('[APPROVALS] Error rechazando:', err);
-      toast.error('Error al rechazar solicitud');
+      toast.error(err?.message || 'No se pudo denegar la solicitud');
     } finally {
       setProcessingId(null);
     }
-  }
-
-  const filteredRequests = requests.filter(r =>
-    r.employee_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.employee_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    r.request_reason.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const getRequestTypeColor = (type: string) => {
-    switch (type) {
-      case 'PERMISSION': return 'bg-blue-100 text-blue-800';
-      case 'REGULARIZATION': return 'bg-amber-100 text-amber-800';
-      case 'JUSTIFICATION': return 'bg-purple-100 text-purple-800';
-      case 'SHIFT_CHANGE': return 'bg-green-100 text-green-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
   };
 
-  const getRequestTypeLabel = (type: string) => {
-    switch (type) {
-      case 'PERMISSION': return 'Permiso';
-      case 'REGULARIZATION': return 'Regularización';
-      case 'JUSTIFICATION': return 'Justificación';
-      case 'SHIFT_CHANGE': return 'Cambio de Turno';
-      default: return type;
-    }
-  };
+  const filteredRequests = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    if (!query) return requests;
+    return requests.filter((row) => {
+      const employeeFullName = `${row.employee_name || ''} ${row.employee_lastname || ''}`.trim().toLowerCase();
+      return (
+        employeeFullName.includes(query) ||
+        String(row.employee_code || '').toLowerCase().includes(query) ||
+        String(row.employee_username || '').toLowerCase().includes(query) ||
+        String(row.justification_name || '').toLowerCase().includes(query) ||
+        String(row.event_name || '').toLowerCase().includes(query)
+      );
+    });
+  }, [requests, searchTerm]);
 
-  const formatDateTime = (datetime: string) => {
-    return new Date(datetime).toLocaleString('es-ES', {
+  const formatDateTime = (value: string) =>
+    new Date(value).toLocaleString('es-EC', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
-      minute: '2-digit'
+      minute: '2-digit',
     });
-  };
+
+  if (!canUseApprovals) {
+    return (
+      <ScreenPageShell
+        screenKey="REQUESTS_MANAGEMENT"
+        title="Bandeja de Aprobaciones"
+        description="Revisión y decisión de solicitudes de justificación"
+      >
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          Esta pantalla está habilitada solo para los roles SUPERVISOR y RHADMIN.
+        </div>
+      </ScreenPageShell>
+    );
+  }
 
   return (
     <ScreenPageShell
-      screenKey="ATT_APPROVALS"
+      screenKey="REQUESTS_MANAGEMENT"
       title="Bandeja de Aprobaciones"
-      description="Gestión de solicitudes pendientes de aprobación"
+      description="Revisión y decisión de solicitudes de justificación"
     >
       <div className="space-y-6">
-        {/* Header */}
         <div className="flex items-center justify-between gap-4">
           <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <Input
-              placeholder="Buscar por empleado, código o razón..."
+              placeholder="Buscar por empleado, código, justificación o evento..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10"
             />
           </div>
-
           <Badge variant="secondary" className="text-lg px-4 py-2">
             <Clock className="w-4 h-4 mr-2" />
-            {requests.length} pendientes
+            {requests.length} en bandeja
           </Badge>
         </div>
 
-        {/* Tabs */}
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
           <TabsList>
             <TabsTrigger value="pending">Pendientes</TabsTrigger>
             <TabsTrigger value="approved">Aprobadas</TabsTrigger>
-            <TabsTrigger value="rejected">Rechazadas</TabsTrigger>
+            <TabsTrigger value="rejected">Denegadas</TabsTrigger>
           </TabsList>
 
           <TabsContent value={activeTab} className="mt-6">
@@ -224,121 +291,204 @@ export default function ApprovalsPage() {
               <div className="text-center py-12">
                 <CheckCircle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-600">
-                  {activeTab === 'pending' 
-                    ? 'No hay solicitudes pendientes' 
-                    : `No hay solicitudes ${activeTab === 'approved' ? 'aprobadas' : 'rechazadas'}`}
+                  {activeTab === 'pending'
+                    ? 'No hay solicitudes pendientes'
+                    : activeTab === 'approved'
+                    ? 'No hay solicitudes aprobadas'
+                    : 'No hay solicitudes denegadas'}
                 </p>
               </div>
             ) : (
               <div className="space-y-4">
-                {filteredRequests.map((request) => (
-                  <div
-                    key={request.id}
-                    className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-3">
-                          <Badge className={getRequestTypeColor(request.request_type)}>
-                            {getRequestTypeLabel(request.request_type)}
-                          </Badge>
-                          <div className="flex items-center gap-2 text-sm text-gray-600">
-                            <User className="w-4 h-4" />
-                            <span className="font-medium">{request.employee_name}</span>
-                            <span className="font-mono text-xs">({request.employee_code})</span>
-                          </div>
-                        </div>
+                {filteredRequests.map((row) => {
+                  const employeeFullName =
+                    `${row.employee_name || ''} ${row.employee_lastname || ''}`.trim() ||
+                    row.employee_user_display_name ||
+                    row.employee_username ||
+                    'Empleado';
 
-                        <div className="space-y-2">
-                          <div className="flex items-center gap-2 text-sm">
-                            <Calendar className="w-4 h-4 text-gray-400" />
-                            <span className="text-gray-700">
-                              Fecha solicitada: <strong>{request.request_date}</strong>
-                            </span>
-                          </div>
-
-                          <div className="text-sm">
-                            <span className="text-gray-700">Razón: </span>
-                            <span className="text-gray-900 font-medium">{request.request_reason}</span>
-                          </div>
-
-                          {request.requested_data && (
-                            <div className="mt-3 p-3 bg-gray-50 rounded border border-gray-200">
-                              <p className="text-xs text-gray-600 mb-1">Detalles:</p>
-                              <pre className="text-xs text-gray-900">
-                                {JSON.stringify(request.requested_data, null, 2)}
-                              </pre>
+                  return (
+                    <div
+                      key={row.id}
+                      className="bg-white rounded-lg border border-gray-200 p-6 hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-3">
+                            <Badge className="bg-purple-100 text-purple-800">Justificación</Badge>
+                            <div className="flex items-center gap-2 text-sm text-gray-600">
+                              <User className="w-4 h-4" />
+                              <span className="font-medium">{employeeFullName}</span>
+                              {row.employee_code ? (
+                                <span className="font-mono text-xs">({row.employee_code})</span>
+                              ) : null}
                             </div>
-                          )}
-
-                          <div className="text-xs text-gray-500 mt-3">
-                            Solicitado el {formatDateTime(request.created_at)}
                           </div>
+
+                          <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <Calendar className="w-4 h-4 text-gray-400" />
+                              <span>Desde: <strong>{formatDateTime(row.start_datetime)}</strong></span>
+                              <span>·</span>
+                              <span>Hasta: <strong>{formatDateTime(row.end_datetime)}</strong></span>
+                            </div>
+                            <div className="text-gray-700">
+                              Justificación: <strong>{row.justification_name || '-'}</strong>
+                            </div>
+                            <div className="text-gray-700">
+                              Evento: <strong>{row.event_name || '-'}</strong>
+                            </div>
+                            <div className="text-gray-700">
+                              Método de descuento: <strong>{row.justify_method_label || '-'}</strong>
+                            </div>
+                            <div className="text-gray-700">
+                              Empresa: <strong>{row.company_name || '-'}</strong>
+                            </div>
+                            <div className="text-gray-700">
+                              Estado: <strong>{row.request_status_label || row.request_status_key || '-'}</strong>
+                            </div>
+                            {row.approved_at ? (
+                              <>
+                                <div className="text-gray-700">
+                                  Revisado por:{' '}
+                                  <strong>{row.approved_by_display_name || row.approved_by_username || row.approved_by || '-'}</strong>
+                                </div>
+                                <div className="text-gray-700">
+                                  Fecha de revisión: <strong>{formatDateTime(row.approved_at)}</strong>
+                                </div>
+                                <div className="text-gray-700">
+                                  Observación revisión: <strong>{row.approval_notes || '-'}</strong>
+                                </div>
+                              </>
+                            ) : null}
+                            {row.notes ? (
+                              <div className="text-gray-700">
+                                Notas empleado: <strong>{row.notes}</strong>
+                              </div>
+                            ) : null}
+                            <div className="text-xs text-gray-500 pt-2">
+                              Solicitado el {formatDateTime(row.created_at)}
+                            </div>
+                          </div>
+
+                          {activeTab === 'pending' ? (
+                            <div className="mt-4 p-3 rounded border border-gray-200 bg-gray-50">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-semibold text-gray-700">Edición de revisión (Supervisor)</p>
+                                {editingRowId !== row.id ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openEditor(row)}
+                                    disabled={processingId === row.id}
+                                  >
+                                    Editar revisión
+                                  </Button>
+                                ) : null}
+                              </div>
+                              {editingRowId === row.id ? (
+                                <div className="space-y-2">
+                                  <label className="block text-xs text-gray-700">Método de descuento</label>
+                                  <select
+                                    value={draftById[row.id]?.justify_method_id || ''}
+                                    onChange={(e) =>
+                                      setDraftById((prev) => ({
+                                        ...prev,
+                                        [row.id]: {
+                                          justify_method_id: e.target.value,
+                                          approval_notes: prev[row.id]?.approval_notes || '',
+                                        },
+                                      }))
+                                    }
+                                    className="h-9 w-full rounded border px-2 text-sm"
+                                  >
+                                    <option value="">Seleccionar...</option>
+                                    {discountMethods.map((method) => (
+                                      <option key={method.id} value={method.id}>
+                                        {method.lookup_label || method.lookup_key || method.id}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <label className="block text-xs text-gray-700">Observación de revisión</label>
+                                  <textarea
+                                    value={draftById[row.id]?.approval_notes || ''}
+                                    onChange={(e) =>
+                                      setDraftById((prev) => ({
+                                        ...prev,
+                                        [row.id]: {
+                                          justify_method_id: prev[row.id]?.justify_method_id || '',
+                                          approval_notes: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                    className="w-full min-h-[70px] rounded border px-2 py-1 text-sm"
+                                  />
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setEditingRowId(null)}
+                                      disabled={processingId === row.id}
+                                    >
+                                      Cerrar
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => void saveReviewFields(row)}
+                                      disabled={processingId === row.id}
+                                    >
+                                      Guardar revisión
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-gray-600">
+                                  Usa “Editar revisión” para ajustar método de descuento y observación antes de decidir.
+                                </p>
+                              )}
+                            </div>
+                          ) : null}
                         </div>
+
+                        {activeTab === 'pending' ? (
+                          <div className="flex items-center gap-2 ml-4">
+                            <Button
+                              onClick={() => void handleApprove(row)}
+                              disabled={processingId === row.id}
+                              className="bg-green-600 hover:bg-green-700"
+                            >
+                              <CheckCircle className="w-4 h-4 mr-2" />
+                              Aprobar
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => void handleReject(row)}
+                              disabled={processingId === row.id}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <XCircle className="w-4 h-4 mr-2" />
+                              Denegar
+                            </Button>
+                          </div>
+                        ) : activeTab === 'approved' ? (
+                          <Badge className="bg-green-100 text-green-800 ml-4">
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Aprobada
+                          </Badge>
+                        ) : (
+                          <Badge className="bg-red-100 text-red-800 ml-4">
+                            <XCircle className="w-3 h-3 mr-1" />
+                            Denegada
+                          </Badge>
+                        )}
                       </div>
-
-                      {activeTab === 'pending' && (
-                        <div className="flex items-center gap-2 ml-4">
-                          <Button
-                            onClick={() => handleApprove(request)}
-                            disabled={processingId === request.id}
-                            className="bg-green-600 hover:bg-green-700"
-                          >
-                            <CheckCircle className="w-4 h-4 mr-2" />
-                            Aprobar
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => handleReject(request)}
-                            disabled={processingId === request.id}
-                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <XCircle className="w-4 h-4 mr-2" />
-                            Rechazar
-                          </Button>
-                        </div>
-                      )}
-
-                      {activeTab === 'approved' && (
-                        <Badge className="bg-green-100 text-green-800 ml-4">
-                          <CheckCircle className="w-3 h-3 mr-1" />
-                          Aprobada
-                        </Badge>
-                      )}
-
-                      {activeTab === 'rejected' && (
-                        <Badge className="bg-red-100 text-red-800 ml-4">
-                          <XCircle className="w-3 h-3 mr-1" />
-                          Rechazada
-                        </Badge>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </TabsContent>
         </Tabs>
-
-        {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <p className="text-sm text-gray-600">Total Solicitudes</p>
-            <p className="text-2xl font-bold text-gray-900">15</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <p className="text-sm text-gray-600">Pendientes</p>
-            <p className="text-2xl font-bold text-amber-600">3</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <p className="text-sm text-gray-600">Aprobadas</p>
-            <p className="text-2xl font-bold text-green-600">10</p>
-          </div>
-          <div className="bg-white rounded-lg border border-gray-200 p-4">
-            <p className="text-sm text-gray-600">Rechazadas</p>
-            <p className="text-2xl font-bold text-red-600">2</p>
-          </div>
-        </div>
       </div>
     </ScreenPageShell>
   );

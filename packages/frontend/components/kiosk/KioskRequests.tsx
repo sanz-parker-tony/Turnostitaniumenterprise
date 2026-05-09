@@ -23,9 +23,9 @@ interface RequestRow {
   justification_name: string | null;
   attendance_event_id: string;
   event_name: string | null;
-  transaction_type_id: string | null;
-  transaction_type_key: string | null;
-  transaction_type_label: string | null;
+  justify_method_id: string | null;
+  justify_method_key: string | null;
+  justify_method_label: string | null;
   start_datetime: string;
   end_datetime: string;
   start_time: string | null;
@@ -34,6 +34,11 @@ interface RequestRow {
   request_status_id: string;
   request_status_key: string | null;
   request_status_label: string | null;
+  approval_notes: string | null;
+  approved_by: string | null;
+  approved_by_display_name: string | null;
+  approved_by_username: string | null;
+  approved_at: string | null;
   is_active: boolean;
 }
 
@@ -41,7 +46,7 @@ type EditState = {
   id: string;
   justification_type_id: string;
   attendance_event_id: string;
-  transaction_type_id: string;
+  justify_method_id: string;
   start_datetime: string;
   end_datetime: string;
   start_time: string;
@@ -76,6 +81,13 @@ function getDefaultRange() {
   return { from: toIsoDate(from), to: toIsoDate(to) };
 }
 
+function isPendingStatus(statusKey: string | null | undefined, statusLabel: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  if (['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO'].includes(key)) return true;
+  const label = String(statusLabel || '').trim().toUpperCase();
+  return label === 'PENDIENTE';
+}
+
 export default function KioskRequests() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -84,7 +96,7 @@ export default function KioskRequests() {
   const [justifications, setJustifications] = useState<CatalogItem[]>([]);
   const [events, setEvents] = useState<CatalogItem[]>([]);
   const [statuses, setStatuses] = useState<CatalogItem[]>([]);
-  const [transactionTypes, setTransactionTypes] = useState<CatalogItem[]>([]);
+  const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
   const [rows, setRows] = useState<RequestRow[]>([]);
 
   const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
@@ -92,7 +104,7 @@ export default function KioskRequests() {
 
   const [formJustificationId, setFormJustificationId] = useState('');
   const [formEventId, setFormEventId] = useState('');
-  const [formTransactionTypeId, setFormTransactionTypeId] = useState('');
+  const [formDiscountMethodId, setFormDiscountMethodId] = useState('');
   const [formStartDateTime, setFormStartDateTime] = useState('');
   const [formEndDateTime, setFormEndDateTime] = useState('');
   const [formStartTime, setFormStartTime] = useState('');
@@ -125,20 +137,20 @@ export default function KioskRequests() {
     const nextJustifications = (payload?.justification_types || []) as CatalogItem[];
     const nextEvents = (payload?.attendance_events || []) as CatalogItem[];
     const nextStatuses = (payload?.request_statuses || []) as CatalogItem[];
-    const nextTransactionTypes = (payload?.transaction_types || []) as CatalogItem[];
+    const nextDiscountMethods = (payload?.discount_methods || payload?.transaction_types || []) as CatalogItem[];
 
     setJustifications(nextJustifications);
     setEvents(nextEvents);
     setStatuses(nextStatuses);
-    setTransactionTypes(nextTransactionTypes);
+    setDiscountMethods(nextDiscountMethods);
 
     if (!formJustificationId && nextJustifications[0]?.id) {
       setFormJustificationId(nextJustifications[0].id);
       setFormEventId(nextJustifications[0].attendance_event_id || nextEvents[0]?.id || '');
     }
     if (!formEventId && nextEvents[0]?.id) setFormEventId(nextEvents[0].id);
-    if (!formTransactionTypeId && nextTransactionTypes[0]?.id) {
-      setFormTransactionTypeId(nextTransactionTypes[0].id);
+    if (!formDiscountMethodId && nextDiscountMethods[0]?.id) {
+      setFormDiscountMethodId(nextDiscountMethods[0].id);
     }
   };
 
@@ -185,13 +197,13 @@ export default function KioskRequests() {
     return map;
   }, [statuses]);
 
-  const transactionLabelById = useMemo(() => {
+  const discountMethodLabelById = useMemo(() => {
     const map = new Map<string, string>();
-    transactionTypes.forEach((item) => {
+    discountMethods.forEach((item) => {
       if (item.id) map.set(item.id, item.lookup_label || item.lookup_key || item.id);
     });
     return map;
-  }, [transactionTypes]);
+  }, [discountMethods]);
 
   const onChangeFormJustification = (value: string) => {
     setFormJustificationId(value);
@@ -202,7 +214,7 @@ export default function KioskRequests() {
   const submitCreate = async () => {
     if (!formJustificationId) return toast.error('Selecciona tipo de justificación');
     if (!formEventId) return toast.error('Selecciona evento de asistencia');
-    if (!formTransactionTypeId) return toast.error('Selecciona tipo de transacción');
+    if (!formDiscountMethodId) return toast.error('Selecciona método de descuento');
     if (!formStartDateTime) return toast.error('Selecciona fecha/hora de inicio');
     if (!formEndDateTime) return toast.error('Selecciona fecha/hora de fin');
 
@@ -213,7 +225,7 @@ export default function KioskRequests() {
         body: JSON.stringify({
           justification_type_id: formJustificationId,
           attendance_event_id: formEventId,
-          transaction_type_id: formTransactionTypeId,
+          justify_method_id: formDiscountMethodId,
           start_datetime: new Date(formStartDateTime).toISOString(),
           end_datetime: new Date(formEndDateTime).toISOString(),
           start_time: formStartTime || null,
@@ -236,7 +248,7 @@ export default function KioskRequests() {
       id: row.id,
       justification_type_id: row.justification_type_id,
       attendance_event_id: row.attendance_event_id,
-      transaction_type_id: row.transaction_type_id || '',
+      justify_method_id: row.justify_method_id || '',
       start_datetime: toDateTimeLocal(row.start_datetime),
       end_datetime: toDateTimeLocal(row.end_datetime),
       start_time: row.start_time || '',
@@ -248,7 +260,7 @@ export default function KioskRequests() {
 
   const saveEdit = async () => {
     if (!edit) return;
-    if (!edit.transaction_type_id) return toast.error('Selecciona tipo de transacción');
+    if (!edit.justify_method_id) return toast.error('Selecciona método de descuento');
 
     setSaving(true);
     try {
@@ -257,7 +269,7 @@ export default function KioskRequests() {
         body: JSON.stringify({
           justification_type_id: edit.justification_type_id,
           attendance_event_id: edit.attendance_event_id,
-          transaction_type_id: edit.transaction_type_id,
+          justify_method_id: edit.justify_method_id,
           start_datetime: edit.start_datetime ? new Date(edit.start_datetime).toISOString() : null,
           end_datetime: edit.end_datetime ? new Date(edit.end_datetime).toISOString() : null,
           start_time: edit.start_time || null,
@@ -343,14 +355,14 @@ export default function KioskRequests() {
               </select>
             </label>
             <label className="text-sm space-y-1">
-              <span className="block text-slate-700">Tipo de transacción</span>
+              <span className="block text-slate-700">Método de Descuento</span>
               <select
-                value={formTransactionTypeId}
-                onChange={(event) => setFormTransactionTypeId(event.target.value)}
+                value={formDiscountMethodId}
+                onChange={(event) => setFormDiscountMethodId(event.target.value)}
                 className="h-10 border rounded-md px-3 w-full"
               >
                 <option value="">Seleccionar...</option>
-                {transactionTypes.map((item) => (
+                {discountMethods.map((item) => (
                   <option key={item.id} value={item.id}>{item.lookup_label || item.lookup_key || item.id}</option>
                 ))}
               </select>
@@ -460,8 +472,9 @@ export default function KioskRequests() {
                     <th className="text-left px-3 py-2">Hasta</th>
                     <th className="text-left px-3 py-2">Justificación</th>
                     <th className="text-left px-3 py-2">Evento</th>
-                    <th className="text-left px-3 py-2">Tipo transacción</th>
+                    <th className="text-left px-3 py-2">Método de descuento</th>
                     <th className="text-left px-3 py-2">Estado</th>
+                    <th className="text-left px-3 py-2">Trazabilidad</th>
                     <th className="text-left px-3 py-2">Notas</th>
                     <th className="text-left px-3 py-2">Activo</th>
                     <th className="text-right px-3 py-2">Acciones</th>
@@ -470,6 +483,7 @@ export default function KioskRequests() {
                 <tbody>
                   {rows.map((row) => {
                     const isEditing = edit?.id === row.id;
+                    const canModify = isPendingStatus(row.request_status_key, row.request_status_label);
                     return (
                       <tr key={row.id} className="border-t align-top">
                         <td className="px-3 py-2 min-w-[180px]">
@@ -521,24 +535,44 @@ export default function KioskRequests() {
                         <td className="px-3 py-2 min-w-[220px]">
                           {isEditing ? (
                             <select
-                              value={edit?.transaction_type_id || ''}
-                              onChange={(e) => setEdit((prev) => (prev ? { ...prev, transaction_type_id: e.target.value } : prev))}
+                              value={edit?.justify_method_id || ''}
+                              onChange={(e) => setEdit((prev) => (prev ? { ...prev, justify_method_id: e.target.value } : prev))}
                               className="h-9 border rounded-md px-2 w-full"
                             >
                               <option value="">Seleccionar...</option>
-                              {transactionTypes.map((item) => (
+                              {discountMethods.map((item) => (
                                 <option key={item.id} value={item.id}>{item.lookup_label || item.lookup_key || item.id}</option>
                               ))}
                             </select>
                           ) : (
-                            row.transaction_type_label ||
-                            (row.transaction_type_id ? transactionLabelById.get(row.transaction_type_id) : null) ||
-                            row.transaction_type_key ||
+                            row.justify_method_label ||
+                            (row.justify_method_id ? discountMethodLabelById.get(row.justify_method_id) : null) ||
+                            row.justify_method_key ||
                             '-'
                           )}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           {row.request_status_label || statusLabelById.get(row.request_status_id) || row.request_status_key || '-'}
+                        </td>
+                        <td className="px-3 py-2 min-w-[260px] text-xs text-slate-600">
+                          {row.approved_at ? (
+                            <div className="space-y-1">
+                              <div>
+                                Revisado por:{' '}
+                                <span className="font-medium text-slate-800">
+                                  {row.approved_by_display_name || row.approved_by_username || row.approved_by || '-'}
+                                </span>
+                              </div>
+                              <div>
+                                Fecha: <span className="font-medium text-slate-800">{new Date(row.approved_at).toLocaleString('es-EC')}</span>
+                              </div>
+                              <div>
+                                Observación: <span className="font-medium text-slate-800">{row.approval_notes || '-'}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <span>-</span>
+                          )}
                         </td>
                         <td className="px-3 py-2 min-w-[220px]">
                           {isEditing ? (
@@ -573,14 +607,32 @@ export default function KioskRequests() {
                                 </Button>
                               </>
                             ) : (
-                              <Button size="icon" variant="ghost" onClick={() => beginEdit(row)} disabled={saving}>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => beginEdit(row)}
+                                disabled={saving || !canModify}
+                                title={canModify ? 'Editar solicitud' : 'Solo solicitudes pendientes pueden editarse'}
+                              >
                                 <Pencil className="w-4 h-4 text-blue-600" />
                               </Button>
                             )}
-                            <Button size="icon" variant="ghost" onClick={() => void cancelRequest(row)} disabled={saving}>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => void cancelRequest(row)}
+                              disabled={saving || !canModify}
+                              title={canModify ? 'Cancelar solicitud' : 'Solo solicitudes pendientes pueden cancelarse'}
+                            >
                               <X className="w-4 h-4 text-amber-600" />
                             </Button>
-                            <Button size="icon" variant="ghost" onClick={() => void deleteRequest(row)} disabled={saving}>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => void deleteRequest(row)}
+                              disabled={saving || !canModify}
+                              title={canModify ? 'Eliminar solicitud' : 'Solo solicitudes pendientes pueden eliminarse'}
+                            >
                               <Trash2 className="w-4 h-4 text-red-600" />
                             </Button>
                           </div>
