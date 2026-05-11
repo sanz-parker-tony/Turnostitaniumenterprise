@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 // Importar rotas principales
 import mainRouter from './index.js';
+import { setupSwagger } from './swagger.js';
 
 // Cargar variables de entorno desde packages/backend/.env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -42,6 +43,8 @@ app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   next();
 });
+
+setupSwagger(app, mainRouter);
 
 // ============================================================================
 // REGISTRAR RUTAS

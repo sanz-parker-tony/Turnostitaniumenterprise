@@ -158,6 +158,17 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 // HEALTH CHECK
 // ============================================================================
 
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags:
+ *       - System
+ *     summary: Health check del backend
+ *     responses:
+ *       200:
+ *         description: Servicio activo
+ */
 router.get('/health', (req: Request, res: Response) => {
   return res.json({
     status: 'ok',
@@ -220,6 +231,21 @@ router.get('/bootstrap/tenant-info', requireAuth, async (req: Request, res: Resp
 // USER ENDPOINTS
 // ============================================================================
 
+/**
+ * @openapi
+ * /users/profile:
+ *   get:
+ *     tags:
+ *       - Users
+ *     summary: Obtiene el perfil del usuario autenticado
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Perfil del usuario
+ *       401:
+ *         description: No autorizado
+ */
 router.get('/users/profile', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
@@ -571,6 +597,32 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
   }
 });
 
+/**
+ * @openapi
+ * /auth/login:
+ *   post:
+ *     tags:
+ *       - Auth
+ *     summary: Login contra Supabase/Auth
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password]
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Sesion creada
+ *       401:
+ *         description: Credenciales invalidas
+ */
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body || {};
@@ -1094,6 +1146,17 @@ router.use('/kiosk', requireAuth, kioskRouter);
 // HEALTH & STATUS
 // ============================================================================
 
+/**
+ * @openapi
+ * /status:
+ *   get:
+ *     tags:
+ *       - System
+ *     summary: Estado general y rutas principales
+ *     responses:
+ *       200:
+ *         description: Estado del backend
+ */
 router.get('/status', (req: Request, res: Response) => {
   return res.json({
     status: 'ok',
