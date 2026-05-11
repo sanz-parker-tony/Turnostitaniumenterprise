@@ -1,9 +1,11 @@
 import type { Express, Request, Response, Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
+import type { SwaggerOperationDoc, SwaggerParameter } from './lib/swagger-docs.js';
 
 type Endpoint = {
   method: string;
   path: string;
+  docs?: SwaggerOperationDoc;
 };
 
 function regexToPath(regexp: RegExp | undefined): string {
@@ -58,6 +60,29 @@ function extractPathParameters(path: string): Array<{ name: string; in: 'path'; 
   }));
 }
 
+function extractRouteDocs(route: any): SwaggerOperationDoc | undefined {
+  const stack = route?.stack || [];
+  for (const layer of stack) {
+    const docs = layer?.handle?.__swagger as SwaggerOperationDoc | undefined;
+    if (docs) return docs;
+  }
+  return undefined;
+}
+
+function mergeParameters(baseParameters: SwaggerParameter[], overrideParameters: SwaggerParameter[] | undefined): SwaggerParameter[] {
+  if (!overrideParameters || overrideParameters.length === 0) return baseParameters;
+
+  const map = new Map<string, SwaggerParameter>();
+  for (const parameter of baseParameters) {
+    map.set(`${parameter.in}:${parameter.name}`, parameter);
+  }
+  for (const parameter of overrideParameters) {
+    map.set(`${parameter.in}:${parameter.name}`, parameter);
+  }
+
+  return Array.from(map.values());
+}
+
 function collectEndpointsFromStack(stack: any[], basePath = ''): Endpoint[] {
   const endpoints: Endpoint[] = [];
 
@@ -71,8 +96,9 @@ function collectEndpointsFromStack(stack: any[], basePath = ''): Endpoint[] {
 
       for (const routePath of routePaths) {
         const fullPath = joinPaths(basePath, String(routePath));
+        const docs = extractRouteDocs(layer.route);
         for (const method of methods) {
-          endpoints.push({ method, path: fullPath });
+          endpoints.push({ method, path: fullPath, docs });
         }
       }
       continue;
@@ -99,17 +125,22 @@ function buildOpenApiSpec(router: Router) {
     if (normalizedPath.startsWith('/docs')) continue;
 
     const methodKey = endpoint.method.toLowerCase();
+    const defaultPathParameters = extractPathParameters(normalizedPath);
+    const docs = endpoint.docs || {};
+    const mergedParameters = mergeParameters(defaultPathParameters, docs.parameters);
+    const mergedResponses = {
+      '200': { description: 'OK' },
+      ...(docs.responses || {}),
+    };
+
     paths[normalizedPath] ||= {};
     paths[normalizedPath][methodKey] = {
       tags: [tagFromPath(normalizedPath)],
       summary: `${endpoint.method} ${normalizedPath}`,
       security: [{ bearerAuth: [] }],
-      parameters: extractPathParameters(normalizedPath),
-      responses: {
-        '200': {
-          description: 'OK',
-        },
-      },
+      ...docs,
+      parameters: mergedParameters,
+      responses: mergedResponses,
     };
   }
 

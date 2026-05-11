@@ -3,6 +3,7 @@ import { createDbClient } from '../lib/postgres-client.js';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { withDocs } from '../lib/swagger-docs.js';
 
 type EntityKey =
   | 'companies'
@@ -906,7 +907,8 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
   }
 });
 
-router.get('/holidays/calendar', async (req: Request, res: Response) => {
+router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) => {
+  //
   try {
     const Postgres = getPostgres();
     const tenantId = await resolveTenantId(req, Postgres);
@@ -996,7 +998,63 @@ router.get('/holidays/calendar', async (req: Request, res: Response) => {
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
-});
+}, {
+  tags: ['Organization'],
+  summary: 'Calendario de feriados por mes',
+  description: 'Obtiene los feriados del tenant para un mes y anio, con filtros opcionales de alcance.',
+  parameters: [
+    {
+      name: 'year',
+      in: 'query',
+      required: true,
+      schema: { type: 'integer', minimum: 2000, maximum: 2100 },
+      description: 'Anio del calendario (ej: 2026)',
+    },
+    {
+      name: 'month',
+      in: 'query',
+      required: true,
+      schema: { type: 'integer', minimum: 1, maximum: 12 },
+      description: 'Mes del calendario (1-12)',
+    },  
+    {
+      name: 'company_id',
+      in: 'query',
+      required: false,
+      schema: { type: 'string' },
+    },
+    {
+      name: 'work_location_id',
+      in: 'query',
+      required: false,
+      schema: { type: 'string' },
+    },
+    {
+      name: 'country_id',
+      in: 'query',
+      required: false,
+      schema: { type: 'string' },
+    },
+    {
+      name: 'state_id',
+      in: 'query',
+      required: false,
+      schema: { type: 'string' },
+    },
+    {
+      name: 'city_id',
+      in: 'query',
+      required: false,
+      schema: { type: 'string' },
+    },
+  ],
+  responses: {
+    '200': { description: 'Calendario de feriados' },
+    '400': { description: 'Parametros invalidos' },
+    '401': { description: 'No autorizado' },
+    '500': { description: 'Error interno' },
+  },
+}));
 
 // Employee user management (link employees -> users)
 router.get('/employee-users/catalogs', async (req: Request, res: Response) => {
