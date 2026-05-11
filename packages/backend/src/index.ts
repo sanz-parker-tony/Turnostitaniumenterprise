@@ -629,9 +629,9 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           e.employee_code,
           e.employee_name,
           e.employee_lastname,
-          e.phone,
-          e.birth_date,
-          e.gender_id,
+          u.phone,
+          e.employee_birthday,
+          e.employee_gender_id,
           g.lookup_label AS gender_label,
           e.user_id AS internal_user_id,
           ec.id AS employee_company_id,
@@ -673,7 +673,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
          AND e.tenant_id = u.tenant_id
          AND e.is_active = true
         LEFT JOIN public.lookup_values g
-          ON g.id = e.gender_id
+          ON g.id = e.employee_gender_id
         LEFT JOIN LATERAL (
           SELECT *
           FROM public.employee_companies ecx
@@ -865,7 +865,6 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             h.id,
             h.holiday_date,
             h.holiday_name,
-            h.holiday_short_name,
             h.is_recurring,
             h.company_id,
             h.country_id,
@@ -1022,8 +1021,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       employee_name: context.employee_name,
       employee_lastname: context.employee_lastname,
       phone: context.phone,
-      birth_date: context.birth_date,
-      gender_id: context.gender_id,
+      birth_date: context.employee_birthday,
+      gender_id: context.employee_gender_id,
       gender_label: context.gender_label,
     };
 

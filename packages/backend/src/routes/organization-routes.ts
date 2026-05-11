@@ -1139,7 +1139,6 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
             work_location_id: row?.work_location_id || null,
             holiday_id: row?.id || null,
             holiday_name: row?.holiday_name || null,
-            holiday_short_name: row?.holiday_short_name || null,
             is_recurring: true,
           });
         }
