@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Edit, Plus, RefreshCw, Save, Search, Tablet, Trash2, X } from 'lucide-react';
+import { MapContainer, TileLayer, Polygon, CircleMarker, useMapEvents, useMap } from 'react-leaflet';
+import type { LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
 
 interface CompanyRow {
@@ -16,6 +18,14 @@ interface DeviceTypeRow {
   lookup_label: string;
 }
 
+interface WorkLocationRow {
+  id: string;
+  company_id: string | null;
+  work_location_name: string;
+  work_location_code: string;
+  geofence_polygon?: any;
+}
+
 interface DeviceRow {
   id: string;
   company_id: string;
@@ -27,6 +37,10 @@ interface DeviceRow {
   device_model: string | null;
   device_type_id: string | null;
   device_type_label: string | null;
+  work_location_id: string | null;
+  work_location_name: string | null;
+  latitude: number | null;
+  longitude: number | null;
   is_active: boolean;
 }
 
@@ -39,13 +53,21 @@ interface DeviceFormState {
   device_location: string;
   device_model: string;
   device_type_id: string;
+  work_location_id: string;
+  latitude: string;
+  longitude: string;
   is_active: boolean;
 }
 
 const PAGE_SIZE = 10;
 
+interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
 function getToken() {
-  return localStorage.getItem('tt-access-token') || publicApiToken;
+  return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
 }
 
 function isValidIpv4(value: string): boolean {
@@ -74,10 +96,156 @@ function makeEmptyForm(defaultCompanyId = ''): DeviceFormState {
     device_location: '',
     device_model: '',
     device_type_id: '',
+    work_location_id: '',
+    latitude: '',
+    longitude: '',
     is_active: true,
   };
 }
 
+function parseGeofencePoints(rawValue: any): GeoPoint[] {
+  if (!rawValue) return [];
+  let parsed: any = rawValue;
+  if (typeof rawValue === 'string') {
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      return [];
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return [];
+  const ring =
+    parsed.type === 'Polygon'
+      ? parsed.coordinates?.[0]
+      : parsed.type === 'MultiPolygon'
+        ? parsed.coordinates?.[0]?.[0]
+        : null;
+  if (!Array.isArray(ring)) return [];
+  const points = ring
+    .map((pair: any) => ({ lng: Number(pair?.[0]), lat: Number(pair?.[1]) }))
+    .filter((p: GeoPoint) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  if (points.length >= 2) {
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (first.lat === last.lat && first.lng === last.lng) {
+      return points.slice(0, -1);
+    }
+  }
+  return points;
+}
+
+function DeviceMapClickCapture({ onPick }: { onPick: (lat: string, lng: string) => void }) {
+  useMapEvents({
+    click(event) {
+      onPick(event.latlng.lat.toFixed(6), event.latlng.lng.toFixed(6));
+    },
+  });
+  return null;
+}
+
+function DeviceMapAutoFit({
+  polygonPoints,
+  marker,
+}: {
+  polygonPoints: GeoPoint[];
+  marker: GeoPoint | null;
+}) {
+  const map = useMap();
+  useEffect(() => {
+    if (polygonPoints.length >= 2) {
+      map.fitBounds(
+        polygonPoints.map((point) => [point.lat, point.lng] as [number, number]),
+        { padding: [20, 20] }
+      );
+      return;
+    }
+    if (marker) {
+      map.setView([marker.lat, marker.lng], 17);
+    }
+  }, [map, polygonPoints, marker]);
+  return null;
+}
+
+function DeviceMapPicker({
+  geofencePolygon,
+  latitude,
+  longitude,
+  onPick,
+}: {
+  geofencePolygon: any;
+  latitude: string;
+  longitude: string;
+  onPick: (lat: string, lng: string) => void;
+}) {
+  const polygonPoints = useMemo(() => parseGeofencePoints(geofencePolygon), [geofencePolygon]);
+  const [center, setCenter] = useState<LatLngExpression>([-2.17, -79.92]);
+  const [zoom, setZoom] = useState(14);
+
+  useEffect(() => {
+    if (!polygonPoints.length) return;
+    const avgLat = polygonPoints.reduce((acc, p) => acc + p.lat, 0) / polygonPoints.length;
+    const avgLng = polygonPoints.reduce((acc, p) => acc + p.lng, 0) / polygonPoints.length;
+    setCenter([avgLat, avgLng]);
+    setZoom(16);
+  }, [polygonPoints]);
+
+  const markerLat = latitude.trim() === '' ? null : Number(latitude);
+  const markerLng = longitude.trim() === '' ? null : Number(longitude);
+  const marker: GeoPoint | null =
+    Number.isFinite(markerLat) && Number.isFinite(markerLng)
+      ? { lat: Number(markerLat), lng: Number(markerLng) }
+      : null;
+
+  const polygonPositions = polygonPoints.map((point) => [point.lat, point.lng] as [number, number]);
+
+  return (
+    <div className="space-y-2 md:col-span-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="text-sm font-medium">Ubicacion por mapa</label>
+        <button
+          type="button"
+          onClick={() => {
+            if (!polygonPoints.length) return;
+            const avgLat = polygonPoints.reduce((acc, p) => acc + p.lat, 0) / polygonPoints.length;
+            const avgLng = polygonPoints.reduce((acc, p) => acc + p.lng, 0) / polygonPoints.length;
+            onPick(avgLat.toFixed(6), avgLng.toFixed(6));
+          }}
+          disabled={!polygonPoints.length}
+          className="px-2 py-1 text-xs border rounded bg-white hover:bg-gray-50 disabled:opacity-50"
+        >
+          Usar centro de geocerca
+        </button>
+      </div>
+
+      <div className="rounded-md border bg-white overflow-hidden">
+        <MapContainer center={center} zoom={zoom} className="h-[300px] w-full">
+          <TileLayer
+            attribution="&copy; OpenStreetMap contributors"
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <DeviceMapClickCapture onPick={onPick} />
+          <DeviceMapAutoFit polygonPoints={polygonPoints} marker={marker} />
+          {polygonPositions.length >= 2 && (
+            <Polygon
+              positions={polygonPositions}
+              pathOptions={{ color: '#059669', fillColor: '#10b981', fillOpacity: 0.2, weight: 3 }}
+            />
+          )}
+          {marker && (
+            <CircleMarker
+              center={[marker.lat, marker.lng]}
+              radius={8}
+              pathOptions={{ color: '#dc2626', fillColor: '#dc2626', fillOpacity: 1, weight: 2 }}
+            />
+          )}
+        </MapContainer>
+      </div>
+      <div className="text-xs text-gray-600">
+        Seleccione la localidad y luego haga clic en el mapa OpenStreetMap para fijar latitud/longitud.
+      </div>
+    </div>
+  );
+}
 export function DeviceManagement() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -87,6 +255,7 @@ export function DeviceManagement() {
 
   const [companies, setCompanies] = useState<CompanyRow[]>([]);
   const [deviceTypes, setDeviceTypes] = useState<DeviceTypeRow[]>([]);
+  const [workLocations, setWorkLocations] = useState<WorkLocationRow[]>([]);
   const [devices, setDevices] = useState<DeviceRow[]>([]);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -122,6 +291,7 @@ export function DeviceManagement() {
       const nextCompanies = (catalogsPayload?.companies || []) as CompanyRow[];
       setCompanies(nextCompanies);
       setDeviceTypes((catalogsPayload?.device_types || []) as DeviceTypeRow[]);
+      setWorkLocations((catalogsPayload?.work_locations || []) as WorkLocationRow[]);
       setDevices((devicesPayload?.devices || []) as DeviceRow[]);
 
       if (!form.company_id && nextCompanies.length > 0) {
@@ -140,7 +310,7 @@ export function DeviceManagement() {
 
   const filtered = useMemo(() => {
     return devices.filter((row) => {
-      const text = `${row.device_name || ''} ${row.device_serial_number || ''} ${row.device_ip || ''} ${row.company_name || ''}`.toLowerCase();
+      const text = `${row.device_name || ''} ${row.device_serial_number || ''} ${row.device_ip || ''} ${row.company_name || ''} ${row.work_location_name || ''}`.toLowerCase();
       const searchOk = !searchTerm.trim() || text.includes(searchTerm.toLowerCase());
       const statusOk =
         statusFilter === 'all' ||
@@ -160,6 +330,11 @@ export function DeviceManagement() {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  const selectedWorkLocation = useMemo(
+    () => workLocations.find((item) => item.id === form.work_location_id) || null,
+    [form.work_location_id, workLocations]
+  );
+
   const openCreate = () => {
     setForm(makeEmptyForm(companies[0]?.id || ''));
     setModalOpen(true);
@@ -176,6 +351,9 @@ export function DeviceManagement() {
       device_location: row.device_location || '',
       device_model: row.device_model || '',
       device_type_id: row.device_type_id || '',
+      work_location_id: row.work_location_id || '',
+      latitude: row.latitude !== null && row.latitude !== undefined ? String(row.latitude) : '',
+      longitude: row.longitude !== null && row.longitude !== undefined ? String(row.longitude) : '',
       is_active: row.is_active,
     });
     setModalOpen(true);
@@ -210,6 +388,9 @@ export function DeviceManagement() {
       device_location: form.device_location.trim() || null,
       device_model: form.device_model.trim() || null,
       device_type_id: form.device_type_id || null,
+      work_location_id: form.work_location_id || null,
+      latitude: form.latitude.trim() === '' ? null : Number(form.latitude),
+      longitude: form.longitude.trim() === '' ? null : Number(form.longitude),
       is_active: form.is_active,
     };
 
@@ -219,6 +400,10 @@ export function DeviceManagement() {
     }
     if (!payload.device_name) {
       setModalError('Debe ingresar nombre del dispositivo.');
+      return;
+    }
+    if (!payload.work_location_id) {
+      setModalError('Debe seleccionar una localidad.');
       return;
     }
     if (!isValidIpv4(form.device_ip)) {
@@ -231,6 +416,18 @@ export function DeviceManagement() {
     }
     if (form.device_model && !/^[A-Z0-9/-]+$/.test(form.device_model)) {
       setModalError('El modelo solo puede contener A-Z, 0-9, "-" y "/".');
+      return;
+    }
+    if (payload.latitude !== null && (!Number.isFinite(payload.latitude) || payload.latitude < -90 || payload.latitude > 90)) {
+      setModalError('La latitud debe estar entre -90 y 90.');
+      return;
+    }
+    if (payload.longitude !== null && (!Number.isFinite(payload.longitude) || payload.longitude < -180 || payload.longitude > 180)) {
+      setModalError('La longitud debe estar entre -180 y 180.');
+      return;
+    }
+    if (payload.latitude === null || payload.longitude === null) {
+      setModalError('Debe seleccionar la ubicacion del dispositivo en el mapa.');
       return;
     }
 
@@ -339,6 +536,8 @@ export function DeviceManagement() {
                 <th className="py-2 pr-3 text-left">Tipo</th>
                 <th className="py-2 pr-3 text-left">IP / Host</th>
                 <th className="py-2 pr-3 text-left">Ubicación</th>
+                <th className="py-2 pr-3 text-left">Localidad</th>
+                <th className="py-2 pr-3 text-left">Lat / Lng</th>
                 <th className="py-2 pr-3 text-left">Modelo</th>
                 <th className="py-2 pr-3 text-left">Estado</th>
                 <th className="py-2 text-left">Acciones</th>
@@ -347,11 +546,11 @@ export function DeviceManagement() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando dispositivos...</td>
+                  <td colSpan={11} className="py-6 text-center text-gray-500">Cargando dispositivos...</td>
                 </tr>
               ) : paged.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen dispositivos</td>
+                  <td colSpan={11} className="py-6 text-center text-gray-500">No existen dispositivos</td>
                 </tr>
               ) : (
                 paged.map((row) => (
@@ -367,6 +566,10 @@ export function DeviceManagement() {
                     <td className="py-3 pr-3">{row.device_type_label || '-'}</td>
                     <td className="py-3 pr-3">{row.device_ip || '-'}</td>
                     <td className="py-3 pr-3">{row.device_location || '-'}</td>
+                    <td className="py-3 pr-3">{row.work_location_name || '-'}</td>
+                    <td className="py-3 pr-3">
+                      {row.latitude !== null && row.longitude !== null ? `${row.latitude}, ${row.longitude}` : '-'}
+                    </td>
                     <td className="py-3 pr-3">{row.device_model || '-'}</td>
                     <td className="py-3 pr-3">
                       <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.is_active ? 'bg-green-600' : 'bg-gray-500'}`}>
@@ -422,7 +625,7 @@ export function DeviceManagement() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
           <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
-          <div className="relative w-full max-w-3xl rounded-xl border bg-white shadow-2xl">
+          <div className="relative w-full max-w-6xl rounded-xl border bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-5 py-3">
               <h3 className="text-lg font-semibold">{form.id ? 'Editar Dispositivo' : 'Nuevo Dispositivo'}</h3>
               <button onClick={closeModal} className="rounded p-1.5 hover:bg-gray-100">
@@ -430,23 +633,57 @@ export function DeviceManagement() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-3">
               {modalError && (
-                <div className="md:col-span-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <div className="md:col-span-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {modalError}
                 </div>
               )}
+
+              {/* Fila 1: Empresa - Localidad - Tipo */}
               <div>
                 <label className="text-sm font-medium">Empresa</label>
                 <select
                   value={form.company_id}
-                  onChange={(event) => setForm((prev) => ({ ...prev, company_id: event.target.value }))}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      company_id: event.target.value,
+                      work_location_id: '',
+                      latitude: '',
+                      longitude: '',
+                    }))
+                  }
                   className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
                 >
                   <option value="">Seleccione</option>
                   {companies.map((item) => (
                     <option key={item.id} value={item.id}>{item.company_name}</option>
                   ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-medium">Localidad</label>
+                <select
+                  value={form.work_location_id}
+                  onChange={(event) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      work_location_id: event.target.value,
+                      latitude: '',
+                      longitude: '',
+                    }))
+                  }
+                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">Seleccione</option>
+                  {workLocations
+                    .filter((item) => !form.company_id || item.company_id === form.company_id)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.work_location_name}
+                      </option>
+                    ))}
                 </select>
               </div>
               <div>
@@ -463,6 +700,7 @@ export function DeviceManagement() {
                 </select>
               </div>
 
+              {/* Fila 2: Nombre - Serial - IP */}
               <div>
                 <label className="text-sm font-medium">Nombre</label>
                 <input
@@ -481,7 +719,6 @@ export function DeviceManagement() {
                 />
                 <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>
               </div>
-
               <div>
                 <label className="text-sm font-medium">IP / Host</label>
                 <input
@@ -492,6 +729,8 @@ export function DeviceManagement() {
                 />
                 <div className="mt-1 text-xs text-gray-500">Formato: x.x.x.x (cada valor 0-255)</div>
               </div>
+
+              {/* Fila 3: Ubicación - Modelo - Activo */}
               <div>
                 <label className="text-sm font-medium">Ubicación</label>
                 <input
@@ -500,7 +739,6 @@ export function DeviceManagement() {
                   className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
                 />
               </div>
-
               <div>
                 <label className="text-sm font-medium">Modelo</label>
                 <input
@@ -511,16 +749,47 @@ export function DeviceManagement() {
                 />
                 <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>
               </div>
-              <div className="flex items-end">
-                <label className="inline-flex items-center gap-2 text-sm">
+              <div>
+                <label className="text-sm font-medium">Activo</label>
+                <label className="mt-1 w-full inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm min-h-[42px] bg-white">
                   <input
                     type="checkbox"
                     checked={form.is_active}
                     onChange={(event) => setForm((prev) => ({ ...prev, is_active: event.target.checked }))}
+                    className="size-4 rounded border-gray-300 text-[#0074D9] focus:ring-[#0074D9]"
                   />
                   Activo
                 </label>
               </div>
+
+              {/* Fila 4: Latitud / Longitud */}
+              <div>
+                <label className="text-sm font-medium">Latitud</label>
+                <input
+                  value={form.latitude}
+                  readOnly
+                  className="mt-1 w-full rounded-md border bg-gray-50 px-3 py-2 text-sm"
+                  placeholder="Seleccione un punto en el mapa"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Longitud</label>
+                <input
+                  value={form.longitude}
+                  readOnly
+                  className="mt-1 w-full rounded-md border bg-gray-50 px-3 py-2 text-sm"
+                  placeholder="Seleccione un punto en el mapa"
+                />
+              </div>
+              <div />
+
+              {/* Mapa */}
+              <DeviceMapPicker
+                geofencePolygon={selectedWorkLocation?.geofence_polygon}
+                latitude={form.latitude}
+                longitude={form.longitude}
+                onPick={(lat, lng) => setForm((prev) => ({ ...prev, latitude: lat, longitude: lng }))}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t px-5 py-3">
@@ -540,4 +809,6 @@ export function DeviceManagement() {
     </div>
   );
 }
+
+
 

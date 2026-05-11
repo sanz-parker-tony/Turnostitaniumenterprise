@@ -50,6 +50,13 @@ function parseRequiredInt(value: any): number | null {
   return Math.trunc(next);
 }
 
+function parseNullableCoordinate(value: any): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const next = Number(value);
+  if (!Number.isFinite(next)) return Number.NaN;
+  return next;
+}
+
 function isValidDateTime(value: string): boolean {
   const date = new Date(value);
   return Number.isFinite(date.getTime());
@@ -196,6 +203,8 @@ router.get('/', async (req: Request, res: Response) => {
           st.lookup_label AS time_punch_status_label,
           p.service_ticket_number,
           p.notes,
+          p.latitud,
+          p.longitud,
           p.process_run_id,
           p.is_active,
           p.created_by,
@@ -245,6 +254,8 @@ router.post('/', async (req: Request, res: Response) => {
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
     const serviceTicketNumber = normalizeNullableInt(req.body?.service_ticket_number);
     const notes = normalizeNullableText(req.body?.notes);
+    const latitud = parseNullableCoordinate(req.body?.latitud);
+    const longitud = parseNullableCoordinate(req.body?.longitud);
     const processRunId = normalizeNullableText(req.body?.process_run_id);
     const isActive = req.body?.is_active !== false;
 
@@ -255,6 +266,18 @@ router.post('/', async (req: Request, res: Response) => {
     }
     if (punchKey === null) {
       return res.status(400).json({ error: 'punch_key es obligatorio y debe ser entero' });
+    }
+    if (latitud !== null && !Number.isFinite(latitud)) {
+      return res.status(400).json({ error: 'latitud debe ser numerica' });
+    }
+    if (longitud !== null && !Number.isFinite(longitud)) {
+      return res.status(400).json({ error: 'longitud debe ser numerica' });
+    }
+    if (latitud !== null && (latitud < -90 || latitud > 90)) {
+      return res.status(400).json({ error: 'latitud fuera de rango (-90 a 90)' });
+    }
+    if (longitud !== null && (longitud < -180 || longitud > 180)) {
+      return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
     }
 
     const actor = getActor(req);
@@ -272,13 +295,15 @@ router.post('/', async (req: Request, res: Response) => {
           time_punch_status_id,
           service_ticket_number,
           notes,
+          latitud,
+          longitud,
           process_run_id,
           is_active,
           created_by
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
         )
         RETURNING *
       `,
@@ -293,6 +318,8 @@ router.post('/', async (req: Request, res: Response) => {
         timePunchStatusId,
         serviceTicketNumber,
         notes,
+        latitud,
+        longitud,
         processRunId,
         isActive,
         actor,
@@ -322,6 +349,8 @@ router.put('/:id', async (req: Request, res: Response) => {
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
     const serviceTicketNumber = normalizeNullableInt(req.body?.service_ticket_number);
     const notes = normalizeNullableText(req.body?.notes);
+    const latitud = parseNullableCoordinate(req.body?.latitud);
+    const longitud = parseNullableCoordinate(req.body?.longitud);
     const processRunId = normalizeNullableText(req.body?.process_run_id);
     const isActive = req.body?.is_active !== false;
 
@@ -332,6 +361,18 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
     if (punchKey === null) {
       return res.status(400).json({ error: 'punch_key es obligatorio y debe ser entero' });
+    }
+    if (latitud !== null && !Number.isFinite(latitud)) {
+      return res.status(400).json({ error: 'latitud debe ser numerica' });
+    }
+    if (longitud !== null && !Number.isFinite(longitud)) {
+      return res.status(400).json({ error: 'longitud debe ser numerica' });
+    }
+    if (latitud !== null && (latitud < -90 || latitud > 90)) {
+      return res.status(400).json({ error: 'latitud fuera de rango (-90 a 90)' });
+    }
+    if (longitud !== null && (longitud < -180 || longitud > 180)) {
+      return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
     }
 
     const actor = getActor(req);
@@ -348,9 +389,11 @@ router.put('/:id', async (req: Request, res: Response) => {
           time_punch_status_id = $9,
           service_ticket_number = $10,
           notes = $11,
-          process_run_id = $12,
-          is_active = $13,
-          updated_by = $14,
+          latitud = $12,
+          longitud = $13,
+          process_run_id = $14,
+          is_active = $15,
+          updated_by = $16,
           updated_at = now()
         WHERE id = $1
           AND tenant_id = $2
@@ -368,6 +411,8 @@ router.put('/:id', async (req: Request, res: Response) => {
         timePunchStatusId,
         serviceTicketNumber,
         notes,
+        latitud,
+        longitud,
         processRunId,
         isActive,
         actor,

@@ -1,7 +1,9 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, RefreshCw, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
+import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
+import type { LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
 
 type EntityKey =
@@ -63,6 +65,11 @@ interface EmployeePhotoValidationRules {
   max_aspect_ratio: number;
 }
 
+interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
 type ApiErrorWithMeta = Error & { code?: string; details?: string };
 
 const SHIFT_ICON_OPTIONS = [
@@ -87,8 +94,203 @@ const FALLBACK_EMPLOYEE_PHOTO_RULES: EmployeePhotoValidationRules = {
   max_aspect_ratio: 0.82,
 };
 
+function parseGeofencePoints(rawValue: any): GeoPoint[] {
+  if (!rawValue) return [];
+
+  let parsed: any = rawValue;
+  if (typeof rawValue === 'string') {
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object') return [];
+
+  const readRing = (ring: any[]): GeoPoint[] =>
+    ring
+      .map((pair) => ({
+        lng: Number(pair?.[0]),
+        lat: Number(pair?.[1]),
+      }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+  if (parsed.type === 'Polygon' && Array.isArray(parsed.coordinates?.[0])) {
+    const ring = readRing(parsed.coordinates[0]);
+    if (ring.length >= 2) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first.lat === last.lat && first.lng === last.lng) {
+        return ring.slice(0, -1);
+      }
+    }
+    return ring;
+  }
+
+  if (parsed.type === 'MultiPolygon' && Array.isArray(parsed.coordinates?.[0]?.[0])) {
+    const ring = readRing(parsed.coordinates[0][0]);
+    if (ring.length >= 2) {
+      const first = ring[0];
+      const last = ring[ring.length - 1];
+      if (first.lat === last.lat && first.lng === last.lng) {
+        return ring.slice(0, -1);
+      }
+    }
+    return ring;
+  }
+
+  return [];
+}
+
+function toGeofenceGeoJson(points: GeoPoint[]) {
+  if (points.length < 3) return null;
+  const closedRing = [...points, points[0]].map((p) => [Number(p.lng.toFixed(6)), Number(p.lat.toFixed(6))]);
+  return {
+    type: 'Polygon',
+    coordinates: [closedRing],
+  };
+}
+
+function PolygonMapClickCapture({ onAddPoint }: { onAddPoint: (point: GeoPoint) => void }) {
+  useMapEvents({
+    click(event) {
+      onAddPoint({
+        lat: Number(event.latlng.lat.toFixed(6)),
+        lng: Number(event.latlng.lng.toFixed(6)),
+      });
+    },
+  });
+  return null;
+}
+
+function PolygonMapAutoFit({ points }: { points: GeoPoint[] }) {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length < 2) return;
+    const bounds = points.map((p) => [p.lat, p.lng] as [number, number]);
+    map.fitBounds(bounds, { padding: [20, 20] });
+  }, [map, points]);
+  return null;
+}
+
+function PolygonEditorField({
+  value,
+  onChange,
+}: {
+  value: any;
+  onChange: (next: any) => void;
+}) {
+  const [points, setPoints] = useState<GeoPoint[]>(() => parseGeofencePoints(value));
+  const [center, setCenter] = useState<LatLngExpression>([-2.17, -79.92]);
+  const [zoom, setZoom] = useState(14);
+
+  useEffect(() => {
+    const nextPoints = parseGeofencePoints(value);
+    setPoints(nextPoints);
+    if (nextPoints.length > 0) {
+      const avgLat = nextPoints.reduce((acc, p) => acc + p.lat, 0) / nextPoints.length;
+      const avgLng = nextPoints.reduce((acc, p) => acc + p.lng, 0) / nextPoints.length;
+      setCenter([avgLat, avgLng]);
+    }
+  }, [value]);
+
+  const commitPoints = (nextPoints: GeoPoint[]) => {
+    setPoints(nextPoints);
+    onChange(toGeofenceGeoJson(nextPoints));
+  };
+
+  const polygonPositions = points.map((point) => [point.lat, point.lng] as [number, number]);
+
+  return (
+    <div className="space-y-2">
+      <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <button
+          type="button"
+          className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
+          onClick={() => commitPoints(points.slice(0, -1))}
+          disabled={points.length === 0}
+        >
+          Deshacer vertice
+        </button>
+        <button
+          type="button"
+          className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
+          onClick={() => commitPoints([])}
+          disabled={points.length === 0}
+        >
+          Limpiar
+        </button>
+        <button
+          type="button"
+          className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
+          onClick={() => {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition((pos) => {
+              setCenter([Number(pos.coords.latitude), Number(pos.coords.longitude)]);
+              setZoom(16);
+            });
+          }}
+        >
+          Centrar en mi ubicacion
+        </button>
+      </div>
+
+      <div className="text-xs text-gray-600">
+        Clic sobre el mapa OpenStreetMap para agregar vertices. Vertices: {points.length}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <div className="lg:col-span-2 rounded-md border bg-white overflow-hidden">
+          <MapContainer center={center} zoom={zoom} className="h-[320px] w-full">
+            <TileLayer
+              attribution="&copy; OpenStreetMap contributors"
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+            <PolygonMapClickCapture onAddPoint={(point) => commitPoints([...points, point])} />
+            <PolygonMapAutoFit points={points} />
+            {polygonPositions.length >= 2 && (
+              <Polygon
+                positions={polygonPositions}
+                pathOptions={{ color: '#2563eb', fillColor: '#2563eb', fillOpacity: 0.22, weight: 3 }}
+              />
+            )}
+            {points.map((point, idx) => (
+              <CircleMarker
+                key={`${point.lat}-${point.lng}-${idx}`}
+                center={[point.lat, point.lng]}
+                radius={6}
+                pathOptions={{ color: '#1d4ed8', fillColor: '#1d4ed8', fillOpacity: 1, weight: 2 }}
+              />
+            ))}
+          </MapContainer>
+        </div>
+
+        <textarea
+          value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
+          readOnly
+          className="h-[320px] w-full border rounded px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
+          placeholder="GeoJSON del poligono"
+        />
+      </div>
+    </div>
+  );
+}
+
 function getToken() {
-  return localStorage.getItem('tt-access-token') || publicApiToken;
+  return (
+    localStorage.getItem('tt-access-token') ||
+    localStorage.getItem('access_token') ||
+    publicApiToken
+  );
+}
+
+function getAlternateToken(currentToken: string) {
+  const primary = localStorage.getItem('tt-access-token') || '';
+  const secondary = localStorage.getItem('access_token') || '';
+  if (primary && primary !== currentToken) return primary;
+  if (secondary && secondary !== currentToken) return secondary;
+  return '';
 }
 
 const ENTITY_CONFIGS: EntityConfig[] = [
@@ -119,13 +321,12 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'company_id', label: 'Empresa', type: 'select', required: true, optionsKey: 'companies' },
       { key: 'work_location_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_location_short_name', label: 'Nombre corto', type: 'text', required: true },
+      { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'work_location_code', label: 'Código', type: 'text', required: true },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
-      { key: 'latitude', label: 'Latitud', type: 'number' },
-      { key: 'longitude', label: 'Longitud', type: 'number' },
-      { key: 'is_active', label: 'Activo', type: 'boolean' },
+      { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
-    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'latitude', 'longitude', 'is_active'],
+    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'geofence_polygon', 'is_active'],
   },
   {
     key: 'departments',
@@ -308,23 +509,34 @@ export function OrgMaintenance({
   }, [initialEntity]);
 
   const request = async (path: string, init?: RequestInit) => {
+    const callWithToken = async (token: string) => {
+      try {
+        return await fetch(`http://localhost:3001${path}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            ...(init?.headers || {}),
+          },
+        });
+      } catch (networkErr: any) {
+        const err = new Error(
+          'Error de conexion con backend (Failed to fetch). Verifique que el backend este activo y que el payload no exceda el limite configurado.'
+        ) as ApiErrorWithMeta;
+        err.code = 'NETWORK_FETCH_ERROR';
+        err.details = networkErr?.message || null;
+        throw err;
+      }
+    };
+
+    const primaryToken = getToken();
     let response: Response;
-    try {
-      response = await fetch(`http://localhost:3001${path}`, {
-        ...init,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${getToken()}`,
-          ...(init?.headers || {}),
-        },
-      });
-    } catch (networkErr: any) {
-      const err = new Error(
-        'Error de conexion con backend (Failed to fetch). Verifique que el backend este activo y que el payload no exceda el limite configurado.'
-      ) as ApiErrorWithMeta;
-      err.code = 'NETWORK_FETCH_ERROR';
-      err.details = networkErr?.message || null;
-      throw err;
+    response = await callWithToken(primaryToken);
+    if (response.status === 401) {
+      const alternateToken = getAlternateToken(primaryToken);
+      if (alternateToken) {
+        response = await callWithToken(alternateToken);
+      }
     }
 
     const payload = await response.json().catch(() => ({}));
@@ -781,6 +993,19 @@ export function OrgMaintenance({
         }
       });
 
+      if (entity === 'work-locations') {
+        const polygonValue = payload.geofence_polygon;
+        if (polygonValue === '' || polygonValue === undefined) {
+          payload.geofence_polygon = null;
+        } else if (typeof polygonValue === 'string') {
+          try {
+            payload.geofence_polygon = JSON.parse(polygonValue);
+          } catch {
+            throw new Error('El poligono debe ser un GeoJSON valido');
+          }
+        }
+      }
+
       if (entity === 'employees' && selectedPhotoFile) {
         setPhotoUploading(true);
         try {
@@ -948,6 +1173,10 @@ export function OrgMaintenance({
       return selected ? String(getOptionLabel(selected)) : String(rawValue);
     }
 
+    if (column === 'geofence_polygon') {
+      return rawValue ? 'Definido' : 'No definido';
+    }
+
     return String(rawValue ?? '');
   };
 
@@ -1020,7 +1249,7 @@ export function OrgMaintenance({
                 clearPhotoPreview();
               }}
             />
-            <div className="relative w-full max-w-6xl max-h-[90vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
+            <div className="relative w-full max-w-7xl max-h-[94vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
               <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
                 <h3 className="text-base font-semibold text-gray-900">
                   {editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`}
@@ -1040,7 +1269,10 @@ export function OrgMaintenance({
               <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {config.fields.map((field) => (
-                <div key={field.key} className="space-y-1">
+                <div
+                  key={field.key}
+                  className={`space-y-1 ${entity === 'work-locations' && field.key === 'geofence_polygon' ? 'lg:col-span-3' : ''}`}
+                >
                   <label className="text-xs font-medium text-gray-700">
                     {field.label} {field.required && '*'}
                   </label>
@@ -1097,6 +1329,13 @@ export function OrgMaintenance({
                         />
                       )}
                     </div>
+                  ) : entity === 'work-locations' && field.key === 'geofence_polygon' ? (
+                    <PolygonEditorField
+                      value={formData[field.key]}
+                      onChange={(nextValue) =>
+                        setFormData((prev) => ({ ...prev, [field.key]: nextValue }))
+                      }
+                    />
                   ) : field.type === 'select' ? (
 
                     <select
@@ -1123,16 +1362,17 @@ export function OrgMaintenance({
                       ))}
                     </select>
                   ) : field.type === 'boolean' ? (
-                    <select
-                      value={String(formData[field.key] ?? true)}
-                      onChange={(event) =>
-                        setFormData((prev) => ({ ...prev, [field.key]: event.target.value === 'true' }))
-                      }
-                      className="w-full border rounded px-2 py-1.5 text-sm"
-                    >
-                      <option value="true">true</option>
-                      <option value="false">false</option>
-                    </select>
+                    <label className="w-full inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-2 text-sm bg-white min-h-[38px]">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(formData[field.key] ?? true)}
+                        onChange={(event) =>
+                          setFormData((prev) => ({ ...prev, [field.key]: event.target.checked }))
+                        }
+                        className="size-4 rounded border-gray-300 text-[#0074D9] focus:ring-[#0074D9]"
+                      />
+                      <span className="text-gray-700">{field.label || 'Activo'}</span>
+                    </label>
                   ) : (
                     <input
                       type={
@@ -1266,4 +1506,8 @@ export function OrgMaintenance({
     </div>
   );
 }
+
+
+
+
 

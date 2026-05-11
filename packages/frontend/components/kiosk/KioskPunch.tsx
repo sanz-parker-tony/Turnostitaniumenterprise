@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Building2, Loader2, MonitorSmartphone, User } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
@@ -8,6 +8,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
+const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
+const KEY_LABEL_OVERRIDES: Record<number, string> = {
+  1: 'Entrada',
+  2: 'Inicio Lunch',
+  3: 'Retorno Lunch',
+  4: 'Salida',
+};
 
 interface SelectOption {
   id: string;
@@ -62,7 +69,23 @@ function formatDate(date: Date): string {
   });
 }
 
+function getBrowserPosition(timeoutMs = 10000): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new Error('Este navegador no soporta geolocalizacion'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: timeoutMs,
+      maximumAge: 0,
+    });
+  });
+}
+
 export default function KioskPunch() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingLookupId, setSavingLookupId] = useState<string | null>(null);
   const [context, setContext] = useState<ContextPayload | null>(null);
@@ -70,22 +93,37 @@ export default function KioskPunch() {
   const [defaultPunchStatusId, setDefaultPunchStatusId] = useState('');
   const [clockNow, setClockNow] = useState<Date>(new Date());
   const [photoFailed, setPhotoFailed] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
     const { data: { session } } = await api.auth.getSession();
-    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    const token =
+      session?.access_token ||
+      localStorage.getItem('tt-access-token') ||
+      localStorage.getItem('access_token');
     if (!token) throw new Error('No hay sesion activa. Inicia sesion para marcar.');
 
-    const response = await fetch(`http://localhost:3001${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers || {}),
-      },
-    });
-    const payload = await response.json().catch(() => ({}));
+    const doFetch = async (bearer: string) => {
+      const response = await fetch(`http://localhost:3001${path}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearer}`,
+          ...(init?.headers || {}),
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    let { response, payload } = await doFetch(token);
+    if (response.status === 401 && session?.access_token && token !== session.access_token) {
+      const retry = await doFetch(session.access_token);
+      response = retry.response;
+      payload = retry.payload;
+    }
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
   };
@@ -96,6 +134,58 @@ export default function KioskPunch() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const initCamera = async () => {
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        setCameraError('Este navegador no soporta camara.');
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
+        }
+        setCameraReady(true);
+        setCameraError(null);
+      } catch (err: any) {
+        setCameraReady(false);
+        setCameraError(err?.message || 'No se pudo acceder a la camara');
+      }
+    };
+
+    void initCamera();
+
+    return () => {
+      cancelled = true;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  const captureSnapshotBase64 = (): string | null => {
+    const video = videoRef.current;
+    if (!video || !cameraReady || video.videoWidth <= 0 || video.videoHeight <= 0) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  };
 
   const orderedPunchKeys = useMemo(() => {
     const items = context?.punch_keys || [];
@@ -164,6 +254,27 @@ export default function KioskPunch() {
       toast.error('No se pudo determinar la empresa del empleado');
       return;
     }
+    if (!cameraReady) {
+      toast.error('La camara no esta lista. Autorice el acceso y reintente.');
+      return;
+    }
+
+    const snapshotBase64 = captureSnapshotBase64();
+    if (!snapshotBase64) {
+      toast.error('No se pudo capturar la foto de marcacion.');
+      return;
+    }
+
+    let latitud: number;
+    let longitud: number;
+    try {
+      const position = await getBrowserPosition();
+      latitud = position.coords.latitude;
+      longitud = position.coords.longitude;
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo obtener la ubicacion geografica.');
+      return;
+    }
 
     setSavingLookupId(punchKeyLookupId);
     try {
@@ -174,10 +285,13 @@ export default function KioskPunch() {
           time_clock_device_id: FIXED_DEVICE_ID,
           punch_key_lookup_id: punchKeyLookupId,
           time_punch_status_id: defaultPunchStatusId || null,
+          snapshot_base64: snapshotBase64,
+          latitud,
+          longitud,
         }),
       });
       setLastMarkAt(new Date().toISOString());
-      toast.success('Marcacion registrada correctamente');
+      toast.success('Marcacion registrada con camara y geolocalizacion');
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo registrar la marcacion');
     } finally {
@@ -190,7 +304,7 @@ export default function KioskPunch() {
     const isSaving = item?.id ? savingLookupId === item.id : false;
     const disabled = !item || !!savingLookupId;
 
-    const isStartKey = keyNumber <= 3;
+    const isStartKey = START_MOVEMENT_KEYS.has(keyNumber);
     const toneClass = isStartKey
       ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
       : 'border-rose-400 bg-rose-50 hover:bg-rose-100';
@@ -204,7 +318,7 @@ export default function KioskPunch() {
         onClick={() => item?.id && void submitPunch(item.id)}
         disabled={disabled}
         variant="outline"
-        className={`h-24 w-full rounded-xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center ${toneClass}`}
+        className={`h-24 w-full rounded-2xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center shadow-sm ${toneClass}`}
       >
         {isSaving ? (
           <Loader2 className="w-5 h-5 animate-spin mb-2" />
@@ -214,7 +328,7 @@ export default function KioskPunch() {
           </span>
         )}
         <span className="text-sm font-medium leading-tight">
-          {item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
+          {KEY_LABEL_OVERRIDES[keyNumber] || item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
         </span>
       </Button>
     );
@@ -275,32 +389,49 @@ export default function KioskPunch() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
-            <div className="space-y-3 lg:col-span-1">
+          <div className="grid grid-cols-1 lg:grid-cols-[220px_440px_220px] gap-4 items-start">
+            <div className="space-y-3">
               {renderKeyButton(1)}
+              {renderKeyButton(2)}
+              {renderKeyButton(3)}
               {renderKeyButton(4)}
             </div>
 
-            <div className="lg:col-span-2 rounded-2xl border-2 border-slate-800 bg-slate-900 text-white p-6 flex flex-col items-center justify-center shadow-inner">
-              <p className="text-slate-300 text-sm uppercase tracking-widest mb-2">Hora del sistema</p>
-              <p className="text-5xl md:text-6xl font-semibold tabular-nums leading-none">{formatTime(clockNow)}</p>
-              <p className="mt-3 text-slate-300 capitalize">{formatDate(clockNow)}</p>
+            <div className="space-y-3">
+              <div className="h-[312px] overflow-hidden bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+              </div>
+
+              <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-24 px-5 py-3 flex items-center justify-between shadow-inner">
+                <div className="leading-tight">
+                  <p className="text-slate-300 text-[11px] uppercase tracking-widest">Hora del sistema</p>
+                  <p className="text-slate-300 text-[13px] capitalize">{formatDate(clockNow)}</p>
+                </div>
+                <p className="text-5xl font-semibold tabular-nums leading-none">{formatTime(clockNow)}</p>
+              </div>
               {lastMarkAt && (
-                <p className="mt-4 text-xs text-slate-300">
+                <p className="text-xs text-slate-600">
                   Ultima marcacion: {new Date(lastMarkAt).toLocaleString('es-EC')}
                 </p>
               )}
+              <p className="text-xs text-slate-600">
+                {cameraReady
+                  ? 'Captura automatica activa: al marcar se toma una foto y se guarda con el id de marcacion.'
+                  : `Camara no disponible: ${cameraError || 'inicializando...'}`}
+              </p>
             </div>
 
-            <div className="space-y-3 lg:col-span-1">
-              {renderKeyButton(2)}
-              {renderKeyButton(3)}
+            <div className="space-y-3">
+              {renderKeyButton(5)}
+              {renderKeyButton(6)}
+              <div className="h-[216px]" />
             </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {renderKeyButton(5)}
-            {renderKeyButton(6)}
           </div>
 
           <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">

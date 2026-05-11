@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Edit, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, CircleDot, Edit, Minus, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import * as LucideIcons from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 
 interface WorkPatternShiftRow {
@@ -34,12 +35,14 @@ interface ShiftCatalogRow {
   id: string;
   shift_name: string;
   shift_short_name: string;
+  shift_icon_key?: string | null;
+  shift_bg_color?: string | null;
+  shift_text_color?: string | null;
   is_active: boolean;
 }
 
 interface WorkPatternShiftFormRow {
   shift_id: string;
-  cycle_day_number: string;
 }
 
 interface WorkPatternFormState {
@@ -83,6 +86,21 @@ function toInt(value: string, fallback = 0): number {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+function resolveShiftIcon(iconKey?: string | null) {
+  const raw = String(iconKey || '').trim();
+  if (!raw) return CircleDot;
+  const compact = raw.replace(/[^a-zA-Z0-9]/g, '');
+  const pascal = compact.charAt(0).toUpperCase() + compact.slice(1);
+  return ((LucideIcons as any)[pascal] as any) || CircleDot;
+}
+
+function getShiftColors(shift?: ShiftCatalogRow | null) {
+  return {
+    bg: String(shift?.shift_bg_color || '#F1F5F9'),
+    text: String(shift?.shift_text_color || '#0F172A'),
+  };
+}
+
 export function WorkPatternsManagement() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -98,7 +116,7 @@ export function WorkPatternsManagement() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<WorkPatternFormState>(makeEmptyForm());
-  const [newShiftId, setNewShiftId] = useState('');
+  const [openShiftPickerIndex, setOpenShiftPickerIndex] = useState<number | null>(null);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -168,7 +186,7 @@ export function WorkPatternsManagement() {
 
   const openCreate = () => {
     setForm(makeEmptyForm());
-    setNewShiftId('');
+    setOpenShiftPickerIndex(null);
     setModalOpen(true);
     setModalError(null);
   };
@@ -176,9 +194,8 @@ export function WorkPatternsManagement() {
   const openEdit = (row: WorkPatternRow) => {
     const sortedShifts = [...(row.pattern_shifts || [])]
       .sort((a, b) => (a.sequence_number || 0) - (b.sequence_number || 0))
-      .map((item, index) => ({
+      .map((item) => ({
         shift_id: item.shift_id,
-        cycle_day_number: String(item.cycle_day_number || index + 1),
       }));
 
     setForm({
@@ -194,7 +211,7 @@ export function WorkPatternsManagement() {
       is_active: row.is_active,
       pattern_shifts: sortedShifts,
     });
-    setNewShiftId('');
+    setOpenShiftPickerIndex(null);
     setModalOpen(true);
     setModalError(null);
   };
@@ -203,23 +220,14 @@ export function WorkPatternsManagement() {
     setModalOpen(false);
     setSaving(false);
     setModalError(null);
+    setOpenShiftPickerIndex(null);
   };
 
   const addShiftSequence = () => {
-    const shiftId = String(newShiftId || '').trim();
-    if (!shiftId) return;
-
     setForm((prev) => ({
       ...prev,
-      pattern_shifts: [
-        ...prev.pattern_shifts,
-        {
-          shift_id: shiftId,
-          cycle_day_number: String(prev.pattern_shifts.length + 1),
-        },
-      ],
+      pattern_shifts: [...prev.pattern_shifts, { shift_id: '' }],
     }));
-    setNewShiftId('');
   };
 
   const removeShiftSequence = (index: number) => {
@@ -227,6 +235,12 @@ export function WorkPatternsManagement() {
       ...prev,
       pattern_shifts: prev.pattern_shifts.filter((_, currentIndex) => currentIndex !== index),
     }));
+    setOpenShiftPickerIndex((prev) => {
+      if (prev === null) return null;
+      if (prev === index) return null;
+      if (prev > index) return prev - 1;
+      return prev;
+    });
   };
 
   const moveShiftSequence = (index: number, direction: 'up' | 'down') => {
@@ -241,11 +255,11 @@ export function WorkPatternsManagement() {
     });
   };
 
-  const updateShiftCycleDay = (index: number, value: string) => {
+  const updateShiftSelection = (index: number, shiftId: string) => {
     setForm((prev) => ({
       ...prev,
       pattern_shifts: prev.pattern_shifts.map((item, currentIndex) =>
-        currentIndex === index ? { ...item, cycle_day_number: value } : item
+        currentIndex === index ? { ...item, shift_id: shiftId } : item
       ),
     }));
   };
@@ -271,7 +285,7 @@ export function WorkPatternsManagement() {
     const sequencePayload = form.pattern_shifts.map((item, index) => ({
       shift_id: item.shift_id,
       sequence_number: index + 1,
-      cycle_day_number: toInt(item.cycle_day_number),
+      cycle_day_number: index + 1,
       is_active: true,
     }));
 
@@ -303,26 +317,16 @@ export function WorkPatternsManagement() {
       return;
     }
 
-    const usedCycleDays = new Set<number>();
     for (let index = 0; index < payload.pattern_shifts.length; index += 1) {
       const row = payload.pattern_shifts[index];
       if (!row.shift_id) {
         setModalError(`Debe seleccionar turno en la secuencia #${index + 1}.`);
         return;
       }
-      if (row.cycle_day_number <= 0) {
-        setModalError(`El día de ciclo en la secuencia #${index + 1} debe ser mayor a 0.`);
+      if (row.sequence_number > payload.cycle_length_days) {
+        setModalError(`La secuencia #${index + 1} excede la longitud del ciclo (${payload.cycle_length_days}).`);
         return;
       }
-      if (row.cycle_day_number > payload.cycle_length_days) {
-        setModalError(`El día de ciclo ${row.cycle_day_number} excede la longitud del ciclo (${payload.cycle_length_days}).`);
-        return;
-      }
-      if (usedCycleDays.has(row.cycle_day_number)) {
-        setModalError(`El día de ciclo ${row.cycle_day_number} está repetido.`);
-        return;
-      }
-      usedCycleDays.add(row.cycle_day_number);
     }
 
     setSaving(true);
@@ -511,7 +515,7 @@ export function WorkPatternsManagement() {
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
           <div className="absolute inset-0 bg-black/40" onClick={closeModal} />
-          <div className="relative max-h-[92vh] w-full max-w-5xl overflow-auto rounded-xl border bg-white shadow-2xl">
+          <div className="relative flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b px-5 py-3">
               <h3 className="text-lg font-semibold">{form.id ? 'Editar Patrón' : 'Nuevo Patrón'}</h3>
               <button onClick={closeModal} className="rounded p-1.5 hover:bg-gray-100">
@@ -621,7 +625,7 @@ export function WorkPatternsManagement() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="max-h-[36vh] space-y-2 overflow-y-auto pr-1">
                   {form.pattern_shifts.length === 0 ? (
                     <div className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-gray-500">
                       No hay turnos agregados en la secuencia.
@@ -629,21 +633,63 @@ export function WorkPatternsManagement() {
                   ) : (
                     form.pattern_shifts.map((item, index) => {
                       const shift = shiftById.get(item.shift_id);
-                      const label = shift ? `${shift.shift_name} (${shift.shift_short_name})` : item.shift_id;
+                      const Icon = resolveShiftIcon(shift?.shift_icon_key);
+                      const colors = getShiftColors(shift);
+                      const label = shift ? `${shift.shift_name} (${shift.shift_short_name})` : 'Seleccionar turno...';
                       return (
                         <div key={`${item.shift_id}-${index}`} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
                           <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">#{index + 1}</span>
-                          <div className="min-w-[260px] flex-1 text-sm">{label}</div>
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs text-gray-600">Día ciclo</label>
-                            <input
-                              type="number"
-                              min={1}
-                              className="w-20 rounded-md border px-2 py-1.5 text-sm"
-                              value={item.cycle_day_number}
-                              onChange={(event) => updateShiftCycleDay(index, event.target.value)}
-                            />
+
+                          <div className="relative min-w-[280px] flex-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenShiftPickerIndex((prev) => (prev === index ? null : index))
+                              }
+                              className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm"
+                              style={{
+                                backgroundColor: item.shift_id ? colors.bg : '#FFFFFF',
+                                color: item.shift_id ? colors.text : '#334155',
+                              }}
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <Icon className="size-4" />
+                                {label}
+                              </span>
+                              <ChevronDown className="size-4 opacity-70" />
+                            </button>
+
+                            {openShiftPickerIndex === index && (
+                              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-white shadow-lg">
+                                {availableShifts.map((catalogShift) => {
+                                  const CatalogIcon = resolveShiftIcon(catalogShift.shift_icon_key);
+                                  const itemColors = getShiftColors(catalogShift);
+                                  return (
+                                    <button
+                                      key={catalogShift.id}
+                                      type="button"
+                                      onClick={() => {
+                                        updateShiftSelection(index, catalogShift.id);
+                                        setOpenShiftPickerIndex(null);
+                                      }}
+                                      className="flex w-full items-center justify-between border-b px-3 py-2 text-left text-sm last:border-b-0"
+                                      style={{
+                                        backgroundColor: itemColors.bg,
+                                        color: itemColors.text,
+                                      }}
+                                    >
+                                      <span className="inline-flex items-center gap-2">
+                                        <CatalogIcon className="size-4" />
+                                        {catalogShift.shift_name} ({catalogShift.shift_short_name})
+                                      </span>
+                                      {item.shift_id === catalogShift.id ? <span className="text-xs">Seleccionado</span> : null}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
+
                           <button
                             type="button"
                             onClick={() => moveShiftSequence(index, 'up')}
@@ -666,9 +712,9 @@ export function WorkPatternsManagement() {
                             type="button"
                             onClick={() => removeShiftSequence(index)}
                             className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-600 hover:bg-red-50"
-                            title="Quitar turno"
+                            title="Remove"
                           >
-                            <X className="size-4" />
+                            <Minus className="size-4" />
                           </button>
                         </div>
                       );
@@ -676,27 +722,14 @@ export function WorkPatternsManagement() {
                   )}
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <select
-                    value={newShiftId}
-                    onChange={(event) => setNewShiftId(event.target.value)}
-                    className="min-w-[280px] flex-1 rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">Seleccionar turno...</option>
-                    {availableShifts.map((shift) => (
-                      <option key={shift.id} value={shift.id}>
-                        {shift.shift_name} ({shift.shift_short_name})
-                      </option>
-                    ))}
-                  </select>
+                <div className="mt-3 flex items-center">
                   <button
                     type="button"
                     onClick={addShiftSequence}
-                    disabled={!newShiftId}
-                    className="inline-flex items-center gap-2 rounded-md border border-green-200 px-3 py-2 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-md border border-green-200 px-3 py-2 text-sm text-green-700 hover:bg-green-50"
                   >
                     <Plus className="size-4" />
-                    Agregar turno
+                    Add
                   </button>
                 </div>
               </div>

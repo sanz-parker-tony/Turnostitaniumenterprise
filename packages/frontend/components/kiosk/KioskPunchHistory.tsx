@@ -80,18 +80,31 @@ export default function KioskPunchHistory() {
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
     const { data: { session } } = await api.auth.getSession();
-    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    const token =
+      session?.access_token ||
+      localStorage.getItem('tt-access-token') ||
+      localStorage.getItem('access_token');
     if (!token) throw new Error('No hay sesion activa');
 
-    const response = await fetch(`http://localhost:3001${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(init?.headers || {}),
-      },
-    });
-    const payload = await response.json().catch(() => ({}));
+    const doFetch = async (bearer: string) => {
+      const response = await fetch(`http://localhost:3001${path}`, {
+        ...init,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${bearer}`,
+          ...(init?.headers || {}),
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    let { response, payload } = await doFetch(token);
+    if (response.status === 401 && session?.access_token && token !== session.access_token) {
+      const retry = await doFetch(session.access_token);
+      response = retry.response;
+      payload = retry.payload;
+    }
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
   };

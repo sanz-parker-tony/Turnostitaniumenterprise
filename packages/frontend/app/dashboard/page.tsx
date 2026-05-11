@@ -1,6 +1,6 @@
 /**
  * Dashboard Principal - Home para TODOS los roles
- * Contenido dinámico según rol del usuario
+ * Contenido dinÃ¡mico segÃºn rol del usuario
  */
 
 'use client';
@@ -12,10 +12,61 @@ import Link from 'next/link';
 import { 
   Clock, AlertTriangle, Calendar, TrendingUp, Users, 
   Shield, Settings, FileText, CheckCircle, XCircle,
-  ArrowRight, ClipboardList, FileCheck
+  ArrowRight, ClipboardList, FileCheck, MapPin, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+
+interface TenantSummaryShift {
+  id: string;
+  shift_name: string;
+  shift_short_name: string;
+  start_time: string | null;
+  work_minutes: number | null;
+  shift_icon_key: string | null;
+  shift_bg_color: string | null;
+  shift_text_color: string | null;
+}
+
+interface TenantSummaryWorkPattern {
+  id: string;
+  pattern_name: string;
+  pattern_short_name: string;
+  cycle_length_days: number;
+  work_days_per_cycle: number;
+  rest_days_per_cycle: number;
+}
+
+interface TenantSummaryHoliday {
+  id: string;
+  holiday_date: string;
+  holiday_name: string;
+  company_name: string | null;
+}
+
+interface TenantSummaryDevice {
+  id: string;
+  company_name: string | null;
+  device_name: string | null;
+  device_serial_number: string | null;
+  work_location_name: string | null;
+  geofence_polygon: any;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+function toMonthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function formatShiftTime(value: string | null | undefined): string {
+  if (!value) return '--:--';
+  return String(value).slice(0, 5);
+}
+
+function dayShortName(date: Date): string {
+  return date.toLocaleDateString('es-EC', { weekday: 'short' }).replace('.', '');
+}
 
 export default function DashboardPage() {
   const { user, profile, userRoles, isLoading: authLoading } = useAuth();
@@ -31,14 +82,15 @@ export default function DashboardPage() {
 
     if (!authLoading && userRoles) {
       // Determinar tipo de dashboard por prioridad de rol
-      if (userRoles.includes('EMPLOYEE')) {
-        setDashboardType('EMPLOYEE');
+      // Nota: TENANT_ADMIN debe tener prioridad sobre EMPLOYEE para mostrar su tablero administrativo.
+      if (userRoles.includes('SYSTEM_ADMIN')) {
+        setDashboardType('SYSTEM_ADMIN');
       } else if (userRoles.includes('TENANT_ADMIN')) {
         setDashboardType('TENANT_ADMIN');
-      } else if (userRoles.includes('SYSTEM_ADMIN')) {
-        setDashboardType('SYSTEM_ADMIN');
       } else if (userRoles.includes('RRHH_ADMIN')) {
         setDashboardType('RRHH_ADMIN');
+      } else if (userRoles.includes('EMPLOYEE')) {
+        setDashboardType('EMPLOYEE');
       } else {
         setDashboardType('DEFAULT');
       }
@@ -67,9 +119,9 @@ export default function DashboardPage() {
           </h1>
           <p className="text-gray-600 mt-2">
             {dashboardType === 'EMPLOYEE' && 'Panel de autoservicio - Gestiona tus asistencias y solicitudes'}
-            {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - Gestión de personal y aprobaciones'}
-            {dashboardType === 'SYSTEM_ADMIN' && 'Panel de Administración - Configuración del sistema'}
-            {dashboardType === 'TENANT_ADMIN' && 'Panel de Administración - Gestión del tenant'}
+            {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - GestiÃ³n de personal y aprobaciones'}
+            {dashboardType === 'SYSTEM_ADMIN' && 'Panel de AdministraciÃ³n - ConfiguraciÃ³n del sistema'}
+            {dashboardType === 'TENANT_ADMIN' && 'Panel de AdministraciÃ³n - GestiÃ³n del tenant'}
             {dashboardType === 'DEFAULT' && 'Panel principal'}
           </p>
         </div>
@@ -84,7 +136,7 @@ export default function DashboardPage() {
         {dashboardType === 'SYSTEM_ADMIN' && <SystemAdminDashboard />}
 
         {/* Dashboard TENANT_ADMIN */}
-        {dashboardType === 'TENANT_ADMIN' && <TenantAdminDashboard />}
+        {dashboardType === 'TENANT_ADMIN' && <TenantAdminDashboard menuScreens={menuScreens} />}
 
         {/* Dashboard DEFAULT */}
         {dashboardType === 'DEFAULT' && <DefaultDashboard />}
@@ -113,19 +165,19 @@ function EmployeeDashboard() {
           icon={<XCircle className="w-6 h-6 text-red-600" />}
           title="Inasistencias"
           value="2"
-          description="Requieren justificación"
+          description="Requieren justificaciÃ³n"
           color="red"
         />
         <StatCard
           icon={<Calendar className="w-6 h-6 text-blue-600" />}
           title="Turno Actual"
-          value="Mañana"
+          value="MaÃ±ana"
           description="08:00 - 17:00"
           color="blue"
         />
         <StatCard
           icon={<Clock className="w-6 h-6 text-green-600" />}
-          title="Última Marcación"
+          title="Ãšltima MarcaciÃ³n"
           value="08:15"
           description="Hoy - Entrada"
           color="green"
@@ -135,14 +187,14 @@ function EmployeeDashboard() {
       {/* CTAs a KIOSK */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <CTACard
-          title="Marcación de Asistencia"
+          title="MarcaciÃ³n de Asistencia"
           description="Registra tu entrada o salida"
           icon={<Clock className="w-8 h-8 text-[#0074D9]" />}
           href="/kiosk/punch"
-          buttonText="Ir a Marcación"
+          buttonText="Ir a MarcaciÃ³n"
         />
         <CTACard
-          title="Regularización"
+          title="RegularizaciÃ³n"
           description="Corrige marcaciones inconsistentes"
           icon={<FileCheck className="w-8 h-8 text-amber-600" />}
           href="/kiosk/regularization"
@@ -178,9 +230,9 @@ function EmployeeDashboard() {
         />
       </div>
 
-      {/* Últimas Marcaciones */}
+      {/* Ãšltimas Marcaciones */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Últimas Marcaciones</h2>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Ãšltimas Marcaciones</h2>
         <div className="space-y-3">
           {[
             { date: 'Hoy', time: '08:15', type: 'Entrada', status: 'success' },
@@ -227,9 +279,9 @@ function RRHHDashboard() {
         />
         <StatCard
           icon={<AlertTriangle className="w-6 h-6 text-red-600" />}
-          title="Anomalías"
+          title="AnomalÃ­as"
           value="8"
-          description="Requieren revisión"
+          description="Requieren revisiÃ³n"
           color="red"
         />
         <StatCard
@@ -248,7 +300,7 @@ function RRHHDashboard() {
         />
       </div>
 
-      {/* Accesos Rápidos */}
+      {/* Accesos RÃ¡pidos */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <QuickAccessCard
           title="Aprobar Solicitudes"
@@ -256,7 +308,7 @@ function RRHHDashboard() {
           href="/dashboard/attendance/approvals"
         />
         <QuickAccessCard
-          title="Revisar Anomalías"
+          title="Revisar AnomalÃ­as"
           count={8}
           href="/dashboard/attendance/anomalies"
         />
@@ -301,7 +353,7 @@ function SystemAdminDashboard() {
         />
         <StatCard
           icon={<Shield className="w-6 h-6 text-amber-600" />}
-          title="Logs de Auditoría"
+          title="Logs de AuditorÃ­a"
           value="1,234"
           description="Eventos registrados"
           color="amber"
@@ -310,7 +362,7 @@ function SystemAdminDashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <QuickAccessCard
-          title="Configuración Tenant"
+          title="ConfiguraciÃ³n Tenant"
           href="/dashboard/config/tenant-settings"
         />
         <QuickAccessCard
@@ -318,7 +370,7 @@ function SystemAdminDashboard() {
           href="/dashboard/config/devices"
         />
         <QuickAccessCard
-          title="Auditoría"
+          title="AuditorÃ­a"
           href="/dashboard/security/audit"
         />
       </div>
@@ -330,69 +382,455 @@ function SystemAdminDashboard() {
 // TENANT_ADMIN DASHBOARD
 // ============================================================================
 
-function TenantAdminDashboard() {
+function TenantAdminDashboard({
+  menuScreens,
+}: {
+  menuScreens: Array<{ screen_key: string; route_path: string; menu_label?: string; menu_group_key?: string }>;
+}) {
+  const { session } = useAuth();
+  const [loadingSummary, setLoadingSummary] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [tenantSummary, setTenantSummary] = useState<any>(null);
+  const [monthCursor, setMonthCursor] = useState<Date>(() => {
+    const base = new Date();
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadSummary = async () => {
+      if (!session?.access_token) {
+        if (mounted) setLoadingSummary(false);
+        return;
+      }
+      try {
+        if (mounted) {
+          setLoadingSummary(true);
+          setSummaryError(null);
+        }
+
+        const month = toMonthKey(monthCursor);
+        const resp = await fetch(`http://localhost:3001/dashboard/tenant-admin-summary?month=${encodeURIComponent(month)}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(payload?.error || 'No se pudo cargar el resumen del tenant');
+        }
+        if (mounted) setTenantSummary(payload);
+      } catch (e: any) {
+        if (mounted) setSummaryError(e?.message || 'Error cargando resumen del tenant');
+      } finally {
+        if (mounted) setLoadingSummary(false);
+      }
+    };
+
+    void loadSummary();
+    return () => {
+      mounted = false;
+    };
+  }, [session?.access_token, monthCursor]);
+
+  const tenant = tenantSummary?.tenant || {};
+  const metrics = tenantSummary?.metrics || {};
+  const shifts = (tenantSummary?.shifts || []) as TenantSummaryShift[];
+  const workPatterns = (tenantSummary?.work_patterns || []) as TenantSummaryWorkPattern[];
+  const monthCalendar = (tenantSummary?.calendar?.holidays || []) as TenantSummaryHoliday[];
+  const mapDevices = (tenantSummary?.devices || []) as TenantSummaryDevice[];
+
+  const quickLinks = menuScreens
+    .filter((screen) => screen.route_path && screen.route_path !== '/dashboard')
+    .sort((a, b) => (a.menu_label || a.screen_key).localeCompare(b.menu_label || b.screen_key))
+    .slice(0, 6);
+
+  const organizationSnapshot = [
+    { label: 'Empresas', value: metrics?.active_companies ?? 0 },
+    { label: 'Ubicaciones', value: metrics?.active_work_locations ?? 0 },
+    { label: 'Departamentos', value: metrics?.active_departments ?? 0 },
+    { label: 'Areas', value: metrics?.active_areas ?? 0 },
+    { label: 'Centros de Costo', value: metrics?.active_cost_centers ?? 0 },
+    { label: 'Grupos de Nomina', value: metrics?.active_payroll_groups ?? 0 },
+    { label: 'Grupos de Trabajo', value: metrics?.active_work_groups ?? 0 },
+    { label: 'Perfiles', value: metrics?.active_employee_profiles ?? 0 },
+    { label: 'Cargos', value: metrics?.active_job_titles ?? 0 },
+    { label: 'Empleados Activos', value: metrics?.active_employees ?? 0 },
+  ];
+
+  const planningSnapshot = [
+    { label: 'Turnos Activos', value: metrics?.active_shifts ?? 0 },
+    { label: 'Patrones de Trabajo Activos', value: metrics?.active_work_patterns ?? 0 },
+  ];
+
+  const calendarSnapshot = [
+    { label: 'Feriados Activos', value: metrics?.active_holidays ?? 0 },
+    { label: 'Feriados del Anio', value: metrics?.holidays_current_year ?? 0 },
+    { label: 'Feriados Proximos (90 dias)', value: metrics?.holidays_next_90_days ?? 0 },
+    {
+      label: 'Proximo Feriado',
+      value:
+        metrics?.next_holiday_date && metrics?.next_holiday_name
+          ? `${metrics.next_holiday_name} (${metrics.next_holiday_date})`
+          : '-',
+    },
+  ];
+
+  const monthTitle = monthCursor.toLocaleDateString('es-EC', { month: 'long', year: 'numeric' });
+
   return (
     <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Informacion del Tenant</h3>
+        {loadingSummary ? (
+          <p className="text-sm text-gray-500">Cargando informacion...</p>
+        ) : summaryError ? (
+          <p className="text-sm text-red-600">{summaryError}</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+            <div>
+              <p className="text-gray-500">Tenant</p>
+              <p className="font-semibold text-gray-900">{tenant?.tenant_name || '-'}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Clave</p>
+              <p className="font-semibold text-gray-900">{tenant?.tenant_key || '-'}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Idioma</p>
+              <p className="font-semibold text-gray-900">{tenant?.language_code || '-'}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Estado</p>
+              <p className="font-semibold text-gray-900">{tenant?.is_active ? 'Activo' : 'Inactivo'}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           icon={<Users className="w-6 h-6 text-blue-600" />}
           title="Usuarios Activos"
-          value="45"
-          description="Miembros del tenant"
+          value={String(metrics?.active_users ?? 0)}
+          description="Usuarios activos del tenant"
           color="blue"
         />
         <StatCard
+          icon={<Users className="w-6 h-6 text-green-600" />}
+          title="Empleados Activos"
+          value={String(metrics?.active_employees ?? 0)}
+          description="Empleados activos del tenant"
+          color="green"
+        />
+        <StatCard
           icon={<Shield className="w-6 h-6 text-purple-600" />}
-          title="Roles"
-          value="8"
+          title="Roles Activos"
+          value={String(metrics?.active_roles ?? 0)}
           description="Roles configurados"
           color="purple"
         />
         <StatCard
-          icon={<Settings className="w-6 h-6 text-green-600" />}
-          title="Pantallas"
-          value="52"
-          description="Screens disponibles"
-          color="green"
-        />
-        <StatCard
-          icon={<FileText className="w-6 h-6 text-amber-600" />}
-          title="Eventos Audit"
-          value="892"
-          description="Esta semana"
+          icon={<Settings className="w-6 h-6 text-amber-600" />}
+          title="Empresas Activas"
+          value={String(metrics?.active_companies ?? 0)}
+          description="Empresas habilitadas"
           color="amber"
         />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <QuickAccessCard
-          title="Usuarios Tenant"
-          href="/dashboard/security/tenant-members"
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <StatCard
+          icon={<FileText className="w-6 h-6 text-amber-600" />}
+          title="Solicitudes de Permiso"
+          value={String(metrics?.pending_absence_requests ?? 0)}
+          description="Pendientes de aprobacion"
+          color="amber"
         />
-        <QuickAccessCard
-          title="Roles y Permisos"
-          href="/dashboard/security/roles"
+        <StatCard
+          icon={<Calendar className="w-6 h-6 text-purple-600" />}
+          title="Cambios de Turno"
+          value={String(metrics?.pending_shift_change_requests ?? 0)}
+          description="Pendientes de aprobacion"
+          color="purple"
         />
-        <QuickAccessCard
-          title="Auditoría"
-          href="/dashboard/security/audit"
+        <StatCard
+          icon={<Settings className="w-6 h-6 text-blue-600" />}
+          title="Parametros Tenant"
+          value={String(metrics?.tenant_setting_overrides ?? 0)}
+          description="Overrides activos"
+          color="blue"
         />
+        <StatCard
+          icon={<Users className="w-6 h-6 text-green-600" />}
+          title="Miembros Tenant"
+          value={String(metrics?.tenant_members ?? 0)}
+          description="Miembros vinculados"
+          color="green"
+        />
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Estructura organizacional (solo lectura)</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {organizationSnapshot.map((item) => (
+            <div key={item.label} className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <p className="text-xs text-gray-500">{item.label}</p>
+              <p className="text-xl font-semibold text-gray-900">{item.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Planificacion</h3>
+          <div className="space-y-3">
+            {planningSnapshot.map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
+                <span className="text-sm text-gray-600">{item.label}</span>
+                <span className="text-sm font-semibold text-gray-900">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Calendario</h3>
+          <div className="space-y-3">
+            {calendarSnapshot.map((item) => (
+              <div key={item.label} className="flex items-center justify-between rounded-md border border-gray-200 px-3 py-2">
+                <span className="text-sm text-gray-600">{item.label}</span>
+                <span className="text-sm font-semibold text-gray-900 text-right">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Turnos existentes</h3>
+          {shifts.length === 0 ? (
+            <p className="text-sm text-gray-500">No existen turnos activos.</p>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-auto pr-1">
+              {shifts.map((shift) => (
+                <div
+                  key={shift.id}
+                  className="rounded-md border border-gray-200 px-3 py-2"
+                  style={{ backgroundColor: shift.shift_bg_color || '#F8FAFC', color: shift.shift_text_color || '#111827' }}
+                >
+                  <p className="text-sm font-semibold">{shift.shift_name}</p>
+                  <p className="text-xs opacity-90">
+                    {shift.shift_short_name} · {formatShiftTime(shift.start_time)} · {shift.work_minutes ?? 0} min
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Patrones de trabajo existentes</h3>
+          {workPatterns.length === 0 ? (
+            <p className="text-sm text-gray-500">No existen patrones activos.</p>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-auto pr-1">
+              {workPatterns.map((pattern) => (
+                <div key={pattern.id} className="rounded-md border border-gray-200 px-3 py-2">
+                  <p className="text-sm font-semibold text-gray-900">{pattern.pattern_name}</p>
+                  <p className="text-xs text-gray-600">
+                    {pattern.pattern_short_name} · Ciclo {pattern.cycle_length_days} dias · Trabajo {pattern.work_days_per_cycle} / Descanso {pattern.rest_days_per_cycle}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">Calendario del mes ({monthTitle})</h3>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              <ChevronLeft className="size-4" />
+              Anterior
+            </button>
+            <button
+              onClick={() => setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+            >
+              Siguiente
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+        </div>
+        <CalendarMonthPanel month={monthCursor} holidays={monthCalendar} />
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Dispositivos existentes en mapa</h3>
+        <DevicesMapPanel devices={mapDevices} />
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Accesos rapidos</h3>
+        {quickLinks.length === 0 ? (
+          <p className="text-sm text-gray-500">No hay modulos disponibles para este rol.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {quickLinks.map((screen) => (
+              <QuickAccessCard
+                key={`${screen.screen_key}-${screen.route_path}`}
+                title={screen.menu_label || screen.screen_key}
+                href={screen.route_path}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ============================================================================
-// DEFAULT DASHBOARD
-// ============================================================================
+function CalendarMonthPanel({
+  month,
+  holidays,
+}: {
+  month: Date;
+  holidays: TenantSummaryHoliday[];
+}) {
+  const start = new Date(month.getFullYear(), month.getMonth(), 1);
+  const end = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  const leadingDays = (start.getDay() + 6) % 7;
+  const totalDays = end.getDate();
+  const cells: Array<Date | null> = [];
+  for (let i = 0; i < leadingDays; i += 1) cells.push(null);
+  for (let day = 1; day <= totalDays; day += 1) cells.push(new Date(month.getFullYear(), month.getMonth(), day));
+  while (cells.length % 7 !== 0) cells.push(null);
 
+  const holidayByDate = new Map<string, TenantSummaryHoliday[]>();
+  holidays.forEach((row) => {
+    const key = row.holiday_date?.slice(0, 10);
+    if (!key) return;
+    const list = holidayByDate.get(key) || [];
+    list.push(row);
+    holidayByDate.set(key, list);
+  });
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-7 gap-2 text-xs font-semibold text-gray-500">
+        {['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'].map((name) => (
+          <div key={name} className="rounded bg-gray-50 px-2 py-1 text-center">{name}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-2">
+        {cells.map((date, idx) => {
+          if (!date) {
+            return <div key={`empty-${idx}`} className="h-24 rounded border border-dashed border-gray-200 bg-gray-50" />;
+          }
+          const key = date.toISOString().slice(0, 10);
+          const entries = holidayByDate.get(key) || [];
+          const isToday = key === new Date().toISOString().slice(0, 10);
+          return (
+            <div
+              key={key}
+              className={`h-24 rounded border px-2 py-1 ${isToday ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-white'}`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-gray-700">{date.getDate()}</span>
+                <span className="text-[10px] text-gray-500">{dayShortName(date)}</span>
+              </div>
+              <div className="mt-1 space-y-1 overflow-hidden">
+                {entries.slice(0, 2).map((entry) => (
+                  <div key={entry.id} className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 truncate" title={entry.holiday_name}>
+                    {entry.holiday_name}
+                  </div>
+                ))}
+                {entries.length > 2 ? (
+                  <div className="text-[10px] text-gray-500">+{entries.length - 2} mas</div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DevicesMapPanel({ devices }: { devices: TenantSummaryDevice[] }) {
+  const withGeo = devices.filter((row) => row.latitude !== null && row.longitude !== null);
+  const minLat = withGeo.length ? Math.min(...withGeo.map((d) => Number(d.latitude))) : 0;
+  const maxLat = withGeo.length ? Math.max(...withGeo.map((d) => Number(d.latitude))) : 0;
+  const minLng = withGeo.length ? Math.min(...withGeo.map((d) => Number(d.longitude))) : 0;
+  const maxLng = withGeo.length ? Math.max(...withGeo.map((d) => Number(d.longitude))) : 0;
+  const latRange = maxLat - minLat || 1;
+  const lngRange = maxLng - minLng || 1;
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div className="rounded-lg border border-gray-200 bg-slate-50 p-3 min-h-[260px] relative overflow-hidden">
+        {withGeo.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-sm text-gray-500">
+            No hay dispositivos con coordenadas para mostrar en mapa.
+          </div>
+        ) : (
+          <>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_rgba(59,130,246,0.15),_transparent_60%)]" />
+            {withGeo.map((row) => {
+              const x = ((Number(row.longitude) - minLng) / lngRange) * 100;
+              const y = 100 - ((Number(row.latitude) - minLat) / latRange) * 100;
+              const safeX = Math.min(96, Math.max(4, x));
+              const safeY = Math.min(96, Math.max(4, y));
+              const title = `${row.device_name || row.device_serial_number || row.id} (${row.latitude}, ${row.longitude})`;
+              return (
+                <div key={row.id} className="absolute" style={{ left: `${safeX}%`, top: `${safeY}%`, transform: 'translate(-50%, -50%)' }} title={title}>
+                  <MapPin className="size-5 text-blue-700 drop-shadow" />
+                </div>
+              );
+            })}
+          </>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white p-3 max-h-[260px] overflow-auto">
+        <div className="space-y-2">
+          {devices.length === 0 ? (
+            <p className="text-sm text-gray-500">No existen dispositivos activos.</p>
+          ) : (
+            devices.map((row) => (
+              <div key={row.id} className="rounded border border-gray-200 px-3 py-2">
+                <p className="text-sm font-semibold text-gray-900">{row.device_name || row.device_serial_number || 'Dispositivo'}</p>
+                <p className="text-xs text-gray-600">
+                  {row.company_name || '-'} · {row.work_location_name || 'Sin localidad'}
+                </p>
+                <p className="text-xs text-gray-600">
+                  Coordenadas: {row.latitude !== null && row.longitude !== null ? `${row.latitude}, ${row.longitude}` : 'No configuradas'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Geocerca: {row.geofence_polygon ? 'Definida' : 'No definida'}
+                </p>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 function DefaultDashboard() {
   return (
     <div className="text-center py-12">
       <Settings className="w-16 h-16 text-gray-400 mx-auto mb-4" />
       <h2 className="text-2xl font-semibold text-gray-900 mb-2">Dashboard Principal</h2>
       <p className="text-gray-600">
-        Usa el menú lateral para acceder a las funcionalidades del sistema
+        Usa el menÃº lateral para acceder a las funcionalidades del sistema
       </p>
     </div>
   );
@@ -473,9 +911,11 @@ function QuickAccessCard({ title, count, href }: {
         )}
       </div>
       <div className="flex items-center text-[#0074D9] text-sm font-medium">
-        Ir a módulo
+        Ir a mÃ³dulo
         <ArrowRight className="w-4 h-4 ml-2" />
       </div>
     </Link>
   );
 }
+
+

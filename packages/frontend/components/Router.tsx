@@ -24,6 +24,7 @@ import { CalendarManagement } from './screens/config/CalendarManagement';
 import { DeviceManagement } from './screens/config/DeviceManagement';
 import { PayrollIntegration } from './screens/config/PayrollIntegration';
 import { WorkPatternsManagement } from './screens/config/WorkPatternsManagement';
+import { ProfileAttendanceEventsManagement } from './screens/config/ProfileAttendanceEventsManagement';
 import { OrgStructure } from './screens/org/OrgStructure';
 import { OrgMaintenance } from './screens/org/OrgMaintenance';
 import { EmployeeCompaniesManagement } from './screens/org/EmployeeCompaniesManagement';
@@ -38,6 +39,7 @@ import SubscriptionPlansManagement from './screens/security/SubscriptionPlansMan
 import KioskPunch from './kiosk/KioskPunch';
 import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
+import KioskShiftChange from './kiosk/KioskShiftChange';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 
 export function Router() {
@@ -117,6 +119,7 @@ export function Router() {
     '/dashboard/config/devices':         <DeviceManagement />,
     '/dashboard/config/payroll':         <PayrollIntegration />,
     '/dashboard/config/work-patterns':   <WorkPatternsManagement />,
+    '/dashboard/config/profile-attendance-events': <ProfileAttendanceEventsManagement />,
 
     // ── Organización ───────────────────────────────────────────────────────
     '/dashboard/org/structure': <OrgStructure />,
@@ -143,6 +146,13 @@ export function Router() {
     '/dashboard/kiosk/timeclock': <KioskPunch />,
     '/dashboard/kiosk/attendance': <KioskPunchHistory />,
     '/dashboard/kiosk/requests': <KioskRequests />,
+    '/dashboard/kiosk/shift-change': <KioskShiftChange />,
+    '/kiosk/punch': <KioskPunch />,
+    '/kiosk/timeclock': <KioskPunch />,
+    '/kiosk/attendance': <KioskPunchHistory />,
+    '/kiosk/my-punches': <KioskPunchHistory />,
+    '/kiosk/requests': <KioskRequests />,
+    '/kiosk/shift-change': <KioskShiftChange />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

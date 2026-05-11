@@ -30,8 +30,14 @@ interface PermissionsContextType {
 }
 
 const PermissionsContext = createContext<PermissionsContextType | undefined>(undefined);
-const EXCLUDED_MENU_ROUTES = new Set(['/dashboard/org/employees', '/dashboard/config/shifts']);
-const EXCLUDED_SCREEN_KEYS = new Set(['ORG_EMPLOYEES', 'SCHEDULE_MANAGEMENT']);
+const EXCLUDED_MENU_ROUTES = new Set([
+  '/dashboard/org/employees',
+  '/dashboard/config/shifts',
+]);
+const EXCLUDED_SCREEN_KEYS = new Set([
+  'ORG_EMPLOYEES',
+  'SCHEDULE_MANAGEMENT',
+]);
 const APPROVAL_ALLOWED_ROLES = new Set(['SUPERVISOR', 'RHADMIN']);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
@@ -112,10 +118,25 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
           return true;
         });
 
+        const dedupedScreens = Array.from(
+          filteredScreens.reduce((acc, screen) => {
+            const dedupeKey = `${screen.menu_group_key}::${(screen.menu_label || '').trim().toUpperCase()}`;
+            const existing = acc.get(dedupeKey);
+            if (!existing) {
+              acc.set(dedupeKey, screen);
+              return acc;
+            }
+            if (screen.screen_sort_order < existing.screen_sort_order) {
+              acc.set(dedupeKey, screen);
+            }
+            return acc;
+          }, new Map<string, MenuScreen>()).values()
+        );
+
         if (isMounted) {
-          setMenuScreens(filteredScreens);
-          console.log('✅ Pantallas cargadas y ordenadas:', filteredScreens.length);
-          console.log('📋 Pantallas:', filteredScreens);
+          setMenuScreens(dedupedScreens);
+          console.log('✅ Pantallas cargadas y ordenadas:', dedupedScreens.length);
+          console.log('📋 Pantallas:', dedupedScreens);
         }
       } catch (error: any) {
         // ✅ Ignorar AbortError - es normal cuando se desmonta el componente

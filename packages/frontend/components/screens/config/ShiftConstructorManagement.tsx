@@ -3,6 +3,7 @@
 import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  Ambulance,
   BellRing,
   Briefcase,
   ChevronDown,
@@ -16,6 +17,7 @@ import {
   Save,
   Search,
   Shield,
+  Siren,
   Trash2,
   Truck,
   Sun,
@@ -32,6 +34,8 @@ interface ShiftCatalogItem {
   shift_name: string;
   shift_short_name: string;
   shift_icon_key?: string | null;
+  shift_bg_color?: string | null;
+  shift_text_color?: string | null;
   work_minutes: number;
   lunch_minutes: number;
   is_active: boolean;
@@ -120,6 +124,8 @@ const SHIFT_ICON_OPTIONS: ShiftIconOption[] = [
   { key: 'Briefcase', label: 'Maletín (Oficina)', Icon: Briefcase, color: '#374151', bg: '#EEF2F7' },
   { key: 'Coffee', label: 'Taza caliente (Libre)', Icon: Coffee, color: '#6B7280', bg: '#F3F4F6' },
   { key: 'BellRing', label: 'Sirena de emergencia', Icon: BellRing, color: '#DC2626', bg: '#FEE2E2' },
+  { key: 'Siren', label: 'Sirena de ambulancia', Icon: Siren, color: '#DC2626', bg: '#FEE2E2' },
+  { key: 'Ambulance', label: 'Ambulancia', Icon: Ambulance, color: '#1D4ED8', bg: '#EFF6FF' },
   { key: 'Shield', label: 'Seguridad', Icon: Shield, color: '#0E7490', bg: '#ECFEFF' },
   { key: 'Wrench', label: 'Mantenimiento técnico', Icon: Wrench, color: '#0F766E', bg: '#ECFDF5' },
   { key: 'Truck', label: 'Logística / Ruta', Icon: Truck, color: '#B45309', bg: '#FFFBEB' },
@@ -221,6 +227,17 @@ function snapToInterval(minutes: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function getReadableTextColor(bgHex?: string | null): string {
+  const raw = String(bgHex || '').trim();
+  const match = raw.match(/^#([0-9a-fA-F]{6})$/);
+  if (!match) return '#0F172A';
+  const r = parseInt(match[1].slice(0, 2), 16);
+  const g = parseInt(match[1].slice(2, 4), 16);
+  const b = parseInt(match[1].slice(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#0F172A' : '#FFFFFF';
 }
 
 function generateShiftShortName(name: string): string {
@@ -335,6 +352,8 @@ export function ShiftConstructorManagement() {
   const [shiftName, setShiftName] = useState('');
   const [shiftShortName, setShiftShortName] = useState('');
   const [shiftIconKey, setShiftIconKey] = useState('Sun');
+  const [shiftBgColor, setShiftBgColor] = useState(SHIFT_ICON_MAP.Sun.bg);
+  const [shiftTextColor, setShiftTextColor] = useState(SHIFT_ICON_MAP.Sun.color);
   const [iconComboOpen, setIconComboOpen] = useState(false);
   const [constructorName, setConstructorName] = useState('');
   const [blocks, setBlocks] = useState<ShiftBlockRow[]>([]);
@@ -419,6 +438,8 @@ export function ShiftConstructorManagement() {
       setShiftName(nextShiftName);
       setShiftShortName(nextShortName);
       setShiftIconKey(payload.shift?.shift_icon_key || 'Sun');
+      setShiftBgColor(payload.shift?.shift_bg_color || SHIFT_ICON_MAP[payload.shift?.shift_icon_key || 'Sun']?.bg || SHIFT_ICON_MAP.Sun.bg);
+      setShiftTextColor(payload.shift?.shift_text_color || SHIFT_ICON_MAP[payload.shift?.shift_icon_key || 'Sun']?.color || SHIFT_ICON_MAP.Sun.color);
       setConstructorName(payload.constructor?.constructor_name || `Constructor ${nextShiftName}`);
       setBlocks(normalizeBlocks(payload.blocks || []));
     } catch (err: any) {
@@ -458,6 +479,8 @@ export function ShiftConstructorManagement() {
     setShiftName('');
     setShiftShortName('');
     setShiftIconKey('Sun');
+    setShiftBgColor(SHIFT_ICON_MAP.Sun.bg);
+    setShiftTextColor(SHIFT_ICON_MAP.Sun.color);
     setConstructorName('');
     setBlocks([]);
     setSelectedBlockIndex(null);
@@ -474,6 +497,8 @@ export function ShiftConstructorManagement() {
     setShiftName(shift.shift_name);
     setShiftShortName(shift.shift_short_name || generateShiftShortName(shift.shift_name));
     setShiftIconKey(shift.shift_icon_key || 'Sun');
+    setShiftBgColor(shift.shift_bg_color || SHIFT_ICON_MAP[shift.shift_icon_key || 'Sun']?.bg || SHIFT_ICON_MAP.Sun.bg);
+    setShiftTextColor(shift.shift_text_color || SHIFT_ICON_MAP[shift.shift_icon_key || 'Sun']?.color || SHIFT_ICON_MAP.Sun.color);
     setConstructorName(shift.constructor?.constructor_name || `Constructor ${shift.shift_name}`);
     setBlocks([]);
     setSelectedBlockIndex(null);
@@ -707,6 +732,8 @@ export function ShiftConstructorManagement() {
         shift_name: trimmedName,
         shift_short_name: finalShortName,
         shift_icon_key: shiftIconKey,
+        shift_bg_color: shiftBgColor,
+        shift_text_color: shiftTextColor,
         constructor_name: finalConstructorName,
         blocks: sortedBlocks,
       };
@@ -950,6 +977,7 @@ export function ShiftConstructorManagement() {
                 <th className="text-left py-2 pr-3">Nombre</th>
                 <th className="text-left py-2 pr-3">Código</th>
                 <th className="text-left py-2 pr-3">Ícono</th>
+                <th className="text-left py-2 pr-3">Color fondo</th>
                 <th className="text-left py-2 pr-3">Horas Totales</th>
                 <th className="text-left py-2 pr-3">Horas Lunch</th>
                 <th className="text-left py-2 pr-3">Estado</th>
@@ -959,11 +987,11 @@ export function ShiftConstructorManagement() {
             <tbody>
               {loadingCatalogs ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-gray-500">Cargando turnos...</td>
+                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando turnos...</td>
                 </tr>
               ) : pagedShifts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-gray-500">No existen turnos</td>
+                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen turnos</td>
                 </tr>
               ) : (
                 pagedShifts.map((shift, index) => (
@@ -982,13 +1010,25 @@ export function ShiftConstructorManagement() {
                         const iconMeta = SHIFT_ICON_MAP[shift.shift_icon_key || ''] || SHIFT_ICON_MAP.Sun;
                         const IconPreview = iconMeta.Icon;
                         return (
-                          <span
-                            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs"
-                            style={{ backgroundColor: iconMeta.bg, color: iconMeta.color }}
-                          >
+                          <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-slate-700 bg-white">
                             <IconPreview className="size-3.5" />
                             {iconMeta.label}
                           </span>
+                        );
+                      })()}
+                    </td>
+                    <td className="py-0 pr-3">
+                      {(() => {
+                        const bgColor = shift.shift_bg_color || SHIFT_ICON_MAP[shift.shift_icon_key || '']?.bg || '#F1F5F9';
+                        const textColor = getReadableTextColor(bgColor);
+                        return (
+                          <div
+                            className="w-full h-full min-h-[44px] flex items-center justify-center rounded-sm border text-xs font-mono font-semibold"
+                            style={{ backgroundColor: bgColor, color: textColor }}
+                            aria-label={`Color ${bgColor}`}
+                          >
+                            {bgColor.toUpperCase()}
+                          </div>
                         );
                       })()}
                     </td>
@@ -1071,7 +1111,7 @@ export function ShiftConstructorManagement() {
                   {builderError}
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="md:col-span-2">
                   <label className="text-sm font-medium">Nombre del Turno</label>
                   <input
@@ -1090,7 +1130,7 @@ export function ShiftConstructorManagement() {
                     placeholder="NOC"
                   />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-sm font-medium">Ícono</label>
                   <div className="relative mt-1" ref={iconComboRef}>
                     {(() => {
@@ -1105,7 +1145,7 @@ export function ShiftConstructorManagement() {
                           >
                             <span
                               className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
-                              style={{ backgroundColor: selected.bg, color: selected.color }}
+                              style={{ backgroundColor: '#FFFFFF', color: '#0F172A' }}
                             >
                               <SelectedIcon className="size-3.5" />
                               {selected.label}
@@ -1123,13 +1163,15 @@ export function ShiftConstructorManagement() {
                                     type="button"
                                     onClick={() => {
                                       setShiftIconKey(item.key);
+                                      setShiftBgColor(item.bg);
+                                      setShiftTextColor(item.color);
                                       setIconComboOpen(false);
                                     }}
                                     className={`w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}
                                   >
                                     <span
                                       className="inline-flex items-center gap-2 rounded-full border px-2 py-1 text-xs"
-                                      style={{ backgroundColor: item.bg, color: item.color }}
+                                      style={{ backgroundColor: '#FFFFFF', color: '#0F172A' }}
                                     >
                                       <OptionIcon className="size-3.5" />
                                       {item.label}
@@ -1143,6 +1185,24 @@ export function ShiftConstructorManagement() {
                       );
                     })()}
                   </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Color fondo</label>
+                  <input
+                    type="color"
+                    value={shiftBgColor}
+                    onChange={(event) => setShiftBgColor(event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border px-1 py-1"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Color texto</label>
+                  <input
+                    type="color"
+                    value={shiftTextColor}
+                    onChange={(event) => setShiftTextColor(event.target.value)}
+                    className="mt-1 h-10 w-full rounded-md border px-1 py-1"
+                  />
                 </div>
               </div>
 

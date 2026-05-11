@@ -257,6 +257,9 @@ router.get('/', async (req: Request, res: Response) => {
             id,
             shift_name,
             shift_short_name,
+            shift_icon_key,
+            shift_bg_color,
+            shift_text_color,
             is_active
           FROM public.shifts
           WHERE tenant_id = $1

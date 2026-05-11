@@ -1,5 +1,8 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { randomUUID } from 'crypto';
 
 const router = Router();
 
@@ -9,9 +12,15 @@ const TIME_PUNCH_STATUS_GROUP_ID = '0949d7d5-c2b1-56e9-6010-5909cc7af8b7';
 const REQUEST_STATUS_GROUP_ID = '9f904369-9998-83ab-6996-635363513a9f';
 const ABSENCE_DISCOUNT_METHOD_GROUP_ID = '1d3d598e-5003-4a36-a93d-306e0cbb3c7b';
 const EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID = 'd41aff61-6de9-200e-922e-3c651cc5446c';
+const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
+const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
-const FIXED_NOTES = 'marcación manual vía web';
+const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
+const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
+const DEFAULT_REQUEST_SUPPORT_DOCS_PATH = path.join('storage', 'request-support-docs');
+const DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES = 5 * 1024 * 1024;
+const FIXED_NOTES = 'marcaciÃ³n manual vÃ­a web';
 
 type EmployeeContext = {
   user_id: string;
@@ -40,15 +49,241 @@ function isIsoDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function getTomorrowIsoDate(): string {
+  const now = new Date();
+  now.setDate(now.getDate() + 1);
+  return now.toISOString().slice(0, 10);
+}
+
+function diffDaysInclusive(fromIso: string, toIso: string): number {
+  const from = new Date(`${fromIso}T00:00:00`);
+  const to = new Date(`${toIso}T00:00:00`);
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime())) return Number.NaN;
+  return Math.floor((to.getTime() - from.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+}
+
+function normalizeIsoDateInput(value: any): string | null {
+  const raw = normalizeNullableText(value);
+  if (!raw) return null;
+  if (isIsoDate(raw)) return raw;
+  const datePart = raw.slice(0, 10);
+  return isIsoDate(datePart) ? datePart : null;
+}
+
 function normalizeNullableText(value: any): string | null {
   if (value === undefined || value === null) return null;
   const next = String(value).trim();
   return next || null;
 }
 
+function normalizeNullableTimeInput(value: any): string | null {
+  const raw = normalizeNullableText(value);
+  if (!raw) return null;
+
+  const strict24 = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
+  if (strict24) {
+    const hh = String(Number(strict24[1])).padStart(2, '0');
+    const mm = strict24[2];
+    const ss = strict24[3] || '00';
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  const ampm = raw.match(/^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/);
+  if (ampm) {
+    let hour = Number(ampm[1]);
+    const minute = ampm[2];
+    const marker = ampm[3].toUpperCase();
+    if (hour < 1 || hour > 12) return null;
+    if (marker === 'AM') {
+      if (hour === 12) hour = 0;
+    } else if (hour !== 12) {
+      hour += 12;
+    }
+    return `${String(hour).padStart(2, '0')}:${minute}:00`;
+  }
+
+  return null;
+}
+
+function parseNullableCoordinate(value: any): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const next = Number(value);
+  return Number.isFinite(next) ? next : Number.NaN;
+}
+
 function isValidDateTime(value: string): boolean {
   const date = new Date(value);
   return Number.isFinite(date.getTime());
+}
+
+function toSnapshotTimestamp(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}${month}${day}${hour}${minute}${second}`;
+}
+
+function sanitizeEmployeeCode(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return 'EMP';
+  const normalized = raw.replace(/[^A-Za-z0-9_-]/g, '');
+  return normalized || 'EMP';
+}
+
+function parseBase64Snapshot(snapshotBase64: string): Buffer {
+  const trimmed = String(snapshotBase64 || '').trim();
+  if (!trimmed) throw new Error('snapshot_base64 vacio');
+  const dataPart = trimmed.startsWith('data:')
+    ? (trimmed.split(',', 2)[1] || '')
+    : trimmed;
+  if (!dataPart) throw new Error('snapshot_base64 sin contenido');
+  return Buffer.from(dataPart, 'base64');
+}
+
+function parseBase64Document(documentBase64: string): Buffer {
+  const trimmed = String(documentBase64 || '').trim();
+  if (!trimmed) throw new Error('support_document_base64 vacio');
+  const dataPart = trimmed.startsWith('data:')
+    ? (trimmed.split(',', 2)[1] || '')
+    : trimmed;
+  if (!dataPart) throw new Error('support_document_base64 sin contenido');
+  return Buffer.from(dataPart, 'base64');
+}
+
+function sanitizeSupportDocumentName(value: string | null | undefined): string {
+  const raw = String(value || '').trim();
+  if (!raw) return 'respaldo.pdf';
+  const sanitized = raw
+    .replace(/[^\w.\- ]+/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_');
+  const withExt = sanitized.toLowerCase().endsWith('.pdf') ? sanitized : `${sanitized}.pdf`;
+  return withExt || 'respaldo.pdf';
+}
+
+function toDocumentDateStamp(value: string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}${month}${day}`;
+}
+
+async function resolveSupportDocumentStorageConfig(
+  tenantId: string
+): Promise<{ absolutePath: string; maxSizeBytes: number }> {
+  const settingsResult = await pool.query(
+    `
+      SELECT
+        ss.id,
+        ss.setting_key,
+        ss.default_value,
+        ts.setting_value AS tenant_value
+      FROM public.system_settings ss
+      LEFT JOIN public.tenant_settings ts
+        ON ts.system_setting_id = ss.id
+       AND ts.tenant_id = $1::uuid
+       AND ts.is_active = true
+      WHERE ss.setting_key = ANY($2::text[])
+        AND ss.is_active = true
+    `,
+    [tenantId, [REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY, REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY]]
+  );
+
+  let configuredPath = '';
+  let configuredMaxSize = '';
+
+  for (const row of settingsResult.rows) {
+    const key = String(row.setting_key || '').trim().toUpperCase();
+    const resolvedValue = normalizeNullableText(row.tenant_value) || normalizeNullableText(row.default_value) || '';
+    if (key === REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY) configuredPath = resolvedValue;
+    if (key === REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY) configuredMaxSize = resolvedValue;
+  }
+
+  const basePath = configuredPath || DEFAULT_REQUEST_SUPPORT_DOCS_PATH;
+  const absolutePath = path.isAbsolute(basePath)
+    ? basePath
+    : path.resolve(process.cwd(), basePath);
+
+  const parsedMax = Number(configuredMaxSize || DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES);
+  const maxSizeBytes =
+    Number.isFinite(parsedMax) && parsedMax > 0
+      ? Math.trunc(parsedMax)
+      : DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES;
+
+  return { absolutePath, maxSizeBytes };
+}
+
+async function saveRequestSupportDocument(params: {
+  tenantId: string;
+  section: 'absence_requests' | 'shift_change_requests';
+  employeeCode: string | null | undefined;
+  requestDate: string | Date;
+  fileName: string;
+  mimeType: string;
+  fileBase64: string;
+}): Promise<{
+  support_document_path: string;
+  support_document_name: string;
+  support_document_mime: string;
+  support_document_size_bytes: number;
+}> {
+  const mimeType = String(params.mimeType || '').trim().toLowerCase();
+  if (mimeType !== 'application/pdf') {
+    throw new Error('Solo se permiten documentos PDF');
+  }
+
+  const buffer = parseBase64Document(params.fileBase64);
+  if (!buffer.length) {
+    throw new Error('El documento PDF estÃ¡ vacÃ­o');
+  }
+
+  const config = await resolveSupportDocumentStorageConfig(params.tenantId);
+  if (buffer.length > config.maxSizeBytes) {
+    throw new Error(`El documento supera el tamaÃ±o mÃ¡ximo permitido (${config.maxSizeBytes} bytes)`);
+  }
+
+  const safeName = sanitizeSupportDocumentName(params.fileName);
+  const dateStamp = toDocumentDateStamp(params.requestDate);
+  const employeeCode = sanitizeEmployeeCode(params.employeeCode);
+  const storedName = `${employeeCode}_${dateStamp}_${randomUUID()}.pdf`;
+
+  const relativePath = path
+    .join(params.tenantId, params.section, storedName)
+    .split(path.sep)
+    .join('/');
+  const absoluteFilePath = path.join(config.absolutePath, relativePath);
+
+  await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+  await fs.writeFile(absoluteFilePath, buffer);
+
+  return {
+    support_document_path: relativePath,
+    support_document_name: safeName,
+    support_document_mime: mimeType,
+    support_document_size_bytes: buffer.length,
+  };
+}
+
+async function savePunchSnapshot(params: {
+  snapshotBase64: string;
+  employeeCode: string | null | undefined;
+  punchId: string;
+  punchDateTime: string | Date;
+}): Promise<{ directory: string; fileName: string; fullPath: string }> {
+  const buffer = parseBase64Snapshot(params.snapshotBase64);
+  const stamp = toSnapshotTimestamp(params.punchDateTime);
+  const employeeCode = sanitizeEmployeeCode(params.employeeCode);
+  const fileName = `${employeeCode}_${stamp}_${params.punchId}.jpg`;
+  const directory = path.resolve(process.cwd(), 'punches_snapshoots');
+  const fullPath = path.join(directory, fileName);
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(fullPath, buffer);
+  return { directory, fileName, fullPath };
 }
 
 async function isLookupValueInGroupById(
@@ -102,6 +337,9 @@ async function resolveRequestStatusIdByKeys(
 
 async function resolveDefaultRequestStatusId(tenantId: string): Promise<string | null> {
   const byPending = await resolveRequestStatusIdByKeys(tenantId, [
+    'ENVIADA',
+    'ENVIADO',
+    'SENT',
     'PENDING',
     'PENDIENTE',
     'REQUESTED',
@@ -124,14 +362,59 @@ async function resolveDefaultRequestStatusId(tenantId: string): Promise<string |
   return fallback.rows[0]?.id || null;
 }
 
+async function resolveLookupValueIdByGroupKeyAndKeys(
+  tenantId: string,
+  groupKey: string,
+  keys: string[]
+): Promise<string | null> {
+  const normalized = keys.map((key) => String(key || '').trim().toUpperCase()).filter(Boolean);
+  if (normalized.length === 0) return null;
+
+  const result = await pool.query(
+    `
+      SELECT lv.id
+      FROM public.lookup_values lv
+      INNER JOIN public.lookup_groups lg
+        ON lg.id = lv.lookup_group_id
+      WHERE lg.lookup_group_key = $1
+        AND lv.is_active = true
+        AND UPPER(lv.lookup_key) = ANY($2::text[])
+        AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
+      ORDER BY
+        CASE WHEN lv.tenant_id = $3::uuid THEN 0 ELSE 1 END,
+        lv.sort_order ASC
+      LIMIT 1
+    `,
+    [groupKey, normalized, tenantId]
+  );
+
+  return result.rows[0]?.id || null;
+}
+
 function isPendingRequestStatusKey(statusKey: string | null | undefined): boolean {
   const key = String(statusKey || '').trim().toUpperCase();
-  return ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO'].includes(key);
+  return ['PENDING', 'PENDIENTE', 'ENVIADA', 'ENVIADO', 'SENT', 'REQUESTED', 'SOLICITADO'].includes(key);
 }
 
 function isClosedRequestStatusKey(statusKey: string | null | undefined): boolean {
   const key = String(statusKey || '').trim().toUpperCase();
   return ['APPROVED', 'APROBADO', 'REJECTED', 'RECHAZADO', 'CANCELLED', 'CANCELED', 'CANCELADO'].includes(key);
+}
+
+function isApprovedShiftChangeStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return ['APPROVED', 'APROBADO'].includes(key);
+}
+
+function isEditableShiftChangeStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return [
+    'PENDING',
+    'PENDIENTE',
+    'IN_REVIEW',
+    'EN_REVISION',
+    'EN_REVISIÓN',
+  ].includes(key);
 }
 
 async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | null> {
@@ -365,6 +648,8 @@ router.get('/mark/history', async (req: Request, res: Response) => {
           st.lookup_label AS time_punch_status_label,
           p.service_ticket_number,
           p.notes,
+          p.latitud,
+          p.longitud,
           p.is_active
         FROM public.employee_time_punches p
         LEFT JOIN public.companies c
@@ -417,7 +702,26 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const deviceId = FIXED_DEVICE_ID;
     const punchKeyLookupId = normalizeNullableText(req.body?.punch_key_lookup_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
+    const snapshotBase64 = normalizeNullableText(req.body?.snapshot_base64);
+    const latitud = parseNullableCoordinate(req.body?.latitud);
+    const longitud = parseNullableCoordinate(req.body?.longitud);
     const notes = FIXED_NOTES;
+
+    if (!snapshotBase64) {
+      return res.status(400).json({ error: 'snapshot_base64 es obligatorio para registrar la marcacion' });
+    }
+    if (latitud === null || longitud === null) {
+      return res.status(400).json({ error: 'latitud y longitud son obligatorias para registrar la marcacion' });
+    }
+    if (!Number.isFinite(latitud) || !Number.isFinite(longitud)) {
+      return res.status(400).json({ error: 'latitud/longitud deben ser numericas' });
+    }
+    if (latitud < -90 || latitud > 90) {
+      return res.status(400).json({ error: 'latitud fuera de rango (-90 a 90)' });
+    }
+    if (longitud < -180 || longitud > 180) {
+      return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
+    }
 
     const employeeCompanies = await getEmployeeCompanies(context.tenant_id, context.employee_id);
     const defaultCompanyId = context.company_id || employeeCompanies[0]?.company_id || null;
@@ -526,12 +830,14 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           punch_source_id,
           time_punch_status_id,
           notes,
+          latitud,
+          longitud,
           is_active,
           created_by
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,now(),$5,$6,$7,$8,true,$9
+          $1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10,true,$11
         )
         RETURNING *
       `,
@@ -544,14 +850,43 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         normalizedSourceId,
         normalizedStatusId,
         notes,
+        latitud,
+        longitud,
         actor,
       ]
     );
 
-    return res.status(201).json({
-      success: true,
-      punch: insertResult.rows[0],
-    });
+    const punch = insertResult.rows[0];
+    try {
+      const snapshot = await savePunchSnapshot({
+        snapshotBase64,
+        employeeCode: context.employee_code,
+        punchId: punch.id,
+        punchDateTime: punch.punch_datetime,
+      });
+
+      return res.status(201).json({
+        success: true,
+        punch,
+        snapshot: {
+          file_name: snapshot.fileName,
+          folder: 'punches_snapshoots',
+        },
+      });
+    } catch (snapshotErr: any) {
+      await pool.query(
+        `
+          DELETE FROM public.employee_time_punches
+          WHERE id = $1
+            AND tenant_id = $2
+            AND employee_id = $3
+        `,
+        [punch.id, context.tenant_id, context.employee_id]
+      );
+      return res.status(500).json({
+        error: `No se pudo guardar la captura de camara: ${snapshotErr?.message || 'error desconocido'}`,
+      });
+    }
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
@@ -576,6 +911,8 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
     const punchSourceId = req.body?.punch_source_id === undefined ? undefined : normalizeNullableText(req.body?.punch_source_id);
     const statusId = req.body?.time_punch_status_id === undefined ? undefined : normalizeNullableText(req.body?.time_punch_status_id);
     const punchKeyLookupId = req.body?.punch_key_lookup_id === undefined ? undefined : normalizeNullableText(req.body?.punch_key_lookup_id);
+    const latitud = req.body?.latitud === undefined ? undefined : parseNullableCoordinate(req.body?.latitud);
+    const longitud = req.body?.longitud === undefined ? undefined : parseNullableCoordinate(req.body?.longitud);
 
     const currentResult = await pool.query(
       `
@@ -638,6 +975,18 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       );
       if (!statusResult.rows[0]) return res.status(400).json({ error: 'time_punch_status_id no valido' });
     }
+    if (latitud !== undefined && latitud !== null && !Number.isFinite(latitud)) {
+      return res.status(400).json({ error: 'latitud debe ser numerica' });
+    }
+    if (longitud !== undefined && longitud !== null && !Number.isFinite(longitud)) {
+      return res.status(400).json({ error: 'longitud debe ser numerica' });
+    }
+    if (latitud !== undefined && latitud !== null && (latitud < -90 || latitud > 90)) {
+      return res.status(400).json({ error: 'latitud fuera de rango (-90 a 90)' });
+    }
+    if (longitud !== undefined && longitud !== null && (longitud < -180 || longitud > 180)) {
+      return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
+    }
 
     let resolvedPunchKeyValue: number | null = null;
     if (punchKeyLookupId !== undefined && punchKeyLookupId !== null) {
@@ -687,6 +1036,14 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
     if (resolvedPunchKeyValue !== null) {
       updates.push(`punch_key = $${paramIndex++}`);
       params.push(resolvedPunchKeyValue);
+    }
+    if (latitud !== undefined) {
+      updates.push(`latitud = $${paramIndex++}`);
+      params.push(latitud);
+    }
+    if (longitud !== undefined) {
+      updates.push(`longitud = $${paramIndex++}`);
+      params.push(longitud);
     }
 
     if (updates.length === 0) {
@@ -777,6 +1134,8 @@ router.get('/my-punches', async (req: Request, res: Response) => {
           p.punch_datetime,
           p.punch_key,
           p.notes,
+          p.latitud,
+          p.longitud,
           src.lookup_key AS source_code,
           src.lookup_label AS source_name,
           st.lookup_label AS status_name
@@ -943,6 +1302,10 @@ router.get('/requests', async (req: Request, res: Response) => {
           r.start_time,
           r.end_time,
           r.notes,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
           r.request_status_id,
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
@@ -997,9 +1360,12 @@ router.post('/requests', async (req: Request, res: Response) => {
     const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = normalizeNullableText(req.body?.start_datetime);
     const endDateTime = normalizeNullableText(req.body?.end_datetime);
-    const startTime = normalizeNullableText(req.body?.start_time);
-    const endTime = normalizeNullableText(req.body?.end_time);
+    const startTime = normalizeNullableTimeInput(req.body?.start_time);
+    const endTime = normalizeNullableTimeInput(req.body?.end_time);
     const notes = normalizeNullableText(req.body?.notes);
+    const supportDocumentNameInput = normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput = normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input = normalizeNullableText(req.body?.support_document_base64);
     const actor = getActor(req);
 
     if (req.body?.request_status_id !== undefined) {
@@ -1009,7 +1375,7 @@ router.post('/requests', async (req: Request, res: Response) => {
     }
     if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
       return res.status(400).json({
-        error: 'Los datos de aprobación solo pueden ser definidos por Supervisor/RRHH',
+        error: 'Los datos de aprobaciÃ³n solo pueden ser definidos por Supervisor/RRHH',
       });
     }
 
@@ -1023,6 +1389,12 @@ router.post('/requests', async (req: Request, res: Response) => {
     if (!endDateTime || !isValidDateTime(endDateTime)) return res.status(400).json({ error: 'end_datetime invalido' });
     if (new Date(startDateTime).getTime() > new Date(endDateTime).getTime()) {
       return res.status(400).json({ error: 'El rango de fechas es invalido' });
+    }
+    if (req.body?.start_time !== undefined && startTime === null) {
+      return res.status(400).json({ error: 'start_time invalido (use HH:mm o hh:mm AM/PM)' });
+    }
+    if (req.body?.end_time !== undefined && endTime === null) {
+      return res.status(400).json({ error: 'end_time invalido (use HH:mm o hh:mm AM/PM)' });
     }
 
     const [justificationResult, eventResult] = await Promise.all([
@@ -1074,6 +1446,25 @@ router.post('/requests', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No existe estado de solicitud configurado' });
     }
 
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'absence_requests',
+        employeeCode: context.employee_code,
+        requestDate: startDateTime,
+        fileName: supportDocumentNameInput || 'respaldo-solicitud.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
     const insertResult = await pool.query(
       `
         INSERT INTO public.employee_absence_requests (
@@ -1089,13 +1480,17 @@ router.post('/requests', async (req: Request, res: Response) => {
           start_time,
           end_time,
           notes,
+          support_document_path,
+          support_document_name,
+          support_document_mime,
+          support_document_size_bytes,
           request_status_id,
           is_active,
           created_by
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true,$13
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,$17
         )
         RETURNING *
       `,
@@ -1111,6 +1506,10 @@ router.post('/requests', async (req: Request, res: Response) => {
         startTime,
         endTime,
         notes,
+        supportDoc?.support_document_path || null,
+        supportDoc?.support_document_name || null,
+        supportDoc?.support_document_mime || null,
+        supportDoc?.support_document_size_bytes || null,
         pendingStatusId,
         actor,
       ]
@@ -1139,7 +1538,7 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     }
     if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
       return res.status(400).json({
-        error: 'Los datos de aprobación solo pueden ser modificados por Supervisor/RRHH',
+        error: 'Los datos de aprobaciÃ³n solo pueden ser modificados por Supervisor/RRHH',
       });
     }
 
@@ -1175,15 +1574,28 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
       req.body?.justify_method_id === undefined ? undefined : normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = req.body?.start_datetime === undefined ? undefined : normalizeNullableText(req.body?.start_datetime);
     const endDateTime = req.body?.end_datetime === undefined ? undefined : normalizeNullableText(req.body?.end_datetime);
-    const startTime = req.body?.start_time === undefined ? undefined : normalizeNullableText(req.body?.start_time);
-    const endTime = req.body?.end_time === undefined ? undefined : normalizeNullableText(req.body?.end_time);
+    const startTime = req.body?.start_time === undefined ? undefined : normalizeNullableTimeInput(req.body?.start_time);
+    const endTime = req.body?.end_time === undefined ? undefined : normalizeNullableTimeInput(req.body?.end_time);
     const notes = req.body?.notes === undefined ? undefined : normalizeNullableText(req.body?.notes);
+    const supportDocumentNameInput =
+      req.body?.support_document_name === undefined ? undefined : normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput =
+      req.body?.support_document_mime === undefined ? undefined : normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input =
+      req.body?.support_document_base64 === undefined ? undefined : normalizeNullableText(req.body?.support_document_base64);
+    const removeSupportDocument = req.body?.remove_support_document === true;
     const isActive = req.body?.is_active;
 
     if (startDateTime && !isValidDateTime(startDateTime)) return res.status(400).json({ error: 'start_datetime invalido' });
     if (endDateTime && !isValidDateTime(endDateTime)) return res.status(400).json({ error: 'end_datetime invalido' });
     if (startDateTime && endDateTime && new Date(startDateTime).getTime() > new Date(endDateTime).getTime()) {
       return res.status(400).json({ error: 'El rango de fechas es invalido' });
+    }
+    if (req.body?.start_time !== undefined && startTime === null) {
+      return res.status(400).json({ error: 'start_time invalido (use HH:mm o hh:mm AM/PM)' });
+    }
+    if (req.body?.end_time !== undefined && endTime === null) {
+      return res.status(400).json({ error: 'end_time invalido (use HH:mm o hh:mm AM/PM)' });
     }
 
     const effectiveAttendanceEventId = attendanceEventId ?? current.attendance_event_id;
@@ -1240,6 +1652,24 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     const params: any[] = [requestId, context.tenant_id, context.employee_id];
     let paramIndex = params.length + 1;
 
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'absence_requests',
+        employeeCode: context.employee_code,
+        requestDate: startDateTime || endDateTime || new Date(),
+        fileName: supportDocumentNameInput || 'respaldo-solicitud.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
     if (justificationTypeId !== undefined) {
       updates.push(`justification_type_id = $${paramIndex++}`);
       params.push(justificationTypeId);
@@ -1271,6 +1701,21 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     if (notes !== undefined) {
       updates.push(`notes = $${paramIndex++}`);
       params.push(notes);
+    }
+    if (supportDoc) {
+      updates.push(`support_document_path = $${paramIndex++}`);
+      params.push(supportDoc.support_document_path);
+      updates.push(`support_document_name = $${paramIndex++}`);
+      params.push(supportDoc.support_document_name);
+      updates.push(`support_document_mime = $${paramIndex++}`);
+      params.push(supportDoc.support_document_mime);
+      updates.push(`support_document_size_bytes = $${paramIndex++}`);
+      params.push(supportDoc.support_document_size_bytes);
+    } else if (removeSupportDocument) {
+      updates.push('support_document_path = NULL');
+      updates.push('support_document_name = NULL');
+      updates.push('support_document_mime = NULL');
+      updates.push('support_document_size_bytes = NULL');
     }
     if (isActive !== undefined) {
       updates.push(`is_active = $${paramIndex++}`);
@@ -1428,7 +1873,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         ? ['REJECTED', 'RECHAZADO']
         : status === 'ALL'
         ? []
-        : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN'];
+        : ['ENVIADA', 'ENVIADO', 'SENT', 'PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N'];
 
     const params: any[] = [userContext.tenant_id];
     let whereStatus = '';
@@ -1461,6 +1906,10 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
           r.start_time,
           r.end_time,
           r.notes,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
           r.request_status_id,
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
@@ -1676,7 +2125,7 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         : await resolveRequestStatusIdByKeys(userContext.tenant_id, ['REJECTED', 'RECHAZADO']);
 
     if (!targetStatusId) {
-      return res.status(400).json({ error: 'No existe estado de decisión configurado' });
+      return res.status(400).json({ error: 'No existe estado de decisiÃ³n configurado' });
     }
 
     const updated = await pool.query(
@@ -1740,6 +2189,10 @@ router.get('/my-requests', async (req: Request, res: Response) => {
           r.start_datetime,
           r.end_datetime,
           r.notes,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
           r.approval_notes,
           r.approved_by,
           au.display_name AS approved_by_display_name,
@@ -1768,5 +2221,904 @@ router.get('/my-requests', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/my-shifts', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const fromQuery =
+      normalizeNullableText(req.query.from) ||
+      normalizeNullableText(req.query.date_from) ||
+      normalizeNullableText(req.query.start_date);
+    const toQuery =
+      normalizeNullableText(req.query.to) ||
+      normalizeNullableText(req.query.date_to) ||
+      normalizeNullableText(req.query.end_date);
+
+    const now = new Date();
+    const defaultFrom = getTomorrowIsoDate();
+    const defaultTo = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dateFrom = fromQuery || defaultFrom;
+    const dateTo = toQuery || defaultTo;
+
+    if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+      return res.status(400).json({ error: 'from/to deben tener formato YYYY-MM-DD' });
+    }
+    if (dateFrom < defaultFrom) {
+      return res.status(400).json({ error: `from no puede ser menor a ${defaultFrom}` });
+    }
+    if (dateTo < dateFrom) {
+      return res.status(400).json({ error: 'to no puede ser menor que from' });
+    }
+    if (diffDaysInclusive(dateFrom, dateTo) > 7) {
+      return res.status(400).json({ error: 'El rango mÃ¡ximo permitido es de 7 dÃ­as' });
+    }
+
+    const shiftsResult = await pool.query(
+      `
+        SELECT
+          p.id AS plan_id,
+          p.shift_date,
+          p.company_id,
+          c.company_name,
+          p.shift_id AS original_shift_id,
+          base_shift.shift_name AS original_shift_name,
+          base_shift.shift_short_name AS original_shift_short_name,
+          COALESCE(approved_req.requested_shift_id, p.shift_id) AS shift_id,
+          effective_shift.shift_name,
+          effective_shift.shift_short_name,
+          effective_shift.start_time,
+          effective_shift.work_minutes,
+          effective_shift.shift_icon_key,
+          effective_shift.shift_bg_color,
+          effective_shift.shift_text_color,
+          latest_req.id AS open_request_id,
+          latest_req.shift_date AS open_request_shift_date,
+          latest_req.reason AS open_request_reason,
+          latest_req.support_document_name AS open_request_support_document_name,
+          latest_req.support_document_mime AS open_request_support_document_mime,
+          latest_req.requested_shift_id AS open_requested_shift_id,
+          latest_req.requested_shift_name AS open_requested_shift_name,
+          latest_req.requested_shift_short_name AS open_requested_shift_short_name,
+          latest_req.request_status_id AS open_request_status_id,
+          latest_req.request_status_key AS open_request_status_key,
+          latest_req.request_status_label AS open_request_status_label
+        FROM public.employee_shift_plans p
+        INNER JOIN public.shifts base_shift
+          ON base_shift.id = p.shift_id
+        LEFT JOIN public.companies c
+          ON c.id = p.company_id
+        LEFT JOIN LATERAL (
+          SELECT
+            r.id,
+            r.shift_date,
+            r.reason,
+            r.support_document_name,
+            r.support_document_mime,
+            r.requested_shift_id,
+            rsf.shift_name AS requested_shift_name,
+            rsf.shift_short_name AS requested_shift_short_name,
+            r.request_status_id,
+            UPPER(COALESCE(rsv.lookup_key, '')) AS request_status_key,
+            rsv.lookup_label AS request_status_label
+          FROM public.employee_shift_change_requests r
+          LEFT JOIN public.shifts rsf
+            ON rsf.id = r.requested_shift_id
+          LEFT JOIN public.lookup_values rsv
+            ON rsv.id = r.request_status_id
+          WHERE r.tenant_id = p.tenant_id
+            AND r.employee_id = p.employee_id
+            AND r.shift_date = p.shift_date
+            AND r.is_active = true
+            AND UPPER(COALESCE(rsv.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N')
+          ORDER BY r.created_at DESC
+          LIMIT 1
+        ) latest_req ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            r.requested_shift_id
+          FROM public.employee_shift_change_requests r
+          LEFT JOIN public.lookup_values rsv
+            ON rsv.id = r.request_status_id
+          WHERE r.tenant_id = p.tenant_id
+            AND r.employee_id = p.employee_id
+            AND r.shift_date = p.shift_date
+            AND r.is_active = true
+            AND UPPER(COALESCE(rsv.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+          ORDER BY r.approved_at DESC NULLS LAST, r.updated_at DESC NULLS LAST, r.created_at DESC
+          LIMIT 1
+        ) approved_req ON true
+        INNER JOIN public.shifts effective_shift
+          ON effective_shift.id = COALESCE(approved_req.requested_shift_id, p.shift_id)
+        WHERE p.tenant_id = $1::uuid
+          AND p.employee_id = $2::uuid
+          AND p.is_active = true
+          AND p.shift_date >= $3::date
+          AND p.shift_date <= $4::date
+        ORDER BY p.shift_date ASC
+      `,
+      [context.tenant_id, context.employee_id, dateFrom, dateTo]
+    );
+
+    const companyIds = Array.from(
+      new Set(
+        shiftsResult.rows
+          .map((row) => row.company_id as string | null)
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    if (companyIds.length === 0 && context.company_id) {
+      companyIds.push(context.company_id);
+    }
+
+    let availableShifts: any[] = [];
+    if (companyIds.length > 0) {
+      const availableResult = await pool.query(
+        `
+          SELECT
+            s.id,
+            s.company_id,
+            c.company_name,
+            s.shift_name,
+            s.shift_short_name,
+            s.start_time,
+            s.work_minutes,
+            s.shift_icon_key,
+            s.shift_bg_color,
+            s.shift_text_color
+          FROM public.shifts s
+          LEFT JOIN public.companies c
+            ON c.id = s.company_id
+          WHERE s.tenant_id = $1::uuid
+            AND s.is_active = true
+            AND s.company_id = ANY($2::uuid[])
+          ORDER BY c.company_name ASC, s.shift_name ASC
+        `,
+        [context.tenant_id, companyIds]
+      );
+      availableShifts = availableResult.rows;
+    }
+
+    return res.status(200).json({
+      success: true,
+      date_from: dateFrom,
+      date_to: dateTo,
+      employee: {
+        id: context.employee_id,
+        employee_code: context.employee_code,
+        employee_name: context.employee_name,
+        employee_lastname: context.employee_lastname,
+      },
+      shifts: shiftsResult.rows,
+      available_shifts: availableShifts,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/my-shift-changes', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const fromQuery =
+      normalizeNullableText(req.query.from) ||
+      normalizeNullableText(req.query.date_from) ||
+      normalizeNullableText(req.query.start_date);
+    const toQuery =
+      normalizeNullableText(req.query.to) ||
+      normalizeNullableText(req.query.date_to) ||
+      normalizeNullableText(req.query.end_date);
+
+    const now = new Date();
+    const defaultFrom = getTomorrowIsoDate();
+    const defaultTo = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const dateFrom = fromQuery || defaultFrom;
+    const dateTo = toQuery || defaultTo;
+
+    if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+      return res.status(400).json({ error: 'from/to deben tener formato YYYY-MM-DD' });
+    }
+    if (dateFrom < defaultFrom) {
+      return res.status(400).json({ error: `from no puede ser menor a ${defaultFrom}` });
+    }
+    if (dateTo < dateFrom) {
+      return res.status(400).json({ error: 'to no puede ser menor que from' });
+    }
+    if (diffDaysInclusive(dateFrom, dateTo) > 7) {
+      return res.status(400).json({ error: 'El rango mÃ¡ximo permitido es de 7 dÃ­as' });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.shift_date,
+          r.company_id,
+          c.company_name,
+          r.current_shift_id,
+          cs.shift_name AS current_shift_name,
+          cs.shift_short_name AS current_shift_short_name,
+          r.requested_shift_id,
+          rsf.shift_name AS requested_shift_name,
+          rsf.shift_short_name AS requested_shift_short_name,
+          r.reason,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
+          r.request_status_id,
+          st.lookup_key AS request_status_key,
+          st.lookup_label AS request_status_label,
+          r.supervisor_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          r.created_at,
+          r.updated_at
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.companies c
+          ON c.id = r.company_id
+        LEFT JOIN public.shifts cs
+          ON cs.id = r.current_shift_id
+        LEFT JOIN public.shifts rsf
+          ON rsf.id = r.requested_shift_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        LEFT JOIN public.users au
+          ON au.id = r.approved_by
+        WHERE r.tenant_id = $1::uuid
+          AND r.employee_id = $2::uuid
+          AND r.is_active = true
+          AND r.shift_date >= $3::date
+          AND r.shift_date <= $4::date
+          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
+        ORDER BY r.shift_date DESC, r.created_at DESC
+      `,
+      [context.tenant_id, context.employee_id, dateFrom, dateTo]
+    );
+
+    return res.status(200).json({
+      success: true,
+      date_from: dateFrom,
+      date_to: dateTo,
+      shift_changes: result.rows,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.post('/request-shift-change', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const actor = getActor(req);
+    const shiftDate = normalizeIsoDateInput(req.body?.shift_date || req.body?.request_date);
+    const currentShiftIdInput = normalizeNullableText(req.body?.current_shift_id);
+    const requestedShiftId = normalizeNullableText(req.body?.requested_shift_id);
+    const reason = normalizeNullableText(req.body?.reason);
+    const supportDocumentNameInput = normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput = normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input = normalizeNullableText(req.body?.support_document_base64);
+
+    if (!shiftDate) {
+      return res.status(400).json({ error: 'shift_date es obligatorio en formato YYYY-MM-DD' });
+    }
+    const tomorrow = getTomorrowIsoDate();
+    if (shiftDate < tomorrow) {
+      return res.status(400).json({ error: `No se puede solicitar cambio para turnos pasados. Fecha mÃ­nima: ${tomorrow}` });
+    }
+    if (!requestedShiftId) {
+      return res.status(400).json({ error: 'requested_shift_id es obligatorio' });
+    }
+    if (!reason) {
+      return res.status(400).json({ error: 'reason es obligatorio' });
+    }
+
+    const planResult = await pool.query(
+      `
+        SELECT id, company_id, shift_id
+        FROM public.employee_shift_plans
+        WHERE tenant_id = $1::uuid
+          AND employee_id = $2::uuid
+          AND shift_date = $3::date
+          AND is_active = true
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [context.tenant_id, context.employee_id, shiftDate]
+    );
+    const plan = planResult.rows[0];
+    if (!plan) {
+      return res.status(400).json({ error: 'No existe turno asignado para la fecha indicada' });
+    }
+
+    const currentShiftId = currentShiftIdInput || plan.shift_id;
+    if (requestedShiftId === currentShiftId) {
+      return res.status(400).json({ error: 'El turno solicitado debe ser diferente al turno actual' });
+    }
+
+    const requestedShiftResult = await pool.query(
+      `
+        SELECT id
+        FROM public.shifts
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND company_id = $3::uuid
+          AND is_active = true
+        LIMIT 1
+      `,
+      [requestedShiftId, context.tenant_id, plan.company_id]
+    );
+    if (!requestedShiftResult.rows[0]) {
+      return res.status(400).json({ error: 'requested_shift_id no valido para la empresa del empleado' });
+    }
+
+    const openExists = await pool.query(
+      `
+        SELECT r.id
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.tenant_id = $1::uuid
+          AND r.employee_id = $2::uuid
+          AND r.shift_date = $3::date
+          AND r.is_active = true
+          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N')
+        ORDER BY r.created_at DESC
+        LIMIT 1
+      `,
+      [context.tenant_id, context.employee_id, shiftDate]
+    );
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'shift_change_requests',
+        employeeCode: context.employee_code,
+        requestDate: shiftDate,
+        fileName: supportDocumentNameInput || 'respaldo-cambio-turno.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
+    if (openExists.rows[0]?.id) {
+      const existingRequestId = String(openExists.rows[0].id);
+      const updates: string[] = [
+        'requested_shift_id = $4::uuid',
+        'reason = $5',
+      ];
+      const updateParams: any[] = [
+        existingRequestId,
+        context.tenant_id,
+        context.employee_id,
+        requestedShiftId,
+        reason,
+      ];
+      let next = 6;
+
+      if (supportDoc) {
+        updates.push(`support_document_path = $${next++}`);
+        updateParams.push(supportDoc.support_document_path);
+        updates.push(`support_document_name = $${next++}`);
+        updateParams.push(supportDoc.support_document_name);
+        updates.push(`support_document_mime = $${next++}`);
+        updateParams.push(supportDoc.support_document_mime);
+        updates.push(`support_document_size_bytes = $${next++}`);
+        updateParams.push(supportDoc.support_document_size_bytes);
+      }
+
+      updates.push(`updated_by = $${next++}`);
+      updateParams.push(actor);
+      updates.push('updated_at = now()');
+
+      const updatedExisting = await pool.query(
+        `
+          UPDATE public.employee_shift_change_requests
+          SET ${updates.join(', ')}
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND employee_id = $3::uuid
+            AND is_active = true
+          RETURNING *
+        `,
+        updateParams
+      );
+
+      return res.status(200).json({
+        success: true,
+        reused_existing: true,
+        request: updatedExisting.rows[0] || null,
+      });
+    }
+
+    const pendingStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['PENDING', 'PENDIENTE']
+    );
+    if (!pendingStatusId) {
+      return res.status(400).json({ error: 'No existe estado PENDING para cambio de turno' });
+    }
+
+    const inserted = await pool.query(
+      `
+        INSERT INTO public.employee_shift_change_requests (
+          id,
+          tenant_id,
+          company_id,
+          employee_id,
+          shift_date,
+          current_shift_id,
+          requested_shift_id,
+          reason,
+          support_document_path,
+          support_document_name,
+          support_document_mime,
+          support_document_size_bytes,
+          request_status_id,
+          is_active,
+          created_by
+        )
+        VALUES (
+          gen_random_uuid(),
+          $1::uuid, $2::uuid, $3::uuid, $4::date, $5::uuid, $6::uuid, $7, $8, $9, $10, $11, $12::uuid, true, $13
+        )
+        RETURNING *
+      `,
+      [
+        context.tenant_id,
+        plan.company_id,
+        context.employee_id,
+        shiftDate,
+        currentShiftId,
+        requestedShiftId,
+        reason,
+        supportDoc?.support_document_path || null,
+        supportDoc?.support_document_name || null,
+        supportDoc?.support_document_mime || null,
+        supportDoc?.support_document_size_bytes || null,
+        pendingStatusId,
+        actor,
+      ]
+    );
+    const requestRow = inserted.rows[0];
+
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['SHIFT_CHANGE_REQUEST_CREATED']
+    );
+    if (notificationTypeId) {
+      const recipients = await pool.query(
+        `
+          SELECT DISTINCT ur.user_id
+          FROM public.user_roles ur
+          INNER JOIN public.roles r
+            ON r.id = ur.role_id
+          INNER JOIN public.users u
+            ON u.id = ur.user_id
+          WHERE ur.tenant_id = $1::uuid
+            AND ur.is_active = true
+            AND r.is_active = true
+            AND u.is_active = true
+            AND r.role_key IN ('SUPERVISOR', 'RHADMIN')
+            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        `,
+        [context.tenant_id]
+      );
+
+      const title = 'Nueva solicitud de cambio de turno';
+      const message = `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() +
+        ` solicita cambio de turno para ${shiftDate}.`;
+
+      for (const recipient of recipients.rows) {
+        if (!recipient.user_id || recipient.user_id === context.user_id) continue;
+        await pool.query(
+          `
+            INSERT INTO public.user_notifications (
+              id,
+              tenant_id,
+              user_id,
+              notification_type_id,
+              title,
+              message,
+              icon_key,
+              ref_table,
+              ref_id,
+              is_read,
+              is_active,
+              created_by
+            )
+            VALUES (
+              gen_random_uuid(),
+              $1::uuid, $2::uuid, $3::uuid, $4, $5, 'ArrowLeftRight',
+              'employee_shift_change_requests', $6::uuid, false, true, $7
+            )
+          `,
+          [
+            context.tenant_id,
+            recipient.user_id,
+            notificationTypeId,
+            title,
+            message,
+            requestRow.id,
+            actor,
+          ]
+        );
+      }
+    }
+
+    return res.status(201).json({ success: true, request: requestRow });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/request-shift-change/:id', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) {
+      return res.status(400).json({ error: 'id es obligatorio' });
+    }
+
+    const actor = getActor(req);
+    const requestedShiftIdInput = normalizeNullableText(req.body?.requested_shift_id);
+    const reasonInput = req.body?.reason;
+    const reason = reasonInput === undefined ? undefined : normalizeNullableText(reasonInput);
+    const supportDocumentNameInput = normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput = normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input = normalizeNullableText(req.body?.support_document_base64);
+    const clearSupportDocument = req.body?.clear_support_document === true;
+
+    const requestResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.shift_date,
+          r.company_id,
+          r.current_shift_id,
+          r.request_status_id,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.employee_id = $3::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const requestRow = requestResult.rows[0];
+    if (!requestRow) {
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+    if (!isEditableShiftChangeStatusKey(requestRow.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya fue respondida y no puede editarse' });
+    }
+
+    if (reasonInput !== undefined && !reason) {
+      return res.status(400).json({ error: 'reason no puede estar vacio' });
+    }
+
+    if (requestedShiftIdInput && requestedShiftIdInput === requestRow.current_shift_id) {
+      return res.status(400).json({ error: 'El turno solicitado debe ser diferente al turno actual' });
+    }
+
+    if (requestedShiftIdInput) {
+      const requestedShiftResult = await pool.query(
+        `
+          SELECT id
+          FROM public.shifts
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND company_id = $3::uuid
+            AND is_active = true
+          LIMIT 1
+        `,
+        [requestedShiftIdInput, context.tenant_id, requestRow.company_id]
+      );
+      if (!requestedShiftResult.rows[0]) {
+        return res.status(400).json({ error: 'requested_shift_id no valido para la empresa del empleado' });
+      }
+    }
+
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'shift_change_requests',
+        employeeCode: context.employee_code,
+        requestDate: requestRow.shift_date,
+        fileName: supportDocumentNameInput || 'respaldo-cambio-turno.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [requestId, context.tenant_id, context.employee_id];
+    let next = 4;
+
+    if (requestedShiftIdInput) {
+      updates.push(`requested_shift_id = $${next++}::uuid`);
+      params.push(requestedShiftIdInput);
+    }
+    if (reason !== undefined) {
+      updates.push(`reason = $${next++}`);
+      params.push(reason);
+    }
+    if (supportDoc) {
+      updates.push(`support_document_path = $${next++}`);
+      params.push(supportDoc.support_document_path);
+      updates.push(`support_document_name = $${next++}`);
+      params.push(supportDoc.support_document_name);
+      updates.push(`support_document_mime = $${next++}`);
+      params.push(supportDoc.support_document_mime);
+      updates.push(`support_document_size_bytes = $${next++}`);
+      params.push(supportDoc.support_document_size_bytes);
+    } else if (clearSupportDocument) {
+      updates.push('support_document_path = NULL');
+      updates.push('support_document_name = NULL');
+      updates.push('support_document_mime = NULL');
+      updates.push('support_document_size_bytes = NULL');
+    }
+
+    updates.push(`updated_by = $${next++}`);
+    params.push(actor);
+    updates.push('updated_at = now()');
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_shift_change_requests
+        SET ${updates.join(', ')}
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+          AND is_active = true
+        RETURNING *
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.delete('/request-shift-change/:id', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) {
+      return res.status(400).json({ error: 'id es obligatorio' });
+    }
+
+    const actor = getActor(req);
+
+    const requestResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.employee_id = $3::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const requestRow = requestResult.rows[0];
+    if (!requestRow) {
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+    if (!isEditableShiftChangeStatusKey(requestRow.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya fue respondida y no puede eliminarse' });
+    }
+
+    const cancelledStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['CANCELLED', 'CANCELED', 'CANCELADO']
+    );
+
+    await pool.query(
+      `
+        UPDATE public.employee_shift_change_requests
+        SET
+          is_active = false,
+          request_status_id = COALESCE($4::uuid, request_status_id),
+          updated_by = $5,
+          updated_at = now()
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+          AND is_active = true
+      `,
+      [requestId, context.tenant_id, context.employee_id, cancelledStatusId, actor]
+    );
+
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/request-shift-change/:id/decision', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+
+    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+    if (!hasApprovalPermission(roleKeys)) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de turno' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    const decision = String(req.body?.decision || '').trim().toUpperCase();
+    const supervisorNotes = normalizeNullableText(req.body?.supervisor_notes);
+
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+    if (!['APPROVE', 'REJECT'].includes(decision)) {
+      return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.tenant_id,
+          r.company_id,
+          r.employee_id,
+          r.shift_date,
+          r.current_shift_id,
+          r.requested_shift_id,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, userContext.tenant_id]
+    );
+
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!isEditableShiftChangeStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya tiene decisiÃ³n final' });
+    }
+
+    const approvedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      userContext.tenant_id,
+      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['APPROVED', 'APROBADO']
+    );
+    const rejectedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      userContext.tenant_id,
+      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['REJECTED', 'RECHAZADO', 'DENEGADO']
+    );
+    const processedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      userContext.tenant_id,
+      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['PROCESSED', 'PROCESADA', 'CLOSED', 'CERRADA']
+    );
+
+    const decisionStatusId = decision === 'APPROVE' ? approvedStatusId : rejectedStatusId;
+    const finalStatusId = processedStatusId || decisionStatusId;
+
+    if (!finalStatusId) {
+      return res.status(400).json({ error: 'No existe estado destino configurado para la decisión' });
+    }
+    if (decision === 'APPROVE' && !approvedStatusId) {
+      return res.status(400).json({ error: 'No existe estado APPROVED/APROBADO configurado' });
+    }
+    if (decision === 'REJECT' && !rejectedStatusId) {
+      return res.status(400).json({ error: 'No existe estado REJECTED/RECHAZADO configurado' });
+    }
+
+    if (decision === 'APPROVE') {
+      await pool.query(
+        `
+          UPDATE public.employee_shift_plans
+          SET
+            shift_id = $5::uuid,
+            updated_by = $6,
+            updated_at = now()
+          WHERE tenant_id = $1::uuid
+            AND company_id = $2::uuid
+            AND employee_id = $3::uuid
+            AND shift_date = $4::date
+            AND is_active = true
+        `,
+        [
+          current.tenant_id,
+          current.company_id,
+          current.employee_id,
+          current.shift_date,
+          current.requested_shift_id,
+          getActor(req),
+        ]
+      );
+    }
+
+    const decisionTag = decision === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    const auditNotes = supervisorNotes ? `${decisionTag}: ${supervisorNotes}` : decisionTag;
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_shift_change_requests
+        SET
+          request_status_id = $3::uuid,
+          supervisor_notes = $4,
+          approved_by = $5::uuid,
+          approved_at = now(),
+          updated_by = $6,
+          updated_at = now()
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND is_active = true
+        RETURNING *
+      `,
+      [
+        requestId,
+        userContext.tenant_id,
+        finalStatusId,
+        auditNotes,
+        userContext.user_id,
+        getActor(req),
+      ]
+    );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] || null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
 export default router;
+
 

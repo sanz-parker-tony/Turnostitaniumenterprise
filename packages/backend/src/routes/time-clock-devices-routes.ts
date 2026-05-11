@@ -51,12 +51,21 @@ function isValidIpv4(value: string): boolean {
   return true;
 }
 
+function parseNullableCoordinate(value: any, type: 'lat' | 'lng'): number | null | 'INVALID' {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 'INVALID';
+  if (type === 'lat' && (parsed < -90 || parsed > 90)) return 'INVALID';
+  if (type === 'lng' && (parsed < -180 || parsed > 180)) return 'INVALID';
+  return parsed;
+}
+
 router.get('/catalogs', async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
 
-    const [companiesResult, deviceTypesResult] = await Promise.all([
+    const [companiesResult, deviceTypesResult, workLocationsResult] = await Promise.all([
       pool.query(
         `
           SELECT id, company_name, company_code
@@ -78,6 +87,21 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `
       ),
+      pool.query(
+        `
+          SELECT
+            wl.id,
+            wl.work_location_name,
+            wl.work_location_code,
+            wl.geofence_polygon,
+            wl.company_id
+          FROM public.work_locations wl
+          WHERE wl.tenant_id = $1
+            AND wl.is_active = true
+          ORDER BY wl.work_location_name ASC
+        `,
+        [tenantId]
+      ),
     ]);
 
     return res.status(200).json({
@@ -85,6 +109,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       tenant_id: tenantId,
       companies: companiesResult.rows,
       device_types: deviceTypesResult.rows,
+      work_locations: workLocationsResult.rows,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -113,6 +138,12 @@ router.get('/', async (req: Request, res: Response) => {
           d.device_type_id,
           lv.lookup_key AS device_type_key,
           lv.lookup_label AS device_type_label,
+          d.work_location_id,
+          wl.work_location_name,
+          wl.work_location_code,
+          wl.geofence_polygon,
+          d.latitude,
+          d.longitude,
           d.is_active,
           d.created_by,
           d.created_at,
@@ -123,6 +154,8 @@ router.get('/', async (req: Request, res: Response) => {
           ON c.id = d.company_id
         LEFT JOIN public.lookup_values lv
           ON lv.id = d.device_type_id
+        LEFT JOIN public.work_locations wl
+          ON wl.id = d.work_location_id
         WHERE d.tenant_id = $1
           AND ($2::boolean = true OR d.is_active = true)
         ORDER BY d.created_at DESC, d.device_name ASC
@@ -183,6 +216,9 @@ router.post('/', async (req: Request, res: Response) => {
     const rawModel = normalizeNullableText(req.body?.device_model);
     const deviceModel = rawModel ? rawModel.toUpperCase() : null;
     const deviceTypeId = normalizeNullableText(req.body?.device_type_id);
+    const workLocationId = normalizeNullableText(req.body?.work_location_id);
+    const latitude = parseNullableCoordinate(req.body?.latitude, 'lat');
+    const longitude = parseNullableCoordinate(req.body?.longitude, 'lng');
     const isActive = req.body?.is_active !== false;
 
     if (!companyId) return res.status(400).json({ error: 'company_id es obligatorio' });
@@ -195,6 +231,12 @@ router.post('/', async (req: Request, res: Response) => {
     }
     if (deviceModel && !isUpperAlphanumeric(deviceModel)) {
       return res.status(400).json({ error: 'device_model debe contener solo A-Z, 0-9, "-" y "/"' });
+    }
+    if (latitude === 'INVALID') {
+      return res.status(400).json({ error: 'latitude invalido. Debe estar entre -90 y 90' });
+    }
+    if (longitude === 'INVALID') {
+      return res.status(400).json({ error: 'longitude invalido. Debe estar entre -180 y 180' });
     }
 
     if (deviceSerialNumber) {
@@ -226,12 +268,15 @@ router.post('/', async (req: Request, res: Response) => {
           device_location,
           device_model,
           device_type_id,
+          work_location_id,
+          latitude,
+          longitude,
           is_active,
           created_by
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
         )
         RETURNING *
       `,
@@ -244,6 +289,9 @@ router.post('/', async (req: Request, res: Response) => {
         deviceLocation,
         deviceModel,
         deviceTypeId,
+        workLocationId,
+        latitude,
+        longitude,
         isActive,
         actor,
       ]
@@ -272,6 +320,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     const rawModel = normalizeNullableText(req.body?.device_model);
     const deviceModel = rawModel ? rawModel.toUpperCase() : null;
     const deviceTypeId = normalizeNullableText(req.body?.device_type_id);
+    const workLocationId = normalizeNullableText(req.body?.work_location_id);
+    const latitude = parseNullableCoordinate(req.body?.latitude, 'lat');
+    const longitude = parseNullableCoordinate(req.body?.longitude, 'lng');
     const isActive = req.body?.is_active !== false;
 
     if (!companyId) return res.status(400).json({ error: 'company_id es obligatorio' });
@@ -284,6 +335,12 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
     if (deviceModel && !isUpperAlphanumeric(deviceModel)) {
       return res.status(400).json({ error: 'device_model debe contener solo A-Z, 0-9, "-" y "/"' });
+    }
+    if (latitude === 'INVALID') {
+      return res.status(400).json({ error: 'latitude invalido. Debe estar entre -90 y 90' });
+    }
+    if (longitude === 'INVALID') {
+      return res.status(400).json({ error: 'longitude invalido. Debe estar entre -180 y 180' });
     }
 
     if (deviceSerialNumber) {
@@ -315,8 +372,11 @@ router.put('/:id', async (req: Request, res: Response) => {
           device_location = $7,
           device_model = $8,
           device_type_id = $9,
-          is_active = $10,
-          updated_by = $11,
+          work_location_id = $10,
+          latitude = $11,
+          longitude = $12,
+          is_active = $13,
+          updated_by = $14,
           updated_at = now()
         WHERE id = $1
           AND tenant_id = $2
@@ -332,6 +392,9 @@ router.put('/:id', async (req: Request, res: Response) => {
         deviceLocation,
         deviceModel,
         deviceTypeId,
+        workLocationId,
+        latitude,
+        longitude,
         isActive,
         actor,
       ]

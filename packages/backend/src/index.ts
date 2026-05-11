@@ -65,6 +65,7 @@ import systemSettingsRouter from './routes/system-settings-routes';
 import timeClockDevicesRouter from './routes/time-clock-devices-routes';
 import usersRouter from './routes/users-management-routes';
 import workPatternsRouter from './routes/work-patterns-routes';
+import profileAttendanceEventsRouter from './routes/profile-attendance-events-routes';
 
 const router = Router();
 
@@ -87,6 +88,10 @@ function getPostgresAnonClient() {
 // ============================================================================
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+
   const authHeader = req.headers.authorization;
 
   console.log('ðŸ” [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
@@ -328,6 +333,240 @@ router.get('/users/menu-screens', requireAuth, async (req: Request, res: Respons
   } catch (error: any) {
     return res.status(500).json({
       error: error.message || 'Internal server error',
+    });
+  }
+});
+
+router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const authUserId = user?.id;
+    if (!authUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const tenantResult = await pool.query(
+      `
+        SELECT u.tenant_id
+        FROM users u
+        WHERE u.auth_user_id = $1
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    const tenantId = tenantResult.rows[0]?.tenant_id;
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No se pudo resolver tenant_id para el usuario autenticado' });
+    }
+
+    const now = new Date();
+    const monthParamRaw = String(req.query.month || '').trim();
+    const monthParamMatch = monthParamRaw.match(/^(\d{4})-(\d{2})$/);
+    const targetYear = monthParamMatch ? Number(monthParamMatch[1]) : now.getFullYear();
+    const targetMonth = monthParamMatch ? Number(monthParamMatch[2]) : now.getMonth() + 1;
+    const safeMonth = Math.min(12, Math.max(1, targetMonth));
+    const safeYear = Number.isFinite(targetYear) ? targetYear : now.getFullYear();
+    const monthStart = new Date(Date.UTC(safeYear, safeMonth - 1, 1));
+    const monthEnd = new Date(Date.UTC(safeYear, safeMonth, 1));
+    const monthStartIso = monthStart.toISOString().slice(0, 10);
+    const monthEndIso = monthEnd.toISOString().slice(0, 10);
+    const monthKey = `${safeYear}-${String(safeMonth).padStart(2, '0')}`;
+
+    const [tenantInfoRes, countersRes, shiftsRes, workPatternsRes, monthCalendarRes, devicesRes] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            t.id,
+            t.tenant_key,
+            t.tenant_name,
+            t.is_active,
+            t.created_at,
+            COALESCE(tls.language_code, 'es') AS language_code
+          FROM tenants t
+          LEFT JOIN tenant_language_settings tls
+            ON tls.tenant_id = t.id
+          WHERE t.id = $1
+          LIMIT 1
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          WITH pending_absence AS (
+            SELECT COUNT(*)::int AS total
+            FROM employee_absence_requests ear
+            LEFT JOIN lookup_values lv
+              ON lv.id = ear.request_status_id
+            WHERE ear.tenant_id = $1
+              AND ear.is_active = true
+              AND UPPER(COALESCE(lv.lookup_key, '')) = 'PENDING'
+          ),
+          pending_shift_change AS (
+            SELECT COUNT(*)::int AS total
+            FROM employee_shift_change_requests escr
+            LEFT JOIN lookup_values lv
+              ON lv.id = escr.request_status_id
+            WHERE escr.tenant_id = $1
+              AND escr.is_active = true
+              AND UPPER(COALESCE(lv.lookup_key, '')) = 'PENDING'
+          ),
+          next_holiday AS (
+            SELECT
+              h.holiday_date,
+              h.holiday_name
+            FROM holidays h
+            WHERE h.tenant_id = $1
+              AND h.is_active = true
+              AND h.holiday_date >= CURRENT_DATE
+            ORDER BY h.holiday_date ASC
+            LIMIT 1
+          )
+          SELECT
+            (SELECT COUNT(*)::int FROM users WHERE tenant_id = $1 AND is_active = true) AS active_users,
+            (SELECT COUNT(*)::int FROM employees WHERE tenant_id = $1 AND is_active = true) AS active_employees,
+            (SELECT COUNT(*)::int FROM companies WHERE tenant_id = $1 AND is_active = true) AS active_companies,
+            (SELECT COUNT(*)::int FROM roles WHERE tenant_id = $1 AND is_active = true) AS active_roles,
+            (SELECT COUNT(*)::int FROM tenant_members WHERE tenant_id = $1) AS tenant_members,
+            (SELECT COUNT(*)::int FROM tenant_settings WHERE tenant_id = $1 AND is_active = true) AS tenant_setting_overrides,
+            (SELECT COUNT(*)::int FROM work_locations WHERE tenant_id = $1 AND is_active = true) AS active_work_locations,
+            (SELECT COUNT(*)::int FROM departments WHERE tenant_id = $1 AND is_active = true) AS active_departments,
+            (SELECT COUNT(*)::int FROM areas WHERE tenant_id = $1 AND is_active = true) AS active_areas,
+            (SELECT COUNT(*)::int FROM cost_centers WHERE tenant_id = $1 AND is_active = true) AS active_cost_centers,
+            (SELECT COUNT(*)::int FROM payroll_groups WHERE tenant_id = $1 AND is_active = true) AS active_payroll_groups,
+            (SELECT COUNT(*)::int FROM work_groups WHERE tenant_id = $1 AND is_active = true) AS active_work_groups,
+            (SELECT COUNT(*)::int FROM job_titles WHERE tenant_id = $1 AND is_active = true) AS active_job_titles,
+            (SELECT COUNT(*)::int FROM employee_profiles WHERE tenant_id = $1 AND is_active = true) AS active_employee_profiles,
+            (SELECT COUNT(*)::int FROM shifts WHERE tenant_id = $1 AND is_active = true) AS active_shifts,
+            (SELECT COUNT(*)::int FROM work_patterns WHERE tenant_id = $1 AND is_active = true) AS active_work_patterns,
+            (SELECT COUNT(*)::int FROM holidays WHERE tenant_id = $1 AND is_active = true) AS active_holidays,
+            (
+              SELECT COUNT(*)::int
+              FROM holidays h
+              WHERE h.tenant_id = $1
+                AND h.is_active = true
+                AND date_trunc('year', h.holiday_date::timestamp) = date_trunc('year', CURRENT_DATE::timestamp)
+            ) AS holidays_current_year,
+            (
+              SELECT COUNT(*)::int
+              FROM holidays h
+              WHERE h.tenant_id = $1
+                AND h.is_active = true
+                AND h.holiday_date BETWEEN CURRENT_DATE AND (CURRENT_DATE + INTERVAL '90 days')
+            ) AS holidays_next_90_days,
+            (SELECT holiday_date FROM next_holiday) AS next_holiday_date,
+            (SELECT holiday_name FROM next_holiday) AS next_holiday_name,
+            (SELECT total FROM pending_absence) AS pending_absence_requests,
+            (SELECT total FROM pending_shift_change) AS pending_shift_change_requests
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            s.id,
+            s.shift_name,
+            s.shift_short_name,
+            s.start_time,
+            s.work_minutes,
+            s.lunch_minutes,
+            s.shift_icon_key,
+            s.shift_bg_color,
+            s.shift_text_color
+          FROM shifts s
+          WHERE s.tenant_id = $1
+            AND s.is_active = true
+          ORDER BY s.shift_name ASC
+          LIMIT 100
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            wp.id,
+            wp.pattern_name,
+            wp.pattern_short_name,
+            wp.cycle_length_days,
+            wp.work_days_per_cycle,
+            wp.rest_days_per_cycle,
+            wp.daily_work_minutes,
+            wp.weekly_work_minutes_target,
+            wp.is_flexible
+          FROM work_patterns wp
+          WHERE wp.tenant_id = $1
+            AND wp.is_active = true
+          ORDER BY wp.pattern_name ASC
+          LIMIT 100
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            h.id,
+            h.company_id,
+            c.company_name,
+            h.holiday_date,
+            h.holiday_name,
+            h.is_paid
+          FROM holidays h
+          LEFT JOIN companies c
+            ON c.id = h.company_id
+          WHERE h.tenant_id = $1
+            AND h.is_active = true
+            AND h.holiday_date >= $2::date
+            AND h.holiday_date < $3::date
+          ORDER BY h.holiday_date ASC, h.holiday_name ASC
+        `,
+        [tenantId, monthStartIso, monthEndIso]
+      ),
+      pool.query(
+        `
+          SELECT
+            d.id,
+            d.company_id,
+            c.company_name,
+            d.device_name,
+            d.device_serial_number,
+            d.device_model,
+            d.device_location,
+            d.work_location_id,
+            wl.work_location_name,
+            wl.work_location_code,
+            wl.geofence_polygon,
+            d.latitude,
+            d.longitude
+          FROM time_clock_devices d
+          LEFT JOIN companies c
+            ON c.id = d.company_id
+          LEFT JOIN work_locations wl
+            ON wl.id = d.work_location_id
+          WHERE d.tenant_id = $1
+            AND d.is_active = true
+          ORDER BY c.company_name ASC, d.device_name ASC
+        `,
+        [tenantId]
+      ),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      tenant: tenantInfoRes.rows[0] || null,
+      metrics: countersRes.rows[0] || {},
+      shifts: shiftsRes.rows || [],
+      work_patterns: workPatternsRes.rows || [],
+      calendar: {
+        month: monthKey,
+        month_start: monthStartIso,
+        month_end_exclusive: monthEndIso,
+        holidays: monthCalendarRes.rows || [],
+      },
+      devices: devicesRes.rows || [],
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Internal server error',
     });
   }
 });
@@ -833,6 +1072,9 @@ router.use('/subscription-plans-management', requireAuth, subscriptionPlansRoute
 // Work Patterns Management
 router.use('/work-patterns', requireAuth, workPatternsRouter);
 
+// Profile Attendance Events Management
+router.use('/profile-attendance-events', requireAuth, profileAttendanceEventsRouter);
+
 // Time Clock Devices Management
 router.use('/time-clock-devices', requireAuth, timeClockDevicesRouter);
 
@@ -862,7 +1104,7 @@ router.get('/status', (req: Request, res: Response) => {
       users: ['/users/profile', '/users/change-password'],
       tenants: ['/tenants/:id', '/tenant/settings'],
       maintenance: ['/actions', '/attendance-events', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
-      config: ['/shift-constructor', '/work-patterns', '/time-clock-devices'],
+      config: ['/shift-constructor', '/work-patterns', '/time-clock-devices', '/profile-attendance-events'],
       planning: ['/api/shift-planning/generate'],
       employees: ['/employee-shift-planning'],
       attendance: ['/employee-time-punches', '/kiosk'],
