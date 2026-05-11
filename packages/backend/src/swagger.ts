@@ -103,6 +103,7 @@ function buildOpenApiSpec(router: Router) {
     paths[normalizedPath][methodKey] = {
       tags: [tagFromPath(normalizedPath)],
       summary: `${endpoint.method} ${normalizedPath}`,
+      security: [{ bearerAuth: [] }],
       parameters: extractPathParameters(normalizedPath),
       responses: {
         '200': {
