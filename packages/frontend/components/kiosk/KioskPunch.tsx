@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Building2, Loader2, MonitorSmartphone, User } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeftCircle,
+  ArrowRightCircle,
+  Building2,
+  DoorClosed,
+  DoorOpen,
+  Loader2,
+  MonitorSmartphone,
+  User,
+  Utensils,
+  UtensilsCrossed,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +26,8 @@ const KEY_LABEL_OVERRIDES: Record<number, string> = {
   2: 'Inicio Lunch',
   3: 'Retorno Lunch',
   4: 'Salida',
+  5: 'Salida Permiso',
+  6: 'Retorno Permiso',
 };
 
 interface SelectOption {
@@ -278,7 +292,7 @@ export default function KioskPunch() {
 
     setSavingLookupId(punchKeyLookupId);
     try {
-      await request('/kiosk/mark/punch', {
+      const payload = await request('/kiosk/mark/punch', {
         method: 'POST',
         body: JSON.stringify({
           company_id: context.employee.company_id,
@@ -292,6 +306,9 @@ export default function KioskPunch() {
       });
       setLastMarkAt(new Date().toISOString());
       toast.success('Marcacion registrada con camara y geolocalizacion');
+      if (payload?.location_validation?.message) {
+        toast.info(String(payload.location_validation.message));
+      }
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo registrar la marcacion');
     } finally {
@@ -311,6 +328,18 @@ export default function KioskPunch() {
     const bubbleClass = isStartKey
       ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
       : 'bg-rose-100 border-rose-300 text-rose-800';
+    const Icon =
+      keyNumber === 1
+        ? DoorOpen
+        : keyNumber === 2
+        ? Utensils
+        : keyNumber === 3
+        ? UtensilsCrossed
+        : keyNumber === 4
+        ? DoorClosed
+        : keyNumber === 5
+        ? ArrowRightCircle
+        : ArrowLeftCircle;
 
     return (
       <Button
@@ -323,8 +352,8 @@ export default function KioskPunch() {
         {isSaving ? (
           <Loader2 className="w-5 h-5 animate-spin mb-2" />
         ) : (
-          <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full border text-sm font-semibold mb-2 ${bubbleClass}`}>
-            {keyNumber}
+          <span className={`inline-flex items-center justify-center w-10 h-10 rounded-full border mb-2 ${bubbleClass}`}>
+            <Icon className="w-6 h-6" />
           </span>
         )}
         <span className="text-sm font-medium leading-tight">

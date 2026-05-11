@@ -150,118 +150,270 @@ export default function DashboardPage() {
 // ============================================================================
 
 function EmployeeDashboard() {
+  const { session } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [payload, setPayload] = useState<any>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const load = async () => {
+      if (!session?.access_token) {
+        if (mounted) setLoading(false);
+        return;
+      }
+      try {
+        if (mounted) {
+          setLoading(true);
+          setError(null);
+        }
+
+        const resp = await fetch('http://localhost:3001/dashboard/employee-summary', {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data?.error || 'No se pudo cargar la informacion del empleado');
+        }
+        if (mounted) setPayload(data);
+      } catch (e: any) {
+        if (mounted) setError(e?.message || 'Error cargando dashboard de empleado');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    void load();
+    return () => {
+      mounted = false;
+    };
+  }, [session?.access_token]);
+
+  const employee = payload?.employee || {};
+  const employeeCompany = payload?.employee_company || {};
+  const recentPunches = (payload?.recent_punches || []) as any[];
+  const week = payload?.week || {};
+  const weekDays = (week?.days || []) as any[];
+  const requests = (payload?.requests || []) as any[];
+  const holidays = (payload?.holidays || []) as any[];
+  const plusEvents = (payload?.attendance_impact?.plus_events || []) as any[];
+  const minusEvents = (payload?.attendance_impact?.minus_events || []) as any[];
+
+  const maxPlusHours = plusEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
+  const maxMinusHours = minusEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
+
+  const fmtDateTime = (value: string | null | undefined) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString('es-EC', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const fmtDate = (value: string | null | undefined) => {
+    if (!value) return '-';
+    const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+    return date.toLocaleDateString('es-EC', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  };
+
+  const fmtHours = (value: any) => `${Number(value || 0).toFixed(2)} h`;
+
+  const statusColor = (statusKey: string | null | undefined) => {
+    const key = String(statusKey || '').toUpperCase();
+    if (['APPROVED', 'APROBADO'].includes(key)) return 'bg-green-100 text-green-700';
+    if (['REJECTED', 'RECHAZADO', 'DENIED'].includes(key)) return 'bg-red-100 text-red-700';
+    if (['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISI”N'].includes(key)) return 'bg-amber-100 text-amber-700';
+    return 'bg-slate-100 text-slate-700';
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <p className="text-sm text-gray-500">Cargando home de empleado...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <p className="text-sm text-red-600">{error}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      {/* Tarjetas de Resumen */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard
-          icon={<AlertTriangle className="w-6 h-6 text-amber-600" />}
-          title="Inconsistencias"
-          value="3"
-          description="Pendientes por regularizar"
-          color="amber"
-        />
-        <StatCard
-          icon={<XCircle className="w-6 h-6 text-red-600" />}
-          title="Inasistencias"
-          value="2"
-          description="Requieren justificaci√É¬≥n"
-          color="red"
-        />
-        <StatCard
-          icon={<Calendar className="w-6 h-6 text-blue-600" />}
-          title="Turno Actual"
-          value="Ma√É¬±ana"
-          description="08:00 - 17:00"
-          color="blue"
-        />
-        <StatCard
-          icon={<Clock className="w-6 h-6 text-green-600" />}
-          title="√É≈°ltima Marcaci√É¬≥n"
-          value="08:15"
-          description="Hoy - Entrada"
-          color="green"
-        />
-      </div>
-
-      {/* CTAs a KIOSK */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <CTACard
-          title="Marcaci√É¬≥n de Asistencia"
-          description="Registra tu entrada o salida"
-          icon={<Clock className="w-8 h-8 text-[#0074D9]" />}
-          href="/kiosk/punch"
-          buttonText="Ir a Marcaci√É¬≥n"
-        />
-        <CTACard
-          title="Regularizaci√É¬≥n"
-          description="Corrige marcaciones inconsistentes"
-          icon={<FileCheck className="w-8 h-8 text-amber-600" />}
-          href="/kiosk/regularization"
-          buttonText="Regularizar"
-        />
-        <CTACard
-          title="Justificar Inasistencia"
-          description="Justifica ausencias o llegadas tarde"
-          icon={<ClipboardList className="w-8 h-8 text-red-600" />}
-          href="/kiosk/justification"
-          buttonText="Justificar"
-        />
-        <CTACard
-          title="Solicitar Permiso"
-          description="Solicita permisos o licencias"
-          icon={<FileText className="w-8 h-8 text-purple-600" />}
-          href="/kiosk/permission"
-          buttonText="Solicitar"
-        />
-        <CTACard
-          title="Cambio de Turno"
-          description="Solicita cambios en tu horario"
-          icon={<Calendar className="w-8 h-8 text-indigo-600" />}
-          href="/kiosk/shift-change"
-          buttonText="Solicitar Cambio"
-        />
-        <CTACard
-          title="Mis Solicitudes"
-          description="Ver estado de solicitudes"
-          icon={<CheckCircle className="w-8 h-8 text-green-600" />}
-          href="/kiosk/requests"
-          buttonText="Ver Solicitudes"
-        />
-      </div>
-
-      {/* √É≈°ltimas Marcaciones */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">√É≈°ltimas Marcaciones</h2>
-        <div className="space-y-3">
-          {[
-            { date: 'Hoy', time: '08:15', type: 'Entrada', status: 'success' },
-            { date: 'Ayer', time: '17:30', type: 'Salida', status: 'success' },
-            { date: 'Ayer', time: '08:05', type: 'Entrada', status: 'success' },
-            { date: '10 Ene', time: '--:--', type: 'Sin marcar', status: 'error' },
-          ].map((record, idx) => (
-            <div key={idx} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
-              <div className="flex items-center gap-3">
-                <div className={`w-2 h-2 rounded-full ${
-                  record.status === 'success' ? 'bg-green-500' : 'bg-red-500'
-                }`} />
-                <span className="text-sm font-medium text-gray-900">{record.date}</span>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-600">{record.time}</span>
-                <span className={`text-sm font-medium ${
-                  record.status === 'success' ? 'text-gray-900' : 'text-red-600'
-                }`}>{record.type}</span>
-              </div>
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 1 ∑ Empleado y Empleado Empresa</h2>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 text-sm">
+          <div className="rounded-lg border border-gray-200 p-4">
+            <h3 className="font-semibold text-gray-900 mb-3">Empleado</h3>
+            <div className="space-y-2 text-gray-700">
+              <div><span className="text-gray-500">Codigo:</span> {employee.employee_code || '-'}</div>
+              <div><span className="text-gray-500">Nombre:</span> {employee.employee_lastname || ''} {employee.employee_name || ''}</div>
+              <div><span className="text-gray-500">Genero:</span> {employee.gender_label || '-'}</div>
+              <div><span className="text-gray-500">Telefono:</span> {employee.phone || '-'}</div>
+              <div><span className="text-gray-500">Nacimiento:</span> {fmtDate(employee.birth_date)}</div>
+              <div><span className="text-gray-500">Usuario:</span> {employee.user_display_name || employee.user_email || '-'}</div>
             </div>
-          ))}
+          </div>
+          <div className="rounded-lg border border-gray-200 p-4">
+            <h3 className="font-semibold text-gray-900 mb-3">Empleado Empresa</h3>
+            <div className="space-y-2 text-gray-700">
+              <div><span className="text-gray-500">Empresa:</span> {employeeCompany.company_name || '-'}</div>
+              <div><span className="text-gray-500">Perfil:</span> {employeeCompany.employee_profile_name || '-'}</div>
+              <div><span className="text-gray-500">Cargo:</span> {employeeCompany.job_title_name || '-'}</div>
+              <div><span className="text-gray-500">Departamento / Area:</span> {employeeCompany.department_name || '-'} / {employeeCompany.area_name || '-'}</div>
+              <div><span className="text-gray-500">Localizacion:</span> {employeeCompany.work_location_name || '-'}</div>
+              <div><span className="text-gray-500">Provincia / Canton:</span> {employeeCompany.state_label || '-'} / {employeeCompany.city_label || '-'}</div>
+              <div><span className="text-gray-500">Fecha Ingreso:</span> {fmtDate(employeeCompany.hire_date)}</div>
+              <div><span className="text-gray-500">Trabaja Feriados:</span> {employeeCompany.work_on_holidays ? 'Si' : 'No'}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 2 ∑ 10 marcaciones mas recientes</h2>
+          <div className="space-y-2">
+            {recentPunches.length === 0 ? (
+              <p className="text-sm text-gray-500">Sin marcaciones recientes.</p>
+            ) : recentPunches.map((row) => (
+              <div key={row.id} className="rounded-md border border-gray-200 px-3 py-2 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-gray-900">{row.movement_label || `Movimiento ${row.punch_key}`}</div>
+                  <div className="text-xs text-gray-500">{fmtDateTime(row.punch_datetime)}</div>
+                </div>
+                <span className={`text-xs px-2 py-1 rounded-full ${statusColor(row.time_punch_status_key)}`}>
+                  {row.time_punch_status_label || '-'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+            Modulo 3 ∑ Turnos semana actual (Semana {week.iso_week || '-'}-{week.iso_year || '-'})
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-2">
+            {weekDays.map((day) => (
+              <div key={day.date} className="rounded-md border border-gray-200 px-3 py-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-900">{day.weekday_label}</span>
+                  <span className="text-xs text-gray-500">{fmtDate(day.date)}</span>
+                </div>
+                {day.shift ? (
+                  <div className="mt-1 text-sm">
+                    <span className="font-medium">{day.shift.effective_shift_name || day.shift.planned_shift_name || '-'}</span>
+                    <span className="text-gray-500"> ∑ {formatShiftTime(day.shift.effective_start_time)} ∑ {day.shift.effective_work_minutes ?? 0} min</span>
+                  </div>
+                ) : (
+                  <div className="mt-1 text-sm text-gray-500">Sin turno</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 4 ∑ Solicitudes (justificaciones y permisos)</h2>
+          <div className="space-y-2">
+            {requests.length === 0 ? (
+              <p className="text-sm text-gray-500">Sin solicitudes registradas.</p>
+            ) : requests.map((row) => (
+              <div key={row.id} className="rounded-md border border-gray-200 px-3 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-gray-900 truncate">
+                    {row.justification_name || row.event_name || 'Solicitud'}
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded-full ${statusColor(row.request_status_key)}`}>
+                    {row.request_status_label || '-'}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {fmtDateTime(row.start_datetime)} - {fmtDateTime(row.end_datetime)}
+                </div>
+                {row.notes ? <div className="text-xs text-gray-700 mt-1">{row.notes}</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 5 ∑ Feriados aplicables del mes en curso</h2>
+          <div className="space-y-2">
+            {holidays.length === 0 ? (
+              <p className="text-sm text-gray-500">No hay feriados aplicables este mes.</p>
+            ) : holidays.map((row) => (
+              <div key={`${row.id}-${row.holiday_date}`} className="rounded-md border border-gray-200 px-3 py-2">
+                <div className="text-sm font-medium text-gray-900">{row.holiday_name || '-'}</div>
+                <div className="text-xs text-gray-500">{fmtDate(row.holiday_date)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 6 ∑ Tiempos por novedades que suman (mes)</h2>
+          <div className="space-y-3">
+            {plusEvents.length === 0 ? (
+              <p className="text-sm text-gray-500">Sin novedades que suman en el mes.</p>
+            ) : plusEvents.map((row) => {
+              const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxPlusHours) * 100));
+              return (
+                <div key={row.attendance_event_id}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-gray-800">{row.event_short_name || row.event_name}</span>
+                    <span className="font-medium text-emerald-700">{fmtHours(row.total_hours)}</span>
+                  </div>
+                  <div className="h-2 rounded bg-emerald-50 overflow-hidden">
+                    <div className="h-full bg-emerald-500 rounded" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Modulo 7 ∑ Tiempos por novedades que restan (mes)</h2>
+          <div className="space-y-3">
+            {minusEvents.length === 0 ? (
+              <p className="text-sm text-gray-500">Sin novedades que restan en el mes.</p>
+            ) : minusEvents.map((row) => {
+              const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxMinusHours) * 100));
+              return (
+                <div key={row.attendance_event_id}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-gray-800">{row.event_short_name || row.event_name}</span>
+                    <span className="font-medium text-rose-700">{fmtHours(row.total_hours)}</span>
+                  </div>
+                  <div className="h-2 rounded bg-rose-50 overflow-hidden">
+                    <div className="h-full bg-rose-500 rounded" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
   );
 }
-
-// ============================================================================
 // RRHH DASHBOARD - Cola de aprobaciones
 // ============================================================================
 

@@ -908,7 +908,6 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
 });
 
 router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) => {
-  //
   try {
     const Postgres = getPostgres();
     const tenantId = await resolveTenantId(req, Postgres);
@@ -1015,8 +1014,8 @@ router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) =>
       in: 'query',
       required: true,
       schema: { type: 'integer', minimum: 1, maximum: 12 },
-      description: 'Mes del calendario (1-12)',
-    },  
+      description: 'Mes del calendario (1-12)', 
+    },
     {
       name: 'company_id',
       in: 'query',
@@ -1049,12 +1048,146 @@ router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) =>
     },
   ],
   responses: {
-    '200': { description: 'Calendario de feriados' },
-    '400': { description: 'Parametros invalidos' },
-    '401': { description: 'No autorizado' },
-    '500': { description: 'Error interno' },
+    200: { description: 'Calendario de feriados' },
+    400: { description: 'Parametros invalidos' },
+    401: { description: 'No autorizado' },
+    500: { description: 'Error interno' },
   },
 }));
+
+router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) {
+      return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    }
+
+    const fromRaw =
+      String(req.query.from || req.query.start_date || req.query.date_from || '').trim();
+    const toRaw =
+      String(req.query.to || req.query.end_date || req.query.date_to || '').trim();
+
+    const isIsoDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+    if (!isIsoDate(fromRaw)) {
+      return res.status(400).json({ error: 'from/start_date invalido (use YYYY-MM-DD)' });
+    }
+    if (!isIsoDate(toRaw)) {
+      return res.status(400).json({ error: 'to/end_date invalido (use YYYY-MM-DD)' });
+    }
+    if (fromRaw > toRaw) {
+      return res.status(400).json({ error: 'La fecha final no puede ser menor a la fecha inicial' });
+    }
+
+    const { data, error } = await Postgres
+      .from('holidays')
+      .select(`
+        id,
+        holiday_date,
+        holiday_name,
+        is_recurring,
+        company_id,
+        country_id,
+        state_id,
+        city_id,
+        work_location_id
+      `)
+      .eq('tenant_id', tenantId)
+      .eq('is_active', true)
+      .order('holiday_date', { ascending: true });
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    const startDate = new Date(`${fromRaw}T00:00:00`);
+    const endDate = new Date(`${toRaw}T00:00:00`);
+
+    const items = (data || []).flatMap((row: any) => {
+      const dateIso = extractDateIso(row?.holiday_date);
+      if (!dateIso) return [];
+
+      const isRecurring = row?.is_recurring === true || String(row?.is_recurring) === 'true';
+      if (!isRecurring) {
+        if (dateIso < fromRaw || dateIso > toRaw) return [];
+        return [{
+          holiday_date: dateIso,
+          company_id: row?.company_id || null,
+          country_id: row?.country_id || null,
+          state_id: row?.state_id || null,
+          city_id: row?.city_id || null,
+          work_location_id: row?.work_location_id || null,
+          holiday_id: row?.id || null,
+          holiday_name: row?.holiday_name || null,
+          is_recurring: false,
+        }];
+      }
+
+      const [_, month, day] = dateIso.split('-');
+      const projected: any[] = [];
+      const cursor = new Date(startDate);
+      while (cursor <= endDate) {
+        const year = String(cursor.getFullYear());
+        const candidate = `${year}-${month}-${day}`;
+        if (candidate >= fromRaw && candidate <= toRaw) {
+          projected.push({
+            holiday_date: candidate,
+            company_id: row?.company_id || null,
+            country_id: row?.country_id || null,
+            state_id: row?.state_id || null,
+            city_id: row?.city_id || null,
+            work_location_id: row?.work_location_id || null,
+            holiday_id: row?.id || null,
+            holiday_name: row?.holiday_name || null,
+            holiday_short_name: row?.holiday_short_name || null,
+            is_recurring: true,
+          });
+        }
+        cursor.setFullYear(cursor.getFullYear() + 1);
+      }
+      return projected;
+    });
+
+    items.sort((a: any, b: any) => String(a.holiday_date).localeCompare(String(b.holiday_date), 'es'));
+
+    return res.status(200).json({
+      success: true,
+      tenant_id: tenantId,
+      from: fromRaw,
+      to: toRaw,
+      items,
+      count: items.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+}, {
+  tags: ['Organization'],
+  summary: 'Feriados en un rango de fechas',
+  description: 'Obtiene los feriados del tenant que caen dentro de un rango de fechas, con filtros opcionales de alcance.',
+  parameters: [
+    {
+      name: 'from',
+      in: 'query',
+      description: 'Fecha de inicio del rango',
+      required: true,
+      schema: {
+        type: 'string',
+        format: 'date'
+      }
+    },
+    {
+      name: 'to',
+      in: 'query',
+      description: 'Fecha de fin del rango',
+      required: true,
+      schema: {
+        type: 'string',
+        format: 'date'
+      }
+    }
+  ]
+} ));
 
 // Employee user management (link employees -> users)
 router.get('/employee-users/catalogs', async (req: Request, res: Response) => {

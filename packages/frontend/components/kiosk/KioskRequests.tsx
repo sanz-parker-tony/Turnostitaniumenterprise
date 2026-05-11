@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Pencil, Plus, RefreshCw, Trash2, FileText, Eye } from 'lucide-react';
+import { Loader2, Pencil, Plus, RefreshCw, Trash2, FileText, Eye, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,6 +39,7 @@ interface RequestRow {
   start_time: string | null;
   end_time: string | null;
   notes: string | null;
+  support_document_path: string | null;
   support_document_name: string | null;
   support_document_mime: string | null;
   request_status_key: string | null;
@@ -184,7 +185,7 @@ export default function KioskRequests() {
   const [removeSupport, setRemoveSupport] = useState(false);
   const [editingRequestSnapshot, setEditingRequestSnapshot] = useState<RequestRow | null>(null);
 
-  const request = async (path: string, init?: RequestInit) => {
+  const getAuthToken = async (): Promise<string> => {
     const api = createClient();
     const { data: { session } } = await api.auth.getSession();
     const token =
@@ -192,6 +193,11 @@ export default function KioskRequests() {
       localStorage.getItem('tt-access-token') ||
       localStorage.getItem('access_token');
     if (!token) throw new Error('No hay sesión activa');
+    return token;
+  };
+
+  const request = async (path: string, init?: RequestInit) => {
+    const token = await getAuthToken();
 
     const doFetch = async (bearer: string) => {
       const response = await fetch(`http://localhost:3001${path}`, {
@@ -214,6 +220,30 @@ export default function KioskRequests() {
     }
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
+  };
+
+  const openSupportDocument = async (row: RequestRow) => {
+    if (!row.support_document_name) return;
+    try {
+      const token = await getAuthToken();
+      const response = await fetch(`http://localhost:3001/kiosk/requests/${row.id}/support-document`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const fileUrl = window.URL.createObjectURL(blob);
+      window.open(fileUrl, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo abrir el archivo adjunto');
+    }
   };
 
   const fileToBase64 = (file: File) =>
@@ -495,12 +525,13 @@ export default function KioskRequests() {
               <table className="w-full table-fixed text-sm">
                 <thead className="bg-slate-100 text-slate-700">
                   <tr>
-                    <th className="text-left px-3 py-2 w-[10%]">Desde</th>
-                    <th className="text-left px-3 py-2 w-[10%]">Hasta</th>
+                    <th className="text-left px-3 py-2 w-[9%]">Desde</th>
+                    <th className="text-left px-3 py-2 w-[9%]">Hasta</th>
                     <th className="text-left px-3 py-2 w-[15%]">Justificación</th>
-                    <th className="text-left px-3 py-2 w-[15%]">Evento</th>
-                    <th className="text-left px-3 py-2 w-[15%]">Método descuento</th>
-                    <th className="text-left px-3 py-2 w-[18%]">Motivo</th>
+                    <th className="text-left px-3 py-2 w-[13%]">Evento</th>
+                    <th className="text-left px-3 py-2 w-[13%]">Método descuento</th>
+                    <th className="text-left px-3 py-2 w-[16%]">Motivo</th>
+                    <th className="text-center px-2 py-2 w-[4%]">Adjunto</th>
                     <th className="text-left px-3 py-2 w-[9%]">Estado</th>
                     <th className="text-right px-3 py-2 w-[8%]">Acciones</th>
                   </tr>
@@ -519,6 +550,26 @@ export default function KioskRequests() {
                           {row.justify_method_label || (row.justify_method_id ? discountMethodLabelById.get(row.justify_method_id) : null) || row.justify_method_key || '-'}
                         </td>
                         <td className="px-3 py-2 break-words">{row.notes || '-'}</td>
+                        <td className="px-2 py-2 whitespace-nowrap text-center">
+                          {row.support_document_name ? (
+                            <button
+                              type="button"
+                              onClick={() => void openSupportDocument(row)}
+                              disabled={saving}
+                              className="inline-flex items-center justify-center text-blue-700 hover:opacity-80 disabled:text-slate-400"
+                              title={row.support_document_name}
+                              aria-label={`Abrir adjunto ${row.support_document_name}`}
+                            >
+                              {String(row.support_document_mime || '').toLowerCase() === 'application/pdf' ? (
+                                <FileText className="w-3.5 h-3.5" />
+                              ) : (
+                                <Paperclip className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          ) : (
+                            '-'
+                          )}
+                        </td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           <span className={`inline-flex rounded-full border px-2 py-1 text-xs ${statusBadgeClass(row.request_status_key, row.request_status_label)}`}>
                             {row.request_status_label || row.request_status_key || '-'}

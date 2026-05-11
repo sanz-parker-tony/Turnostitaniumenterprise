@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -200,6 +201,11 @@ function getShiftVisual(shiftIconKey?: string | null, bgColor?: string | null, t
   };
 }
 
+function formatShiftLabel(shift?: Pick<AvailableShiftRow, 'shift_name' | 'shift_short_name'> | null): string {
+  if (!shift) return '-';
+  return shift.shift_short_name ? `${shift.shift_name} (${shift.shift_short_name})` : shift.shift_name;
+}
+
 export default function KioskShiftChange() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -271,6 +277,45 @@ export default function KioskShiftChange() {
 
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
+  };
+
+  const openSupportDocument = async (requestId: string) => {
+    try {
+      const api = createClient();
+      const {
+        data: { session },
+      } = await api.auth.getSession();
+      const token =
+        session?.access_token ||
+        localStorage.getItem('tt-access-token') ||
+        localStorage.getItem('access_token');
+      if (!token) throw new Error('No hay sesión activa');
+
+      const doFetch = async (bearer: string) =>
+        fetch(`http://localhost:3001/kiosk/request-shift-change/${requestId}/support-document`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${bearer}`,
+          },
+        });
+
+      let response = await doFetch(token);
+      if (response.status === 401 && session?.access_token && token !== session.access_token) {
+        response = await doFetch(session.access_token);
+      }
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const fileUrl = window.URL.createObjectURL(blob);
+      window.open(fileUrl, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo abrir el adjunto PDF');
+    }
   };
 
   const loadShifts = async () => {
@@ -379,6 +424,11 @@ export default function KioskShiftChange() {
     }
     return map;
   }, [availableShifts]);
+
+  const selectedShiftOption = useMemo(() => {
+    if (!requestedShiftId) return null;
+    return availableShiftById.get(requestedShiftId) || null;
+  }, [availableShiftById, requestedShiftId]);
 
   const beginRequest = (plan: ShiftPlanRow) => {
     const existing =
@@ -824,14 +874,26 @@ export default function KioskShiftChange() {
                                   <MessageSquareText className="w-3 h-3" />
                                   Texto
                                 </span>
-                                <span
-                                  className={`inline-flex items-center gap-1 ${
-                                    row.support_document_name ? 'text-slate-700' : 'text-slate-400'
-                                  }`}
-                                >
-                                  <FileText className="w-3 h-3" />
-                                  PDF
-                                </span>
+                                {row.support_document_name ? (
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void openSupportDocument(row.id);
+                                    }}
+                                    className="inline-flex items-center gap-1 text-rose-700 hover:text-rose-800 hover:underline"
+                                    title={row.support_document_name}
+                                    aria-label={`Abrir PDF adjunto ${row.support_document_name}`}
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    PDF
+                                  </button>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-rose-300">
+                                    <FileText className="w-3 h-3" />
+                                    PDF
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -880,19 +942,52 @@ export default function KioskShiftChange() {
 
             <label className="text-sm space-y-1 block">
               <span className="block text-slate-700">Turno solicitado</span>
-              <select
+              <Select
                 value={requestedShiftId}
-                onChange={(event) => setRequestedShiftId(event.target.value)}
-                className="h-10 border rounded-md px-3 w-full"
+                onValueChange={(value) => setRequestedShiftId(value)}
                 disabled={dialogMode === 'view' || saving}
               >
-                <option value="">Seleccionar...</option>
-                {selectableShifts.map((shift) => (
-                  <option key={shift.id} value={shift.id}>
-                    {shift.shift_name} {shift.shift_short_name ? `(${shift.shift_short_name})` : ''}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full">
+                  {selectedShiftOption ? (
+                    (() => {
+                      const visual = getShiftVisual(
+                        selectedShiftOption.shift_icon_key,
+                        selectedShiftOption.shift_bg_color,
+                        selectedShiftOption.shift_text_color
+                      );
+                      const Icon = visual.Icon;
+                      return (
+                        <div
+                          className="inline-flex w-full items-center gap-2 rounded-md px-2 py-1"
+                          style={{ backgroundColor: visual.bgColor, color: visual.textColor }}
+                        >
+                          <Icon className="w-4 h-4 shrink-0" />
+                          <span className="truncate">{formatShiftLabel(selectedShiftOption)}</span>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <SelectValue placeholder="Seleccionar..." />
+                  )}
+                </SelectTrigger>
+                <SelectContent>
+                  {selectableShifts.map((shift) => {
+                    const visual = getShiftVisual(shift.shift_icon_key, shift.shift_bg_color, shift.shift_text_color);
+                    const Icon = visual.Icon;
+                    return (
+                      <SelectItem key={shift.id} value={shift.id}>
+                        <span
+                          className="inline-flex w-full items-center gap-2 rounded-md px-2 py-1"
+                          style={{ backgroundColor: visual.bgColor, color: visual.textColor }}
+                        >
+                          <Icon className="w-4 h-4 shrink-0" />
+                          <span className="truncate">{formatShiftLabel(shift)}</span>
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </label>
 
             <label className="text-sm space-y-1 block">
@@ -955,14 +1050,6 @@ export default function KioskShiftChange() {
             ) : null}
             {dialogMode === 'edit' ? (
               <>
-                {isPendingShiftChangeStatus(
-                  selectedPlan?.open_request_status_key,
-                  selectedPlan?.open_request_status_label
-                ) ? (
-                  <Button variant="destructive" onClick={() => void deleteExistingRequest()} disabled={saving}>
-                    Eliminar
-                  </Button>
-                ) : null}
                 <Button onClick={() => void saveExistingRequest()} disabled={saving}>
                   {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                   Guardar cambios

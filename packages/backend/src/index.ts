@@ -598,6 +598,505 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
 });
 
 /**
+ * GET /dashboard/employee-summary
+ *
+ * Resumen del home para el rol EMPLOYEE.
+ * Devuelve datos para modulos:
+ * 1) Perfil empleado + empleado/empresa
+ * 2) 10 marcaciones mas recientes
+ * 3) Turnos de la semana en curso (7 dias + numero de semana ISO)
+ * 4) Solicitudes de justificacion/permiso con estado
+ * 5) Feriados aplicables del mes en curso segun alcance organizacional/geografico
+ * 6) Novedades que suman (mes en curso)
+ * 7) Novedades que restan (mes en curso)
+ */
+router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const authUserId = user?.id;
+    if (!authUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const contextResult = await pool.query(
+      `
+        SELECT
+          u.id AS user_id,
+          u.email AS user_email,
+          u.display_name AS user_display_name,
+          u.tenant_id,
+          e.id AS employee_id,
+          e.employee_code,
+          e.employee_name,
+          e.employee_lastname,
+          e.phone,
+          e.birth_date,
+          e.gender_id,
+          g.lookup_label AS gender_label,
+          e.user_id AS internal_user_id,
+          ec.id AS employee_company_id,
+          ec.company_id,
+          c.company_code,
+          c.company_name,
+          c.company_short_name,
+          c.company_country_id AS country_id,
+          c.company_state_id AS state_id,
+          c.company_city_id AS city_id,
+          country.lookup_label AS country_label,
+          state.lookup_label AS state_label,
+          city.lookup_label AS city_label,
+          ec.work_location_id,
+          wl.work_location_code,
+          wl.work_location_name,
+          ec.employee_profile_id,
+          ep.profile_name AS employee_profile_name,
+          ec.payroll_group_id,
+          pg.payroll_group_name,
+          ec.department_id,
+          d.department_name,
+          ec.area_id,
+          a.area_name,
+          ec.job_title_id,
+          jt.job_title_name,
+          ec.work_group_id,
+          wg.work_group_name,
+          ec.cost_center_id,
+          cc.cost_center_name,
+          ec.payroll_employee_code,
+          ec.device_user_code,
+          ec.hire_date,
+          ec.termination_date,
+          ec.work_on_holidays
+        FROM public.users u
+        INNER JOIN public.employees e
+          ON e.user_id = u.id
+         AND e.tenant_id = u.tenant_id
+         AND e.is_active = true
+        LEFT JOIN public.lookup_values g
+          ON g.id = e.gender_id
+        LEFT JOIN LATERAL (
+          SELECT *
+          FROM public.employee_companies ecx
+          WHERE ecx.tenant_id = u.tenant_id
+            AND ecx.employee_id = e.id
+            AND ecx.is_active = true
+          ORDER BY ecx.created_at DESC NULLS LAST
+          LIMIT 1
+        ) ec ON true
+        LEFT JOIN public.companies c
+          ON c.id = ec.company_id
+        LEFT JOIN public.lookup_values country
+          ON country.id = c.company_country_id
+        LEFT JOIN public.lookup_values state
+          ON state.id = c.company_state_id
+        LEFT JOIN public.lookup_values city
+          ON city.id = c.company_city_id
+        LEFT JOIN public.work_locations wl
+          ON wl.id = ec.work_location_id
+        LEFT JOIN public.employee_profiles ep
+          ON ep.id = ec.employee_profile_id
+        LEFT JOIN public.payroll_groups pg
+          ON pg.id = ec.payroll_group_id
+        LEFT JOIN public.departments d
+          ON d.id = ec.department_id
+        LEFT JOIN public.areas a
+          ON a.id = ec.area_id
+        LEFT JOIN public.job_titles jt
+          ON jt.id = ec.job_title_id
+        LEFT JOIN public.work_groups wg
+          ON wg.id = ec.work_group_id
+        LEFT JOIN public.cost_centers cc
+          ON cc.id = ec.cost_center_id
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    const context = contextResult.rows[0];
+    if (!context?.tenant_id || !context?.employee_id) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const tenantId = String(context.tenant_id);
+    const employeeId = String(context.employee_id);
+    const companyId = context.company_id ? String(context.company_id) : '';
+    const countryId = context.country_id ? String(context.country_id) : '';
+    const stateId = context.state_id ? String(context.state_id) : '';
+    const cityId = context.city_id ? String(context.city_id) : '';
+    const workLocationId = context.work_location_id ? String(context.work_location_id) : '';
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    const monthStart = new Date(currentYear, currentMonth - 1, 1);
+    const monthEndExclusive = new Date(currentYear, currentMonth, 1);
+    const monthStartIso = monthStart.toISOString().slice(0, 10);
+    const monthEndExclusiveIso = monthEndExclusive.toISOString().slice(0, 10);
+
+    const weekStart = new Date(now);
+    const dayOffset = (weekStart.getDay() + 6) % 7; // lunes=0
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - dayOffset);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    const weekStartIso = weekStart.toISOString().slice(0, 10);
+    const weekEndIso = weekEnd.toISOString().slice(0, 10);
+
+    const weekInfoResult = await pool.query(
+      `
+        SELECT
+          TO_CHAR($1::date, 'IW')::int AS iso_week,
+          TO_CHAR($1::date, 'IYYY')::int AS iso_year
+      `,
+      [now.toISOString().slice(0, 10)]
+    );
+    const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
+    const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
+
+    const [recentPunchesResult, weekShiftsResult, requestsResult, holidaysRawResult, attendanceImpactResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT
+            p.id,
+            p.punch_datetime,
+            p.punch_key,
+            mv.lookup_label AS movement_label,
+            p.time_punch_status_id,
+            st.lookup_key AS time_punch_status_key,
+            st.lookup_label AS time_punch_status_label,
+            p.notes,
+            p.is_active
+          FROM public.employee_time_punches p
+          LEFT JOIN public.lookup_values st
+            ON st.id = p.time_punch_status_id
+          LEFT JOIN LATERAL (
+            SELECT lv.lookup_label
+            FROM public.lookup_values lv
+            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
+              AND lv.sort_order = p.punch_key
+              AND lv.is_active = true
+              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
+            LIMIT 1
+          ) mv ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.employee_id = $2::uuid
+          ORDER BY p.punch_datetime DESC, p.created_at DESC
+          LIMIT 10
+        `,
+        [tenantId, employeeId]
+      ),
+      pool.query(
+        `
+          SELECT
+            p.shift_date,
+            COALESCE(approved_req.requested_shift_id, p.shift_id) AS effective_shift_id,
+            es.shift_name AS effective_shift_name,
+            es.shift_short_name AS effective_shift_short_name,
+            es.start_time AS effective_start_time,
+            es.work_minutes AS effective_work_minutes,
+            es.shift_icon_key AS effective_shift_icon_key,
+            es.shift_bg_color AS effective_shift_bg_color,
+            es.shift_text_color AS effective_shift_text_color,
+            p.shift_id AS planned_shift_id,
+            ps.shift_name AS planned_shift_name,
+            ps.shift_short_name AS planned_shift_short_name
+          FROM public.employee_shift_plans p
+          INNER JOIN public.shifts ps
+            ON ps.id = p.shift_id
+          LEFT JOIN LATERAL (
+            SELECT
+              r.requested_shift_id
+            FROM public.employee_shift_change_requests r
+            LEFT JOIN public.lookup_values st
+              ON st.id = r.request_status_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = p.employee_id
+              AND r.shift_date = p.shift_date
+              AND r.is_active = true
+              AND UPPER(COALESCE(st.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            ORDER BY r.approved_at DESC NULLS LAST, r.updated_at DESC NULLS LAST, r.created_at DESC
+            LIMIT 1
+          ) approved_req ON true
+          INNER JOIN public.shifts es
+            ON es.id = COALESCE(approved_req.requested_shift_id, p.shift_id)
+          WHERE p.tenant_id = $1::uuid
+            AND p.employee_id = $2::uuid
+            AND p.is_active = true
+            AND p.shift_date BETWEEN $3::date AND $4::date
+          ORDER BY p.shift_date ASC
+        `,
+        [tenantId, employeeId, weekStartIso, weekEndIso]
+      ),
+      pool.query(
+        `
+          SELECT
+            r.id,
+            r.start_datetime,
+            r.end_datetime,
+            r.notes,
+            r.is_active,
+            r.request_status_id,
+            rs.lookup_key AS request_status_key,
+            rs.lookup_label AS request_status_label,
+            r.justification_type_id,
+            jt.justification_name,
+            r.attendance_event_id,
+            ae.event_name
+          FROM public.employee_absence_requests r
+          LEFT JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          LEFT JOIN public.justification_types jt
+            ON jt.id = r.justification_type_id
+          LEFT JOIN public.attendance_events ae
+            ON ae.id = r.attendance_event_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = $2::uuid
+          ORDER BY r.created_at DESC
+          LIMIT 12
+        `,
+        [tenantId, employeeId]
+      ),
+      pool.query(
+        `
+          SELECT
+            h.id,
+            h.holiday_date,
+            h.holiday_name,
+            h.holiday_short_name,
+            h.is_recurring,
+            h.company_id,
+            h.country_id,
+            h.state_id,
+            h.city_id,
+            h.work_location_id
+          FROM public.holidays h
+          WHERE h.tenant_id = $1::uuid
+            AND h.is_active = true
+          ORDER BY h.holiday_date ASC
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            ae.id AS attendance_event_id,
+            ae.event_name,
+            ae.event_short_name,
+            direction.lookup_key AS direction_key,
+            direction.lookup_label AS direction_label,
+            SUM(
+              CASE
+                WHEN calc.is_approved = true AND calc.approved_value IS NOT NULL
+                  THEN calc.approved_value
+                ELSE calc.generated_value
+              END
+            )::numeric AS total_value
+          FROM public.employee_attendance_calculations calc
+          INNER JOIN public.attendance_events ae
+            ON ae.id = calc.attendance_event_id
+          LEFT JOIN public.lookup_values direction
+            ON direction.id = ae.transaction_direction_id
+          WHERE calc.tenant_id = $1::uuid
+            AND calc.employee_id = $2::uuid
+            AND calc.year = $3::int
+            AND calc.month = $4::int
+            AND calc.is_active = true
+          GROUP BY
+            ae.id,
+            ae.event_name,
+            ae.event_short_name,
+            direction.lookup_key,
+            direction.lookup_label
+          HAVING SUM(
+            CASE
+              WHEN calc.is_approved = true AND calc.approved_value IS NOT NULL
+                THEN calc.approved_value
+              ELSE calc.generated_value
+            END
+          ) <> 0
+          ORDER BY total_value DESC
+          LIMIT 50
+        `,
+        [tenantId, employeeId, currentYear, currentMonth]
+      ),
+    ]);
+
+    const holidaysCurrentMonth = (holidaysRawResult.rows || []).flatMap((row: any) => {
+      const dateRaw = String(row?.holiday_date || '').slice(0, 10);
+      if (!dateRaw) return [];
+
+      const [year, month, day] = dateRaw.split('-').map((part: string) => Number(part));
+      if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return [];
+
+      const isRecurring = row?.is_recurring === true || String(row?.is_recurring) === 'true';
+      const projectedDate = isRecurring
+        ? `${String(currentYear).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+        : dateRaw;
+
+      if (projectedDate < monthStartIso || projectedDate >= monthEndExclusiveIso) return [];
+      if (isRecurring && month !== currentMonth) return [];
+
+      const rowCompany = row?.company_id ? String(row.company_id) : '';
+      const rowCountry = row?.country_id ? String(row.country_id) : '';
+      const rowState = row?.state_id ? String(row.state_id) : '';
+      const rowCity = row?.city_id ? String(row.city_id) : '';
+      const rowWorkLocation = row?.work_location_id ? String(row.work_location_id) : '';
+
+      const matchScope = (employeeScope: string, holidayScope: string): boolean => {
+        if (holidayScope) return employeeScope ? holidayScope === employeeScope : false;
+        return true;
+      };
+
+      if (!matchScope(companyId, rowCompany)) return [];
+      if (!matchScope(countryId, rowCountry)) return [];
+      if (!matchScope(stateId, rowState)) return [];
+      if (!matchScope(cityId, rowCity)) return [];
+      if (!matchScope(workLocationId, rowWorkLocation)) return [];
+
+      return [{
+        ...row,
+        holiday_date: projectedDate,
+      }];
+    }).sort((a: any, b: any) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
+
+    const shiftsByDate = new Map<string, any>();
+    for (const row of weekShiftsResult.rows || []) {
+      const dateKey = String(row.shift_date).slice(0, 10);
+      if (dateKey) shiftsByDate.set(dateKey, row);
+    }
+
+    const weekDays: any[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + i);
+      const dateIso = date.toISOString().slice(0, 10);
+      const shift = shiftsByDate.get(dateIso) || null;
+      weekDays.push({
+        date: dateIso,
+        weekday_label: date.toLocaleDateString('es-EC', { weekday: 'short' }).replace('.', ''),
+        shift,
+      });
+    }
+
+    const plusTokens = ['SUM', 'ADD', 'POS', 'ACRE', 'INC', 'CREDIT', 'ABON'];
+    const minusTokens = ['RES', 'SUB', 'NEG', 'DEC', 'DEBIT', 'DESCU', 'RESTA'];
+
+    const plusEvents: any[] = [];
+    const minusEvents: any[] = [];
+
+    for (const row of attendanceImpactResult.rows || []) {
+      const directionKey = String(row.direction_key || '').toUpperCase();
+      const totalValue = Number(row.total_value || 0);
+      const normalized = {
+        attendance_event_id: row.attendance_event_id,
+        event_name: row.event_name,
+        event_short_name: row.event_short_name,
+        direction_key: row.direction_key,
+        direction_label: row.direction_label,
+        total_value: totalValue,
+        total_hours: totalValue / 60,
+      };
+
+      const isPlusByKey = plusTokens.some((token) => directionKey.includes(token));
+      const isMinusByKey = minusTokens.some((token) => directionKey.includes(token));
+      if (isPlusByKey || (!isMinusByKey && totalValue > 0)) {
+        plusEvents.push(normalized);
+      } else {
+        minusEvents.push({
+          ...normalized,
+          total_value: Math.abs(totalValue),
+          total_hours: Math.abs(totalValue) / 60,
+        });
+      }
+    }
+
+    const employee = {
+      user_id: context.user_id,
+      user_email: context.user_email,
+      user_display_name: context.user_display_name,
+      employee_id: context.employee_id,
+      employee_code: context.employee_code,
+      employee_name: context.employee_name,
+      employee_lastname: context.employee_lastname,
+      phone: context.phone,
+      birth_date: context.birth_date,
+      gender_id: context.gender_id,
+      gender_label: context.gender_label,
+    };
+
+    const employeeCompany = {
+      employee_company_id: context.employee_company_id,
+      company_id: context.company_id,
+      company_code: context.company_code,
+      company_name: context.company_name,
+      company_short_name: context.company_short_name,
+      country_id: context.country_id,
+      country_label: context.country_label,
+      state_id: context.state_id,
+      state_label: context.state_label,
+      city_id: context.city_id,
+      city_label: context.city_label,
+      work_location_id: context.work_location_id,
+      work_location_code: context.work_location_code,
+      work_location_name: context.work_location_name,
+      employee_profile_id: context.employee_profile_id,
+      employee_profile_name: context.employee_profile_name,
+      payroll_group_id: context.payroll_group_id,
+      payroll_group_name: context.payroll_group_name,
+      department_id: context.department_id,
+      department_name: context.department_name,
+      area_id: context.area_id,
+      area_name: context.area_name,
+      job_title_id: context.job_title_id,
+      job_title_name: context.job_title_name,
+      work_group_id: context.work_group_id,
+      work_group_name: context.work_group_name,
+      cost_center_id: context.cost_center_id,
+      cost_center_name: context.cost_center_name,
+      payroll_employee_code: context.payroll_employee_code,
+      device_user_code: context.device_user_code,
+      hire_date: context.hire_date,
+      termination_date: context.termination_date,
+      work_on_holidays: context.work_on_holidays,
+    };
+
+    return res.status(200).json({
+      success: true,
+      tenant_id: tenantId,
+      month: {
+        year: currentYear,
+        month: currentMonth,
+        start: monthStartIso,
+        end_exclusive: monthEndExclusiveIso,
+      },
+      employee,
+      employee_company: employeeCompany,
+      recent_punches: recentPunchesResult.rows || [],
+      week: {
+        iso_week: isoWeek,
+        iso_year: isoYear,
+        start: weekStartIso,
+        end: weekEndIso,
+        days: weekDays,
+      },
+      requests: requestsResult.rows || [],
+      holidays: holidaysCurrentMonth,
+      attendance_impact: {
+        plus_events: plusEvents,
+        minus_events: minusEvents,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Internal server error',
+    });
+  }
+});
+
+/**
  * @openapi
  * /auth/login:
  *   post:

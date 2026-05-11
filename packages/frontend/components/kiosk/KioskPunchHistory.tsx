@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Loader2, Pencil, Power, PowerOff, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, Loader2, Pencil, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,11 +47,10 @@ interface ContextPayload {
 
 type EditState = {
   rowId: string;
-  notes: string;
   punch_key_lookup_id: string;
-  punch_source_id: string;
   time_punch_status_id: string;
-  time_clock_device_id: string;
+  notes: string;
+  is_active: boolean;
 };
 
 function toIsoDate(date: Date): string {
@@ -137,13 +136,6 @@ export default function KioskPunchHistory() {
     void loadAll();
   }, []);
 
-  const devicesForEdit = useMemo(() => {
-    if (!context || !edit) return [];
-    const row = rows.find((item) => item.id === edit.rowId);
-    if (!row?.company_id) return context.devices;
-    return context.devices.filter((d) => !d.company_id || d.company_id === row.company_id);
-  }, [context, edit, rows]);
-
   const movementOptions = useMemo(() => {
     const items = context?.punch_keys || [];
     return [...items]
@@ -154,14 +146,13 @@ export default function KioskPunchHistory() {
   const beginEdit = (row: HistoryRow) => {
     setEdit({
       rowId: row.id,
-      notes: row.notes || '',
       punch_key_lookup_id:
         row.punch_key_lookup_id ||
         movementOptions.find((item) => Number(item.punch_key_value) === Number(row.punch_key))?.id ||
         '',
-      punch_source_id: row.punch_source_id || '',
       time_punch_status_id: row.time_punch_status_id || '',
-      time_clock_device_id: row.time_clock_device_id || '',
+      notes: row.notes || '',
+      is_active: Boolean(row.is_active),
     });
   };
 
@@ -174,11 +165,10 @@ export default function KioskPunchHistory() {
       await request(`/kiosk/mark/history/${edit.rowId}`, {
         method: 'PATCH',
         body: JSON.stringify({
-          notes: edit.notes || null,
           punch_key_lookup_id: edit.punch_key_lookup_id || null,
-          punch_source_id: edit.punch_source_id || null,
           time_punch_status_id: edit.time_punch_status_id || null,
-          time_clock_device_id: edit.time_clock_device_id || null,
+          notes: edit.notes || null,
+          is_active: edit.is_active,
         }),
       });
       toast.success('Marcacion actualizada');
@@ -191,44 +181,16 @@ export default function KioskPunchHistory() {
     }
   };
 
-  const toggleActive = async (row: HistoryRow) => {
-    setSaving(true);
-    try {
-      await request(`/kiosk/mark/history/${row.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_active: !row.is_active }),
-      });
-      toast.success(`Marcacion ${row.is_active ? 'desactivada' : 'activada'}`);
-      await loadHistory();
-    } catch (err: any) {
-      toast.error(err?.message || 'No se pudo cambiar estado');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const deleteRow = async (row: HistoryRow) => {
-    if (!window.confirm('Confirma eliminar esta marcacion?')) return;
-    setSaving(true);
-    try {
-      await request(`/kiosk/mark/history/${row.id}`, { method: 'DELETE' });
-      toast.success('Marcacion eliminada');
-      await loadHistory();
-    } catch (err: any) {
-      toast.error(err?.message || 'No se pudo eliminar');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5">
       <Card>
         <CardHeader>
           <div className="flex flex-wrap gap-3 items-end justify-between">
             <div>
-              <CardTitle className="text-2xl">Asistencia</CardTitle>
-              <CardDescription>Historial personal de marcaciones (intervalo desde/hasta).</CardDescription>
+              <CardTitle className="text-2xl">Corregir marcación</CardTitle>
+              <CardDescription>
+                Puedes corregir únicamente el movimiento y el estado de la marcación; además puedes desactivarla.
+              </CardDescription>
             </div>
             <div className="flex items-end gap-2">
               <label className="text-sm space-y-1">
@@ -264,19 +226,19 @@ export default function KioskPunchHistory() {
           ) : rows.length === 0 ? (
             <p className="text-sm text-slate-600 py-8 text-center">No existen marcaciones para el rango seleccionado.</p>
           ) : (
-            <div className="overflow-x-auto border rounded-lg">
-              <table className="min-w-full text-sm">
+            <div className="overflow-hidden border rounded-lg">
+              <table className="w-full table-fixed text-sm">
                 <thead className="bg-slate-100 text-slate-700">
                   <tr>
-                    <th className="text-left px-3 py-2">Fecha/Hora</th>
-                    <th className="text-left px-3 py-2">Empresa</th>
-                    <th className="text-left px-3 py-2">Dispositivo</th>
-                    <th className="text-left px-3 py-2">Movimiento</th>
-                    <th className="text-left px-3 py-2">Fuente</th>
-                    <th className="text-left px-3 py-2">Estado</th>
-                    <th className="text-left px-3 py-2">Notas</th>
-                    <th className="text-left px-3 py-2">Activo</th>
-                    <th className="text-right px-3 py-2">Acciones</th>
+                    <th className="text-left px-2 py-2 w-[13%]">Fecha/Hora</th>
+                    <th className="text-left px-2 py-2 w-[12%]">Empresa</th>
+                    <th className="text-left px-2 py-2 w-[11%]">Dispositivo</th>
+                    <th className="text-left px-2 py-2 w-[13%]">Movimiento</th>
+                    <th className="text-left px-2 py-2 w-[8%]">Fuente</th>
+                    <th className="text-left px-2 py-2 w-[11%]">Estado</th>
+                    <th className="text-left px-2 py-2 w-[18%]">Notas</th>
+                    <th className="text-center px-2 py-2 w-[3%]">Activo</th>
+                    <th className="text-right px-2 py-2 w-[10%]">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -284,32 +246,19 @@ export default function KioskPunchHistory() {
                     const isEditing = edit?.rowId === row.id;
                     return (
                       <tr key={row.id} className="border-t align-top">
-                        <td className="px-3 py-2 whitespace-nowrap">{new Date(row.punch_datetime).toLocaleString('es-EC')}</td>
-                        <td className="px-3 py-2">{row.company_name || '-'}</td>
-                        <td className="px-3 py-2">
-                          {isEditing ? (
-                            <select
-                              value={edit?.time_clock_device_id || ''}
-                              onChange={(event) => setEdit((prev) => (prev ? { ...prev, time_clock_device_id: event.target.value } : prev))}
-                              className="h-9 border rounded-md px-2 min-w-[180px]"
-                            >
-                              <option value="">Sin dispositivo</option>
-                              {devicesForEdit.map((device) => (
-                                <option key={device.id} value={device.id}>
-                                  {device.device_name || 'Dispositivo'} {device.device_serial_number ? `(${device.device_serial_number})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span>{row.device_name || '-'}</span>
-                          )}
+                        <td className="px-2 py-2 whitespace-nowrap text-xs">{new Date(row.punch_datetime).toLocaleString('es-EC')}</td>
+                        <td className="px-2 py-2 truncate" title={row.company_name || '-'}>
+                          {row.company_name || '-'}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-2 py-2 truncate" title={row.device_name || '-'}>
+                          {row.device_name || '-'}
+                        </td>
+                        <td className={`px-2 py-2 ${isEditing ? 'bg-amber-50' : ''}`}>
                           {isEditing ? (
                             <select
                               value={edit?.punch_key_lookup_id || ''}
                               onChange={(event) => setEdit((prev) => (prev ? { ...prev, punch_key_lookup_id: event.target.value } : prev))}
-                              className="h-9 border rounded-md px-2 min-w-[180px]"
+                              className="h-9 border rounded-md px-2 w-full bg-white"
                             >
                               <option value="">Seleccionar movimiento...</option>
                               {movementOptions.map((movement) => (
@@ -319,33 +268,18 @@ export default function KioskPunchHistory() {
                               ))}
                             </select>
                           ) : (
-                            <span>{row.movement_label || `#${row.punch_key}`}</span>
+                            <span className="truncate block" title={row.movement_label || `#${row.punch_key}`}>{row.movement_label || `#${row.punch_key}`}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2">
-                          {isEditing ? (
-                            <select
-                              value={edit?.punch_source_id || ''}
-                              onChange={(event) => setEdit((prev) => (prev ? { ...prev, punch_source_id: event.target.value } : prev))}
-                              className="h-9 border rounded-md px-2 min-w-[160px]"
-                            >
-                              <option value="">Sin fuente</option>
-                              {context?.punch_sources.map((source) => (
-                                <option key={source.id} value={source.id}>
-                                  {source.lookup_label || source.id}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span>{row.punch_source_label || '-'}</span>
-                          )}
+                        <td className="px-2 py-2">
+                          <span className="truncate block" title={row.punch_source_label || '-'}>{row.punch_source_label || '-'}</span>
                         </td>
-                        <td className="px-3 py-2">
+                        <td className={`px-2 py-2 ${isEditing ? 'bg-amber-50' : ''}`}>
                           {isEditing ? (
                             <select
                               value={edit?.time_punch_status_id || ''}
                               onChange={(event) => setEdit((prev) => (prev ? { ...prev, time_punch_status_id: event.target.value } : prev))}
-                              className="h-9 border rounded-md px-2 min-w-[160px]"
+                              className="h-9 border rounded-md px-2 w-full text-xs bg-white"
                             >
                               <option value="">Sin estado</option>
                               {context?.punch_statuses.map((status) => (
@@ -355,24 +289,44 @@ export default function KioskPunchHistory() {
                               ))}
                             </select>
                           ) : (
-                            <span>{row.time_punch_status_label || '-'}</span>
+                            <span className="truncate block" title={row.time_punch_status_label || '-'}>{row.time_punch_status_label || '-'}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 min-w-[200px]">
+                        <td className={`px-2 py-2 ${isEditing ? 'bg-amber-50' : ''}`}>
                           {isEditing ? (
                             <input
+                              type="text"
                               value={edit?.notes || ''}
-                              onChange={(event) => setEdit((prev) => (prev ? { ...prev, notes: event.target.value } : prev))}
-                              className="w-full h-9 border rounded-md px-2"
+                              onChange={(event) =>
+                                setEdit((prev) => (prev ? { ...prev, notes: event.target.value } : prev))
+                              }
+                              className="h-9 border rounded-md px-2 w-full bg-white"
                               placeholder="Notas"
                             />
                           ) : (
-                            <span>{row.notes || '-'}</span>
+                            <span className="line-clamp-2 break-words" title={row.notes || '-'}>{row.notes || '-'}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2">{row.is_active ? 'Si' : 'No'}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-1">
+                        <td className={`px-2 py-2 text-center ${isEditing ? 'bg-amber-50' : ''}`}>
+                          {isEditing ? (
+                            <label className="inline-flex items-center justify-center">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(edit?.is_active)}
+                                onChange={(event) =>
+                                  setEdit((prev) => (prev ? { ...prev, is_active: event.target.checked } : prev))
+                                }
+                                disabled={saving}
+                              />
+                            </label>
+                          ) : row.is_active ? (
+                            <Check className="w-4 h-4 text-emerald-600" />
+                          ) : (
+                            <X className="w-4 h-4 text-rose-600" />
+                          )}
+                        </td>
+                        <td className="px-2 py-2">
+                          <div className="flex justify-end gap-0.5 whitespace-nowrap">
                             {isEditing ? (
                               <>
                                 <Button size="icon" variant="ghost" onClick={() => void saveEdit()} disabled={saving}>
@@ -387,16 +341,6 @@ export default function KioskPunchHistory() {
                                 <Pencil className="w-4 h-4 text-blue-600" />
                               </Button>
                             )}
-                            <Button size="icon" variant="ghost" onClick={() => void toggleActive(row)} disabled={saving}>
-                              {row.is_active ? (
-                                <PowerOff className="w-4 h-4 text-amber-600" />
-                              ) : (
-                                <Power className="w-4 h-4 text-green-600" />
-                              )}
-                            </Button>
-                            <Button size="icon" variant="ghost" onClick={() => void deleteRow(row)} disabled={saving}>
-                              <Trash2 className="w-4 h-4 text-red-600" />
-                            </Button>
                           </div>
                         </td>
                       </tr>

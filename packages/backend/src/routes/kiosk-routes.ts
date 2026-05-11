@@ -111,6 +111,98 @@ function parseNullableCoordinate(value: any): number | null {
   return Number.isFinite(next) ? next : Number.NaN;
 }
 
+type GeoPoint = { lng: number; lat: number };
+
+function toFiniteGeoPoint(value: any): GeoPoint | null {
+  const lng = Number(value?.[0]);
+  const lat = Number(value?.[1]);
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+  return { lng, lat };
+}
+
+function parseGeofencePolygonToRings(rawValue: any): GeoPoint[][] {
+  if (rawValue === undefined || rawValue === null) return [];
+
+  let parsed: any = rawValue;
+  if (typeof rawValue === 'string') {
+    try {
+      parsed = JSON.parse(rawValue);
+    } catch {
+      return [];
+    }
+  }
+  if (!parsed || typeof parsed !== 'object') return [];
+
+  const rings: GeoPoint[][] = [];
+
+  const pushRing = (ring: any[]) => {
+    if (!Array.isArray(ring)) return;
+    const points = ring.map((item) => toFiniteGeoPoint(item)).filter((p): p is GeoPoint => Boolean(p));
+    if (points.length < 3) return;
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (first.lng === last.lng && first.lat === last.lat) {
+      points.pop();
+    }
+    if (points.length >= 3) rings.push(points);
+  };
+
+  if (parsed.type === 'Polygon' && Array.isArray(parsed.coordinates?.[0])) {
+    pushRing(parsed.coordinates[0]);
+  } else if (parsed.type === 'MultiPolygon' && Array.isArray(parsed.coordinates)) {
+    for (const polygon of parsed.coordinates) {
+      if (Array.isArray(polygon?.[0])) pushRing(polygon[0]);
+    }
+  }
+
+  return rings;
+}
+
+function isPointInsideRing(pointLng: number, pointLat: number, ring: GeoPoint[]): boolean {
+  let inside = false;
+  let j = ring.length - 1;
+  for (let i = 0; i < ring.length; i += 1) {
+    const xi = ring[i].lng;
+    const yi = ring[i].lat;
+    const xj = ring[j].lng;
+    const yj = ring[j].lat;
+    const intersects =
+      yi > pointLat !== yj > pointLat &&
+      pointLng < ((xj - xi) * (pointLat - yi)) / ((yj - yi) || Number.EPSILON) + xi;
+    if (intersects) inside = !inside;
+    j = i;
+  }
+  return inside;
+}
+
+function resolveWorkLocationForPoint(params: {
+  latitude: number;
+  longitude: number;
+  locations: Array<{ id: string; work_location_name: string | null; geofence_polygon: any }>;
+}): { inside: boolean; work_location_id: string | null; work_location_name: string | null; message: string } {
+  for (const location of params.locations) {
+    const rings = parseGeofencePolygonToRings(location.geofence_polygon);
+    for (const ring of rings) {
+      if (isPointInsideRing(params.longitude, params.latitude, ring)) {
+        const name = location.work_location_name || location.id;
+        return {
+          inside: true,
+          work_location_id: location.id,
+          work_location_name: location.work_location_name || null,
+          message: `Está dentro de la localización ${name}`,
+        };
+      }
+    }
+  }
+
+  return {
+    inside: false,
+    work_location_id: null,
+    work_location_name: null,
+    message: 'No está dentro de ninguna localización predefinida',
+  };
+}
+
 function isValidDateTime(value: string): boolean {
   const date = new Date(value);
   return Number.isFinite(date.getTime());
@@ -783,7 +875,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     }
     const normalizedSourceId = sourceResult.rows[0].id as string;
 
-    let normalizedStatusId: string | null = null;
+    let requestedStatusId: string | null = null;
     if (timePunchStatusId) {
       const statusResult = await pool.query(
         `
@@ -798,7 +890,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         [timePunchStatusId, TIME_PUNCH_STATUS_GROUP_ID, context.tenant_id]
       );
       if (!statusResult.rows[0]) return res.status(400).json({ error: 'time_punch_status_id no valido' });
-      normalizedStatusId = statusResult.rows[0].id;
+      requestedStatusId = statusResult.rows[0].id;
     }
 
     if (deviceId) {
@@ -815,6 +907,44 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         [deviceId, context.tenant_id, companyId]
       );
       if (!deviceResult.rows[0]) return res.status(400).json({ error: 'time_clock_device_id no valido' });
+    }
+
+    const workLocationsResult = await pool.query(
+      `
+        SELECT
+          wl.id,
+          wl.work_location_name,
+          wl.geofence_polygon
+        FROM public.work_locations wl
+        WHERE wl.tenant_id = $1::uuid
+          AND wl.is_active = true
+          AND wl.geofence_polygon IS NOT NULL
+          AND (wl.company_id IS NULL OR wl.company_id = $2::uuid)
+        ORDER BY wl.work_location_name ASC
+      `,
+      [context.tenant_id, companyId]
+    );
+    const locationValidation = resolveWorkLocationForPoint({
+      latitude: latitud,
+      longitude: longitud,
+      locations: workLocationsResult.rows,
+    });
+    const validStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      'TIME_PUNCH_STATUS',
+      ['VALID']
+    );
+    const invalidStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      'TIME_PUNCH_STATUS',
+      ['NO_VALIDO_GEOFENCE', 'INVALID']
+    );
+    const normalizedStatusId = locationValidation.inside
+      ? requestedStatusId || validStatusId || null
+      : invalidStatusId || requestedStatusId || validStatusId || null;
+    if (!locationValidation.inside && !invalidStatusId) {
+      locationValidation.message =
+        `${locationValidation.message}. No existe estado INVALID configurado; se registró con estado alterno.`;
     }
 
     const insertResult = await pool.query(
@@ -868,6 +998,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       return res.status(201).json({
         success: true,
         punch,
+        location_validation: locationValidation,
         snapshot: {
           file_name: snapshot.fileName,
           folder: 'punches_snapshoots',
@@ -1344,6 +1475,68 @@ router.get('/requests', async (req: Request, res: Response) => {
       requests: result.rows,
     });
   } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/requests/:id/support-document', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const requestResult = await pool.query(
+      `
+        SELECT
+          support_document_path,
+          support_document_name,
+          support_document_mime
+        FROM public.employee_absence_requests
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+
+    const found = requestResult.rows[0];
+    if (!found) {
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+
+    const rawSupportPath = String(found.support_document_path || '').trim();
+    if (!rawSupportPath) {
+      return res.status(404).json({ error: 'La solicitud no tiene documento adjunto' });
+    }
+
+    const supportPath = rawSupportPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!supportPath || supportPath.includes('..')) {
+      return res.status(400).json({ error: 'Ruta de documento adjunto invalida' });
+    }
+    if (!supportPath.startsWith(`${context.tenant_id}/`)) {
+      return res.status(403).json({ error: 'Ruta de documento no permitida para este tenant' });
+    }
+
+    const config = await resolveSupportDocumentStorageConfig(context.tenant_id);
+    const absoluteFilePath = path.join(config.absolutePath, supportPath);
+    await fs.access(absoluteFilePath);
+
+    const fileName = sanitizeSupportDocumentName(found.support_document_name || 'respaldo.pdf')
+      .replace(/"/g, '');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    if (found.support_document_mime) {
+      res.setHeader('Content-Type', String(found.support_document_mime));
+    }
+    return res.sendFile(absoluteFilePath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Archivo adjunto no encontrado' });
+    }
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
 });
@@ -2768,6 +2961,69 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
 
     return res.status(201).json({ success: true, request: requestRow });
   } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/request-shift-change/:id/support-document', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const requestResult = await pool.query(
+      `
+        SELECT
+          support_document_path,
+          support_document_name,
+          support_document_mime
+        FROM public.employee_shift_change_requests
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+          AND is_active = true
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+
+    const found = requestResult.rows[0];
+    if (!found) {
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+
+    const rawSupportPath = String(found.support_document_path || '').trim();
+    if (!rawSupportPath) {
+      return res.status(404).json({ error: 'La solicitud no tiene documento adjunto' });
+    }
+
+    const supportPath = rawSupportPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!supportPath || supportPath.includes('..')) {
+      return res.status(400).json({ error: 'Ruta de documento adjunto invalida' });
+    }
+    if (!supportPath.startsWith(`${context.tenant_id}/`)) {
+      return res.status(403).json({ error: 'Ruta de documento no permitida para este tenant' });
+    }
+
+    const config = await resolveSupportDocumentStorageConfig(context.tenant_id);
+    const absoluteFilePath = path.join(config.absolutePath, supportPath);
+    await fs.access(absoluteFilePath);
+
+    const fileName = sanitizeSupportDocumentName(found.support_document_name || 'respaldo-cambio-turno.pdf')
+      .replace(/"/g, '');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    if (found.support_document_mime) {
+      res.setHeader('Content-Type', String(found.support_document_mime));
+    }
+    return res.sendFile(absoluteFilePath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Archivo adjunto no encontrado' });
+    }
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
 });
