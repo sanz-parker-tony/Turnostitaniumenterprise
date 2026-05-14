@@ -32,8 +32,16 @@ async function resolveTenantId(req: Request): Promise<string | null> {
 
 function normalizeNullableText(value: any): string | null {
   if (value === undefined || value === null) return null;
-  const next = String(value).trim();
+  const raw = String(value).trim();
+  const next = repairCommonMojibake(raw);
   return next ? next : null;
+}
+
+function repairCommonMojibake(value: string): string {
+  if (!value) return value;
+  if (!/[ÃÂâ€]/.test(value)) return value;
+  const repaired = Buffer.from(value, 'latin1').toString('utf8');
+  return repaired.includes('�') ? value : repaired;
 }
 
 function normalizeNullableInt(value: any): number | null {

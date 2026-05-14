@@ -321,12 +321,15 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'company_id', label: 'Empresa', type: 'select', required: true, optionsKey: 'companies' },
       { key: 'work_location_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_location_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'work_location_code', label: 'Código', type: 'text', required: true },
+      { key: 'country_id', label: 'País', type: 'select', optionsKey: 'countries' },
+      { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
+      { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
       { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
+      { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'geofence_polygon', 'is_active'],
+    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'geofence_polygon', 'is_active'],
   },
   {
     key: 'departments',
@@ -770,6 +773,17 @@ export function OrgMaintenance({
     }
   };
 
+  const loadGeoCatalogsFallback = async () => {
+    const payload = await request('/organization/holidays/location-catalogs');
+    const geoCatalogs = payload?.catalogs || {};
+    setCatalogs((prev) => ({
+      ...prev,
+      countries: geoCatalogs.countries || prev.countries || [],
+      states: geoCatalogs.states || prev.states || [],
+      cities: geoCatalogs.cities || prev.cities || [],
+    }));
+  };
+
   const loadCatalogs = async () => {
     try {
       const payload = await request('/organization/catalogs');
@@ -784,10 +798,23 @@ export function OrgMaintenance({
       if (missingRequired) {
         await loadCatalogsByEntityFallback();
       }
+
+      if (entity === 'work-locations') {
+        const geoEmpty =
+          !Array.isArray(catalogs.countries) || catalogs.countries.length === 0 ||
+          !Array.isArray(catalogs.states) || catalogs.states.length === 0 ||
+          !Array.isArray(catalogs.cities) || catalogs.cities.length === 0;
+        if (geoEmpty) {
+          await loadGeoCatalogsFallback();
+        }
+      }
     } catch (err: any) {
       console.error('Error cargando catálogos ORG:', err);
       try {
         await loadCatalogsByEntityFallback();
+        if (entity === 'work-locations') {
+          await loadGeoCatalogsFallback();
+        }
       } catch (fallbackErr) {
         console.error('Error cargando catálogos por fallback:', fallbackErr);
       }
@@ -1127,7 +1154,27 @@ export function OrgMaintenance({
       return getShiftPayrollGroupOptions();
     }
 
-    return catalogs[key] || [];
+    const baseOptions = catalogs[key] || [];
+
+    if (key === 'states') {
+      const selectedCountryId = String(formData.company_country_id || formData.country_id || '');
+      if (!selectedCountryId) return baseOptions;
+      return baseOptions.filter((option: any) => String(option?.country_id || '') === selectedCountryId);
+    }
+
+    if (key === 'cities') {
+      const selectedCountryId = String(formData.company_country_id || formData.country_id || '');
+      const selectedStateId = String(formData.company_state_id || formData.state_id || '');
+      if (selectedStateId) {
+        return baseOptions.filter((option: any) => String(option?.state_id || '') === selectedStateId);
+      }
+      if (selectedCountryId) {
+        return baseOptions.filter((option: any) => String(option?.country_id || '') === selectedCountryId);
+      }
+      return baseOptions;
+    }
+
+    return baseOptions;
   };
 
   const getFieldByKey = (fieldKey: string) => {
@@ -1347,6 +1394,40 @@ export function OrgMaintenance({
                             ...prev,
                             company_id: value,
                             payroll_group_id: '',
+                          }));
+                          return;
+                        }
+                        if (field.key === 'company_country_id') {
+                          setFormData((prev) => ({
+                            ...prev,
+                            company_country_id: value,
+                            company_state_id: '',
+                            company_city_id: '',
+                          }));
+                          return;
+                        }
+                        if (field.key === 'company_state_id') {
+                          setFormData((prev) => ({
+                            ...prev,
+                            company_state_id: value,
+                            company_city_id: '',
+                          }));
+                          return;
+                        }
+                        if (field.key === 'country_id') {
+                          setFormData((prev) => ({
+                            ...prev,
+                            country_id: value,
+                            state_id: '',
+                            city_id: '',
+                          }));
+                          return;
+                        }
+                        if (field.key === 'state_id') {
+                          setFormData((prev) => ({
+                            ...prev,
+                            state_id: value,
+                            city_id: '',
                           }));
                           return;
                         }

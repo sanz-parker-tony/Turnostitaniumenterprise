@@ -114,6 +114,9 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'EMPL_ABSENCE_REQUESTS': '/dashboard/employees/absence-requests',
   'EMPL_DOCUMENTS': '/dashboard/employees/documents',
   'EMPL_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
+  'SHIFT_CHANGE_APPROVALS': '/dashboard/employees/shift-change-approvals',
+  'TIME_PUNCH_CHANGE_APPROVALS': '/dashboard/employees/time-punch-change-approvals',
+  'EMPLOYEE_MANAGEMENT': '/dashboard/employees/manage',
   'REQUESTS_MANAGEMENT': '/dashboard/employees/requests',
   'EMPLOYEE_SHIFT_PLANNING': '/dashboard/employees/shift-planning',
 
@@ -140,6 +143,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'KIOSK_PERMISSION': '/kiosk/permission',
   'KIOSK_JUSTIFICATION': '/kiosk/justification',
   'KIOSK_REQUESTS': '/dashboard/kiosk/requests',
+  'KIOSK_TIME_PUNCH_REQUESTS': '/dashboard/kiosk/time-punch-requests',
 };
 
 // ============================================================================

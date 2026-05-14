@@ -13,6 +13,8 @@ const REQUEST_STATUS_GROUP_ID = '9f904369-9998-83ab-6996-635363513a9f';
 const ABSENCE_DISCOUNT_METHOD_GROUP_ID = '1d3d598e-5003-4a36-a93d-306e0cbb3c7b';
 const EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID = 'd41aff61-6de9-200e-922e-3c651cc5446c';
 const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
+const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
+const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
 const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
@@ -20,7 +22,7 @@ const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
 const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
 const DEFAULT_REQUEST_SUPPORT_DOCS_PATH = path.join('storage', 'request-support-docs');
 const DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES = 5 * 1024 * 1024;
-const FIXED_NOTES = 'marcaciÃ³n manual vÃ­a web';
+const FIXED_NOTES = 'marcaci\u00f3n manual v\u00eda web';
 
 type EmployeeContext = {
   user_id: string;
@@ -72,8 +74,16 @@ function normalizeIsoDateInput(value: any): string | null {
 
 function normalizeNullableText(value: any): string | null {
   if (value === undefined || value === null) return null;
-  const next = String(value).trim();
+  const raw = String(value).trim();
+  const next = repairCommonMojibake(raw);
   return next || null;
+}
+
+function repairCommonMojibake(value: string): string {
+  if (!value) return value;
+  if (!/[ÃÂâ€]/.test(value)) return value;
+  const repaired = Buffer.from(value, 'latin1').toString('utf8');
+  return repaired.includes('�') ? value : repaired;
 }
 
 function normalizeNullableTimeInput(value: any): string | null {
@@ -312,7 +322,7 @@ async function resolveSupportDocumentStorageConfig(
 
 async function saveRequestSupportDocument(params: {
   tenantId: string;
-  section: 'absence_requests' | 'shift_change_requests';
+  section: 'absence_requests' | 'shift_change_requests' | 'time_punch_change_requests';
   employeeCode: string | null | undefined;
   requestDate: string | Date;
   fileName: string;
@@ -509,6 +519,228 @@ function isEditableShiftChangeStatusKey(statusKey: string | null | undefined): b
   ].includes(key);
 }
 
+function normalizeBooleanInput(value: any): boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'boolean') return value;
+  const raw = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'si', 'y'].includes(raw)) return true;
+  if (['false', '0', 'no', 'n'].includes(raw)) return false;
+  return null;
+}
+
+function isEditableTimePunchChangeStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return [
+    'PENDING',
+    'PENDIENTE',
+    'IN_REVIEW',
+    'EN_REVISION',
+    'EN_REVISIÓN',
+    'REQUESTED',
+    'SOLICITADO',
+  ].includes(key);
+}
+
+function isClosedTimePunchChangeStatusKey(statusKey: string | null | undefined): boolean {
+  const key = String(statusKey || '').trim().toUpperCase();
+  return [
+    'APPROVED',
+    'APROBADO',
+    'REJECTED',
+    'RECHAZADO',
+    'DENEGADO',
+    'CANCELLED',
+    'CANCELED',
+    'CANCELADO',
+  ].includes(key);
+}
+
+type TimePunchRequestedValues = {
+  company_id?: string;
+  punch_datetime?: string;
+  punch_key?: number;
+  time_clock_device_id?: string | null;
+  punch_source_id?: string | null;
+  time_punch_status_id?: string | null;
+  notes?: string | null;
+  is_active?: boolean;
+};
+
+async function normalizeTimePunchRequestedValues(params: {
+  tenantId: string;
+  employeeId: string;
+  defaultCompanyId: string | null;
+  requestTypeKey: string;
+  rawValues: any;
+  targetCompanyId?: string | null;
+}): Promise<TimePunchRequestedValues> {
+  const raw = params.rawValues;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('requested_values debe ser un objeto JSON');
+  }
+
+  const normalized: TimePunchRequestedValues = {};
+  const requestTypeKey = String(params.requestTypeKey || '').trim().toUpperCase();
+
+  const companyIdRaw = normalizeNullableText(raw.company_id);
+  const companyId = companyIdRaw || params.targetCompanyId || params.defaultCompanyId || null;
+  if (requestTypeKey === 'CREATE_PUNCH') {
+    if (!companyId) throw new Error('No se pudo determinar company_id para crear la marcacion');
+    const employeeCompanies = await getEmployeeCompanies(params.tenantId, params.employeeId);
+    const hasCompany = employeeCompanies.some((row) => row.company_id === companyId);
+    if (!hasCompany) throw new Error('company_id no pertenece a las empresas asignadas al empleado');
+    normalized.company_id = companyId;
+  }
+
+  const punchDateTimeRaw = normalizeNullableText(raw.punch_datetime);
+  if (punchDateTimeRaw) {
+    const date = new Date(punchDateTimeRaw);
+    if (!Number.isFinite(date.getTime())) {
+      throw new Error('requested_values.punch_datetime es invalido');
+    }
+    normalized.punch_datetime = date.toISOString();
+  }
+
+  const punchKeyLookupId = normalizeNullableText(raw.punch_key_lookup_id);
+  const punchKeyRaw = raw.punch_key;
+  if (punchKeyLookupId) {
+    const punchKeyLookupResult = await pool.query(
+      `
+        SELECT sort_order
+        FROM public.lookup_values
+        WHERE id = $1::uuid
+          AND lookup_group_id = $2::uuid
+          AND is_active = true
+          AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+        LIMIT 1
+      `,
+      [punchKeyLookupId, PUNCH_KEY_GROUP_ID, params.tenantId]
+    );
+    const row = punchKeyLookupResult.rows[0];
+    if (!row || !Number.isFinite(Number(row.sort_order))) {
+      throw new Error('requested_values.punch_key_lookup_id no es valido');
+    }
+    normalized.punch_key = Math.trunc(Number(row.sort_order));
+  } else if (punchKeyRaw !== undefined && punchKeyRaw !== null && String(punchKeyRaw).trim() !== '') {
+    const parsedPunchKey = Number(punchKeyRaw);
+    if (!Number.isFinite(parsedPunchKey)) {
+      throw new Error('requested_values.punch_key debe ser numerico');
+    }
+    normalized.punch_key = Math.trunc(parsedPunchKey);
+  }
+
+  if (raw.time_punch_status_id !== undefined) {
+    const nextStatusId = normalizeNullableText(raw.time_punch_status_id);
+    if (nextStatusId) {
+      const statusResult = await pool.query(
+        `
+          SELECT id
+          FROM public.lookup_values
+          WHERE id = $1::uuid
+            AND lookup_group_id = $2::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          LIMIT 1
+        `,
+        [nextStatusId, TIME_PUNCH_STATUS_GROUP_ID, params.tenantId]
+      );
+      if (!statusResult.rows[0]) {
+        throw new Error('requested_values.time_punch_status_id no es valido');
+      }
+      normalized.time_punch_status_id = nextStatusId;
+    } else {
+      normalized.time_punch_status_id = null;
+    }
+  }
+
+  if (raw.punch_source_id !== undefined) {
+    const nextSourceId = normalizeNullableText(raw.punch_source_id);
+    if (nextSourceId) {
+      const sourceResult = await pool.query(
+        `
+          SELECT id
+          FROM public.lookup_values
+          WHERE id = $1::uuid
+            AND lookup_group_id = $2::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          LIMIT 1
+        `,
+        [nextSourceId, PUNCH_SOURCE_GROUP_ID, params.tenantId]
+      );
+      if (!sourceResult.rows[0]) {
+        throw new Error('requested_values.punch_source_id no es valido');
+      }
+      normalized.punch_source_id = nextSourceId;
+    } else {
+      normalized.punch_source_id = null;
+    }
+  }
+
+  if (raw.time_clock_device_id !== undefined) {
+    const nextDeviceId = normalizeNullableText(raw.time_clock_device_id);
+    if (nextDeviceId) {
+      const effectiveCompanyId = companyId || params.targetCompanyId || params.defaultCompanyId || null;
+      const deviceResult = await pool.query(
+        `
+          SELECT id
+          FROM public.time_clock_devices
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND ($3::uuid IS NULL OR company_id = $3::uuid)
+            AND is_active = true
+          LIMIT 1
+        `,
+        [nextDeviceId, params.tenantId, effectiveCompanyId]
+      );
+      if (!deviceResult.rows[0]) {
+        throw new Error('requested_values.time_clock_device_id no es valido');
+      }
+      normalized.time_clock_device_id = nextDeviceId;
+    } else {
+      normalized.time_clock_device_id = null;
+    }
+  }
+
+  if (raw.notes !== undefined) {
+    normalized.notes = normalizeNullableText(raw.notes);
+  }
+
+  if (raw.is_active !== undefined) {
+    const parsedActive = normalizeBooleanInput(raw.is_active);
+    if (parsedActive === null) {
+      throw new Error('requested_values.is_active debe ser booleano');
+    }
+    normalized.is_active = parsedActive;
+  }
+
+  if (requestTypeKey === 'CREATE_PUNCH') {
+    if (!normalized.punch_datetime) throw new Error('requested_values.punch_datetime es obligatorio');
+    if (!Number.isFinite(Number(normalized.punch_key))) throw new Error('requested_values.punch_key es obligatorio');
+    if (normalized.is_active === undefined) normalized.is_active = true;
+  } else if (requestTypeKey === 'UPDATE_PUNCH') {
+    const hasEditableFields =
+      normalized.punch_datetime !== undefined ||
+      normalized.punch_key !== undefined ||
+      normalized.time_clock_device_id !== undefined ||
+      normalized.punch_source_id !== undefined ||
+      normalized.time_punch_status_id !== undefined ||
+      normalized.notes !== undefined ||
+      normalized.is_active !== undefined;
+    if (!hasEditableFields) {
+      throw new Error('requested_values debe incluir al menos un campo para actualizar');
+    }
+  } else if (requestTypeKey === 'TOGGLE_ACTIVE') {
+    if (normalized.is_active === undefined) {
+      throw new Error('requested_values.is_active es obligatorio para activar/desactivar');
+    }
+  } else {
+    throw new Error('Tipo de solicitud de marcacion no soportado');
+  }
+
+  return normalized;
+}
+
 async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | null> {
   const user = (req as any).user;
   if (!user?.id) return null;
@@ -593,6 +825,19 @@ async function getApproverRoleKeys(tenantId: string, userId: string): Promise<st
 
 function hasApprovalPermission(roleKeys: string[]): boolean {
   return roleKeys.some((roleKey) => ['SUPERVISOR', 'RHADMIN'].includes(roleKey));
+}
+
+async function resolveApproverContext(req: Request): Promise<{
+  userContext: UserContext;
+  roleKeys: string[];
+} | null> {
+  const userContext = await resolveUserContext(req);
+  if (!userContext) return null;
+
+  const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
+  if (!hasApprovalPermission(roleKeys)) return null;
+
+  return { userContext, roleKeys };
 }
 
 async function getEmployeeCompanies(tenantId: string, employeeId: string) {
@@ -1481,9 +1726,11 @@ router.get('/requests', async (req: Request, res: Response) => {
 
 router.get('/requests/:id/support-document', async (req: Request, res: Response) => {
   try {
-    const context = await resolveEmployeeContext(req);
-    if (!context) {
-      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    const employeeContext = await resolveEmployeeContext(req);
+    const approverContext = await resolveApproverContext(req);
+    const tenantId = employeeContext?.tenant_id || approverContext?.userContext.tenant_id || null;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No existe contexto de acceso para descargar adjuntos' });
     }
 
     const requestId = normalizeNullableText(req.params.id);
@@ -1492,21 +1739,27 @@ router.get('/requests/:id/support-document', async (req: Request, res: Response)
     const requestResult = await pool.query(
       `
         SELECT
+          employee_id,
           support_document_path,
           support_document_name,
           support_document_mime
         FROM public.employee_absence_requests
         WHERE id = $1::uuid
           AND tenant_id = $2::uuid
-          AND employee_id = $3::uuid
         LIMIT 1
       `,
-      [requestId, context.tenant_id, context.employee_id]
+      [requestId, tenantId]
     );
 
     const found = requestResult.rows[0];
     if (!found) {
       return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+    const canAccessAsOwner = Boolean(
+      employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
+    );
+    if (!canAccessAsOwner && !approverContext) {
+      return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
     }
 
     const rawSupportPath = String(found.support_document_path || '').trim();
@@ -1518,11 +1771,11 @@ router.get('/requests/:id/support-document', async (req: Request, res: Response)
     if (!supportPath || supportPath.includes('..')) {
       return res.status(400).json({ error: 'Ruta de documento adjunto invalida' });
     }
-    if (!supportPath.startsWith(`${context.tenant_id}/`)) {
+    if (!supportPath.startsWith(`${tenantId}/`)) {
       return res.status(403).json({ error: 'Ruta de documento no permitida para este tenant' });
     }
 
-    const config = await resolveSupportDocumentStorageConfig(context.tenant_id);
+    const config = await resolveSupportDocumentStorageConfig(tenantId);
     const absoluteFilePath = path.join(config.absolutePath, supportPath);
     await fs.access(absoluteFilePath);
 
@@ -2592,6 +2845,107 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/request-shift-change/approvals', async (req: Request, res: Response) => {
+  try {
+    const approver = await resolveApproverContext(req);
+    if (!approver) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de turno' });
+    }
+
+    const status = String(req.query.status || 'pending').trim().toUpperCase();
+    const statusKeys =
+      status === 'APPROVED'
+        ? ['APPROVED', 'APROBADO']
+        : status === 'REJECTED'
+        ? ['REJECTED', 'RECHAZADO', 'DENEGADO']
+        : status === 'ALL'
+        ? []
+        : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO'];
+
+    const params: any[] = [approver.userContext.tenant_id];
+    let whereStatus = '';
+    if (statusKeys.length > 0) {
+      params.push(statusKeys);
+      whereStatus = ` AND UPPER(COALESCE(st.lookup_key, '')) = ANY($${params.length}::text[])`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.tenant_id,
+          r.company_id,
+          c.company_name,
+          r.employee_id,
+          e.employee_code,
+          e.employee_name,
+          e.employee_lastname,
+          eu.display_name AS employee_user_display_name,
+          eu.username AS employee_username,
+          r.shift_date,
+          r.current_shift_id,
+          cs.shift_name AS current_shift_name,
+          cs.shift_short_name AS current_shift_short_name,
+          cs.start_time AS current_shift_start_time,
+          cs.work_minutes AS current_shift_work_minutes,
+          cs.shift_icon_key AS current_shift_icon_key,
+          cs.shift_bg_color AS current_shift_bg_color,
+          cs.shift_text_color AS current_shift_text_color,
+          r.requested_shift_id,
+          rsf.shift_name AS requested_shift_name,
+          rsf.shift_short_name AS requested_shift_short_name,
+          rsf.start_time AS requested_shift_start_time,
+          rsf.work_minutes AS requested_shift_work_minutes,
+          rsf.shift_icon_key AS requested_shift_icon_key,
+          rsf.shift_bg_color AS requested_shift_bg_color,
+          rsf.shift_text_color AS requested_shift_text_color,
+          r.reason,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
+          r.request_status_id,
+          st.lookup_key AS request_status_key,
+          st.lookup_label AS request_status_label,
+          r.supervisor_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          r.created_at,
+          r.updated_at
+        FROM public.employee_shift_change_requests r
+        LEFT JOIN public.companies c
+          ON c.id = r.company_id
+        LEFT JOIN public.employees e
+          ON e.id = r.employee_id
+        LEFT JOIN public.users eu
+          ON eu.id = e.user_id
+        LEFT JOIN public.shifts cs
+          ON cs.id = r.current_shift_id
+        LEFT JOIN public.shifts rsf
+          ON rsf.id = r.requested_shift_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        LEFT JOIN public.users au
+          ON au.id = r.approved_by
+        WHERE r.tenant_id = $1::uuid
+          AND r.is_active = true
+          ${whereStatus}
+        ORDER BY r.created_at DESC, r.shift_date DESC
+      `,
+      params
+    );
+
+    return res.status(200).json({
+      success: true,
+      requests: result.rows,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
 router.get('/my-shift-changes', async (req: Request, res: Response) => {
   try {
     const context = await resolveEmployeeContext(req);
@@ -2967,9 +3321,11 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
 
 router.get('/request-shift-change/:id/support-document', async (req: Request, res: Response) => {
   try {
-    const context = await resolveEmployeeContext(req);
-    if (!context) {
-      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    const employeeContext = await resolveEmployeeContext(req);
+    const approverContext = await resolveApproverContext(req);
+    const tenantId = employeeContext?.tenant_id || approverContext?.userContext.tenant_id || null;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No existe contexto de acceso para descargar adjuntos' });
     }
 
     const requestId = normalizeNullableText(req.params.id);
@@ -2978,22 +3334,28 @@ router.get('/request-shift-change/:id/support-document', async (req: Request, re
     const requestResult = await pool.query(
       `
         SELECT
+          employee_id,
           support_document_path,
           support_document_name,
           support_document_mime
         FROM public.employee_shift_change_requests
         WHERE id = $1::uuid
           AND tenant_id = $2::uuid
-          AND employee_id = $3::uuid
           AND is_active = true
         LIMIT 1
       `,
-      [requestId, context.tenant_id, context.employee_id]
+      [requestId, tenantId]
     );
 
     const found = requestResult.rows[0];
     if (!found) {
       return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+    const canAccessAsOwner = Boolean(
+      employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
+    );
+    if (!canAccessAsOwner && !approverContext) {
+      return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
     }
 
     const rawSupportPath = String(found.support_document_path || '').trim();
@@ -3005,11 +3367,11 @@ router.get('/request-shift-change/:id/support-document', async (req: Request, re
     if (!supportPath || supportPath.includes('..')) {
       return res.status(400).json({ error: 'Ruta de documento adjunto invalida' });
     }
-    if (!supportPath.startsWith(`${context.tenant_id}/`)) {
+    if (!supportPath.startsWith(`${tenantId}/`)) {
       return res.status(403).json({ error: 'Ruta de documento no permitida para este tenant' });
     }
 
-    const config = await resolveSupportDocumentStorageConfig(context.tenant_id);
+    const config = await resolveSupportDocumentStorageConfig(tenantId);
     const absoluteFilePath = path.join(config.absolutePath, supportPath);
     await fs.access(absoluteFilePath);
 
@@ -3297,16 +3659,8 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
       SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
       ['REJECTED', 'RECHAZADO', 'DENEGADO']
     );
-    const processedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
-      userContext.tenant_id,
-      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
-      ['PROCESSED', 'PROCESADA', 'CLOSED', 'CERRADA']
-    );
-
     const decisionStatusId = decision === 'APPROVE' ? approvedStatusId : rejectedStatusId;
-    const finalStatusId = processedStatusId || decisionStatusId;
-
-    if (!finalStatusId) {
+    if (!decisionStatusId) {
       return res.status(400).json({ error: 'No existe estado destino configurado para la decisión' });
     }
     if (decision === 'APPROVE' && !approvedStatusId) {
@@ -3362,12 +3716,1200 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
       [
         requestId,
         userContext.tenant_id,
-        finalStatusId,
+        decisionStatusId,
         auditNotes,
         userContext.user_id,
         getActor(req),
       ]
     );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] || null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const [typesResult, statusesResult, punchKeysResult, punchStatusesResult, recentPunchesResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
+        `,
+        [TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY, context.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
+        `,
+        [TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY, context.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
+          FROM public.lookup_values
+          WHERE lookup_group_id = $1::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
+          ORDER BY sort_order ASC, lookup_label ASC
+        `,
+        [PUNCH_KEY_GROUP_ID, context.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
+          FROM public.lookup_values
+          WHERE lookup_group_id = $1::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
+          ORDER BY sort_order ASC, lookup_label ASC
+        `,
+        [TIME_PUNCH_STATUS_GROUP_ID, context.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT
+            p.id,
+            p.company_id,
+            c.company_name,
+            p.time_clock_device_id,
+            d.device_name,
+            p.punch_datetime,
+            p.punch_key,
+            mv.lookup_label AS punch_key_label,
+            p.time_punch_status_id,
+            st.lookup_label AS time_punch_status_label,
+            p.notes,
+            p.is_active
+          FROM public.employee_time_punches p
+          LEFT JOIN public.companies c
+            ON c.id = p.company_id
+          LEFT JOIN public.time_clock_devices d
+            ON d.id = p.time_clock_device_id
+          LEFT JOIN public.lookup_values st
+            ON st.id = p.time_punch_status_id
+          LEFT JOIN LATERAL (
+            SELECT lv.lookup_label
+            FROM public.lookup_values lv
+            WHERE lv.lookup_group_id = $3::uuid
+              AND lv.is_active = true
+              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+              AND lv.sort_order = p.punch_key
+            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
+            LIMIT 1
+          ) mv ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.employee_id = $2::uuid
+          ORDER BY p.punch_datetime DESC
+          LIMIT 180
+        `,
+        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID]
+      ),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      request_types: typesResult.rows,
+      request_statuses: statusesResult.rows,
+      punch_keys: punchKeysResult.rows,
+      punch_statuses: punchStatusesResult.rows,
+      recent_punches: recentPunchesResult.rows,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/time-punch-requests', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const from = normalizeNullableText(req.query.from) || normalizeNullableText(req.query.date_from);
+    const to = normalizeNullableText(req.query.to) || normalizeNullableText(req.query.date_to);
+    const status = String(req.query.status || 'ALL').trim().toUpperCase();
+    const statusKeys =
+      status === 'PENDING'
+        ? ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO']
+        : status === 'APPROVED'
+        ? ['APPROVED', 'APROBADO']
+        : status === 'REJECTED'
+        ? ['REJECTED', 'RECHAZADO', 'DENEGADO']
+        : status === 'CANCELLED'
+        ? ['CANCELLED', 'CANCELED', 'CANCELADO']
+        : [];
+
+    const params: any[] = [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID];
+    let whereExtra = '';
+    if (from && isIsoDate(from)) {
+      params.push(`${from}T00:00:00`);
+      whereExtra += ` AND r.created_at >= $${params.length}::timestamptz`;
+    }
+    if (to && isIsoDate(to)) {
+      params.push(`${to}T23:59:59`);
+      whereExtra += ` AND r.created_at <= $${params.length}::timestamptz`;
+    }
+    if (statusKeys.length > 0) {
+      params.push(statusKeys);
+      whereExtra += ` AND UPPER(COALESCE(st.lookup_key, '')) = ANY($${params.length}::text[])`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.company_id,
+          c.company_name,
+          r.employee_id,
+          r.target_punch_id,
+          r.request_type_id,
+          rt.lookup_key AS request_type_key,
+          rt.lookup_label AS request_type_label,
+          r.reason,
+          r.current_values,
+          r.requested_values,
+          r.request_status_id,
+          st.lookup_key AS request_status_key,
+          st.lookup_label AS request_status_label,
+          r.supervisor_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
+          r.is_active,
+          r.created_at,
+          r.updated_at,
+          p.punch_datetime AS target_punch_datetime,
+          p.punch_key AS target_punch_key,
+          pm.lookup_label AS target_punch_key_label,
+          p.is_active AS target_punch_is_active
+        FROM public.employee_time_punch_change_requests r
+        LEFT JOIN public.companies c
+          ON c.id = r.company_id
+        LEFT JOIN public.lookup_values rt
+          ON rt.id = r.request_type_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        LEFT JOIN public.users au
+          ON au.id = r.approved_by
+        LEFT JOIN public.employee_time_punches p
+          ON p.id = r.target_punch_id
+        LEFT JOIN LATERAL (
+          SELECT lv.lookup_label
+          FROM public.lookup_values lv
+          WHERE lv.lookup_group_id = $3::uuid
+            AND lv.sort_order = p.punch_key
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+          ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
+          LIMIT 1
+        ) pm ON true
+        WHERE r.tenant_id = $1::uuid
+          AND r.employee_id = $2::uuid
+          ${whereExtra}
+        ORDER BY r.created_at DESC
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, requests: result.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.post('/time-punch-requests', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestTypeId = normalizeNullableText(req.body?.request_type_id);
+    const targetPunchId = normalizeNullableText(req.body?.target_punch_id);
+    const reason = normalizeNullableText(req.body?.reason);
+    const supportDocumentNameInput = normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput = normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input = normalizeNullableText(req.body?.support_document_base64);
+    const actor = getActor(req);
+
+    if (!requestTypeId) return res.status(400).json({ error: 'request_type_id es obligatorio' });
+    if (!reason) return res.status(400).json({ error: 'reason es obligatorio' });
+
+    const requestTypeResult = await pool.query(
+      `
+        SELECT lv.id, UPPER(COALESCE(lv.lookup_key, '')) AS request_type_key
+        FROM public.lookup_values lv
+        INNER JOIN public.lookup_groups lg
+          ON lg.id = lv.lookup_group_id
+        WHERE lv.id = $1::uuid
+          AND lg.lookup_group_key = $2
+          AND lv.is_active = true
+          AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
+        LIMIT 1
+      `,
+      [requestTypeId, TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY, context.tenant_id]
+    );
+    const requestType = requestTypeResult.rows[0];
+    if (!requestType) {
+      return res.status(400).json({ error: 'request_type_id no es valido' });
+    }
+
+    let targetPunch: any = null;
+    if (targetPunchId) {
+      const targetResult = await pool.query(
+        `
+          SELECT
+            p.id,
+            p.company_id,
+            p.time_clock_device_id,
+            p.punch_datetime,
+            p.punch_key,
+            p.punch_source_id,
+            p.time_punch_status_id,
+            p.notes,
+            p.is_active
+          FROM public.employee_time_punches p
+          WHERE p.id = $1::uuid
+            AND p.tenant_id = $2::uuid
+            AND p.employee_id = $3::uuid
+          LIMIT 1
+        `,
+        [targetPunchId, context.tenant_id, context.employee_id]
+      );
+      targetPunch = targetResult.rows[0] || null;
+      if (!targetPunch) {
+        return res.status(400).json({ error: 'target_punch_id no es valido para el empleado' });
+      }
+    }
+
+    if (['UPDATE_PUNCH', 'TOGGLE_ACTIVE'].includes(requestType.request_type_key) && !targetPunch) {
+      return res.status(400).json({ error: 'target_punch_id es obligatorio para este tipo de solicitud' });
+    }
+
+    const normalizedRequestedValues = await normalizeTimePunchRequestedValues({
+      tenantId: context.tenant_id,
+      employeeId: context.employee_id,
+      defaultCompanyId: context.company_id,
+      requestTypeKey: requestType.request_type_key,
+      rawValues: req.body?.requested_values,
+      targetCompanyId: targetPunch?.company_id || null,
+    });
+
+    if (
+      requestType.request_type_key === 'TOGGLE_ACTIVE' &&
+      targetPunch &&
+      normalizedRequestedValues.is_active === targetPunch.is_active
+    ) {
+      return res.status(400).json({ error: 'El valor solicitado de is_active es igual al actual' });
+    }
+
+    const pendingStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO']
+    );
+    if (!pendingStatusId) {
+      return res.status(400).json({ error: 'No existe estado PENDING para solicitudes de marcacion' });
+    }
+
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'time_punch_change_requests',
+        employeeCode: context.employee_code,
+        requestDate: normalizedRequestedValues.punch_datetime || new Date(),
+        fileName: supportDocumentNameInput || 'respaldo-marcacion.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
+    const companyIdForRequest =
+      normalizedRequestedValues.company_id || targetPunch?.company_id || context.company_id || null;
+    if (!companyIdForRequest) {
+      return res.status(400).json({ error: 'No se pudo determinar la empresa de la solicitud' });
+    }
+
+    const currentValues = targetPunch
+      ? {
+          company_id: targetPunch.company_id,
+          time_clock_device_id: targetPunch.time_clock_device_id,
+          punch_datetime: targetPunch.punch_datetime,
+          punch_key: targetPunch.punch_key,
+          punch_source_id: targetPunch.punch_source_id,
+          time_punch_status_id: targetPunch.time_punch_status_id,
+          notes: targetPunch.notes,
+          is_active: targetPunch.is_active,
+        }
+      : null;
+
+    const insertResult = await pool.query(
+      `
+        INSERT INTO public.employee_time_punch_change_requests (
+          id,
+          tenant_id,
+          company_id,
+          employee_id,
+          target_punch_id,
+          request_type_id,
+          reason,
+          current_values,
+          requested_values,
+          request_status_id,
+          support_document_path,
+          support_document_name,
+          support_document_mime,
+          support_document_size_bytes,
+          is_active,
+          created_by
+        )
+        VALUES (
+          gen_random_uuid(),
+          $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6, $7::jsonb, $8::jsonb, $9::uuid,
+          $10, $11, $12, $13, true, $14
+        )
+        RETURNING *
+      `,
+      [
+        context.tenant_id,
+        companyIdForRequest,
+        context.employee_id,
+        targetPunchId,
+        requestTypeId,
+        reason,
+        currentValues ? JSON.stringify(currentValues) : null,
+        JSON.stringify(normalizedRequestedValues),
+        pendingStatusId,
+        supportDoc?.support_document_path || null,
+        supportDoc?.support_document_name || null,
+        supportDoc?.support_document_mime || null,
+        supportDoc?.support_document_size_bytes || null,
+        actor,
+      ]
+    );
+
+    const requestRow = insertResult.rows[0];
+
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['TIME_PUNCH_CHANGE_REQUEST_CREATED']
+    );
+    if (notificationTypeId) {
+      const recipients = await pool.query(
+        `
+          SELECT DISTINCT ur.user_id
+          FROM public.user_roles ur
+          INNER JOIN public.roles r
+            ON r.id = ur.role_id
+          INNER JOIN public.users u
+            ON u.id = ur.user_id
+          WHERE ur.tenant_id = $1::uuid
+            AND ur.is_active = true
+            AND r.is_active = true
+            AND u.is_active = true
+            AND r.role_key IN ('SUPERVISOR', 'RHADMIN')
+            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        `,
+        [context.tenant_id]
+      );
+
+      const title = 'Nueva solicitud de cambio de marcacion';
+      const message = `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() +
+        ' envio una solicitud de cambio de marcacion.';
+
+      for (const recipient of recipients.rows) {
+        if (!recipient.user_id || recipient.user_id === context.user_id) continue;
+        await pool.query(
+          `
+            INSERT INTO public.user_notifications (
+              id,
+              tenant_id,
+              user_id,
+              notification_type_id,
+              title,
+              message,
+              icon_key,
+              ref_table,
+              ref_id,
+              is_read,
+              is_active,
+              created_by
+            )
+            VALUES (
+              gen_random_uuid(),
+              $1::uuid, $2::uuid, $3::uuid, $4, $5, 'ClipboardCheck',
+              'employee_time_punch_change_requests', $6::uuid, false, true, $7
+            )
+          `,
+          [
+            context.tenant_id,
+            recipient.user_id,
+            notificationTypeId,
+            title,
+            message,
+            requestRow.id,
+            actor,
+          ]
+        );
+      }
+    }
+
+    return res.status(201).json({ success: true, request: requestRow });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/time-punch-requests/:id', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const reasonInput = req.body?.reason;
+    const reason = reasonInput === undefined ? undefined : normalizeNullableText(reasonInput);
+    const requestedValuesInput = req.body?.requested_values;
+    const supportDocumentNameInput = normalizeNullableText(req.body?.support_document_name);
+    const supportDocumentMimeInput = normalizeNullableText(req.body?.support_document_mime);
+    const supportDocumentBase64Input = normalizeNullableText(req.body?.support_document_base64);
+    const clearSupportDocument = req.body?.clear_support_document === true;
+    const actor = getActor(req);
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.company_id,
+          r.target_punch_id,
+          r.request_type_id,
+          UPPER(COALESCE(rt.lookup_key, '')) AS request_type_key,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+        FROM public.employee_time_punch_change_requests r
+        LEFT JOIN public.lookup_values rt
+          ON rt.id = r.request_type_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.employee_id = $3::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!isEditableTimePunchChangeStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya fue procesada y no puede editarse' });
+    }
+    if (reasonInput !== undefined && !reason) {
+      return res.status(400).json({ error: 'reason no puede quedar vacio' });
+    }
+
+    let targetPunch: any = null;
+    if (current.target_punch_id) {
+      const targetResult = await pool.query(
+        `
+          SELECT id, company_id, is_active
+          FROM public.employee_time_punches
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND employee_id = $3::uuid
+          LIMIT 1
+        `,
+        [current.target_punch_id, context.tenant_id, context.employee_id]
+      );
+      targetPunch = targetResult.rows[0] || null;
+    }
+    if (['UPDATE_PUNCH', 'TOGGLE_ACTIVE'].includes(current.request_type_key) && !targetPunch) {
+      return res.status(400).json({ error: 'La marcacion objetivo ya no existe para esta solicitud' });
+    }
+
+    let normalizedRequestedValues: TimePunchRequestedValues | null = null;
+    if (requestedValuesInput !== undefined) {
+      normalizedRequestedValues = await normalizeTimePunchRequestedValues({
+        tenantId: context.tenant_id,
+        employeeId: context.employee_id,
+        defaultCompanyId: context.company_id,
+        requestTypeKey: current.request_type_key,
+        rawValues: requestedValuesInput,
+        targetCompanyId: targetPunch?.company_id || current.company_id || null,
+      });
+      if (
+        current.request_type_key === 'TOGGLE_ACTIVE' &&
+        targetPunch &&
+        normalizedRequestedValues.is_active === targetPunch.is_active
+      ) {
+        return res.status(400).json({ error: 'El valor solicitado de is_active es igual al actual' });
+      }
+    }
+
+    let supportDoc: {
+      support_document_path: string;
+      support_document_name: string;
+      support_document_mime: string;
+      support_document_size_bytes: number;
+    } | null = null;
+    if (supportDocumentBase64Input) {
+      supportDoc = await saveRequestSupportDocument({
+        tenantId: context.tenant_id,
+        section: 'time_punch_change_requests',
+        employeeCode: context.employee_code,
+        requestDate: new Date(),
+        fileName: supportDocumentNameInput || 'respaldo-marcacion.pdf',
+        mimeType: supportDocumentMimeInput || 'application/pdf',
+        fileBase64: supportDocumentBase64Input,
+      });
+    }
+
+    const updates: string[] = [];
+    const params: any[] = [requestId, context.tenant_id, context.employee_id];
+    let next = 4;
+
+    if (reason !== undefined) {
+      updates.push(`reason = $${next++}`);
+      params.push(reason);
+    }
+    if (normalizedRequestedValues) {
+      updates.push(`requested_values = $${next++}::jsonb`);
+      params.push(JSON.stringify(normalizedRequestedValues));
+      if (normalizedRequestedValues.company_id) {
+        updates.push(`company_id = $${next++}::uuid`);
+        params.push(normalizedRequestedValues.company_id);
+      }
+    }
+    if (supportDoc) {
+      updates.push(`support_document_path = $${next++}`);
+      params.push(supportDoc.support_document_path);
+      updates.push(`support_document_name = $${next++}`);
+      params.push(supportDoc.support_document_name);
+      updates.push(`support_document_mime = $${next++}`);
+      params.push(supportDoc.support_document_mime);
+      updates.push(`support_document_size_bytes = $${next++}`);
+      params.push(supportDoc.support_document_size_bytes);
+    } else if (clearSupportDocument) {
+      updates.push('support_document_path = NULL');
+      updates.push('support_document_name = NULL');
+      updates.push('support_document_mime = NULL');
+      updates.push('support_document_size_bytes = NULL');
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No se enviaron campos para actualizar' });
+    }
+
+    updates.push(`updated_by = $${next++}`);
+    params.push(actor);
+    updates.push('updated_at = now()');
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_time_punch_change_requests
+        SET ${updates.join(', ')}
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+          AND is_active = true
+        RETURNING *
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, request: updated.rows[0] || null });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.delete('/time-punch-requests/:id', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveEmployeeContext(req);
+    if (!context) {
+      return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+        FROM public.employee_time_punch_change_requests r
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.employee_id = $3::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, context.tenant_id, context.employee_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!isEditableTimePunchChangeStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'Solo se pueden cancelar solicitudes en estado pendiente' });
+    }
+
+    const cancelledStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['CANCELLED', 'CANCELED', 'CANCELADO']
+    );
+
+    await pool.query(
+      `
+        UPDATE public.employee_time_punch_change_requests
+        SET
+          is_active = false,
+          request_status_id = COALESCE($4::uuid, request_status_id),
+          updated_by = $5,
+          updated_at = now()
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+          AND employee_id = $3::uuid
+      `,
+      [requestId, context.tenant_id, context.employee_id, cancelledStatusId, getActor(req)]
+    );
+
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/time-punch-requests/approvals/catalogs', async (req: Request, res: Response) => {
+  try {
+    const approver = await resolveApproverContext(req);
+    if (!approver) {
+      return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes de marcacion' });
+    }
+
+    const [typesResult, statusesResult, punchKeysResult, punchStatusesResult] = await Promise.all([
+      pool.query(
+        `
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
+        `,
+        [TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY, approver.userContext.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
+        `,
+        [TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY, approver.userContext.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
+          FROM public.lookup_values
+          WHERE lookup_group_id = $1::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
+          ORDER BY sort_order ASC, lookup_label ASC
+        `,
+        [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
+          FROM public.lookup_values
+          WHERE lookup_group_id = $1::uuid
+            AND is_active = true
+            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
+          ORDER BY sort_order ASC, lookup_label ASC
+        `,
+        [TIME_PUNCH_STATUS_GROUP_ID, approver.userContext.tenant_id]
+      ),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      request_types: typesResult.rows,
+      request_statuses: statusesResult.rows,
+      punch_keys: punchKeysResult.rows,
+      punch_statuses: punchStatusesResult.rows,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/time-punch-requests/approvals', async (req: Request, res: Response) => {
+  try {
+    const approver = await resolveApproverContext(req);
+    if (!approver) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de marcacion' });
+    }
+
+    const status = String(req.query.status || 'PENDING').trim().toUpperCase();
+    const statusKeys =
+      status === 'APPROVED'
+        ? ['APPROVED', 'APROBADO']
+        : status === 'REJECTED'
+        ? ['REJECTED', 'RECHAZADO', 'DENEGADO']
+        : status === 'CANCELLED'
+        ? ['CANCELLED', 'CANCELED', 'CANCELADO']
+        : status === 'ALL'
+        ? []
+        : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO'];
+
+    const includeInactive = status === 'CANCELLED' || status === 'ALL';
+    const params: any[] = [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id, includeInactive];
+    let whereStatus = '';
+    if (statusKeys.length > 0) {
+      params.push(statusKeys);
+      whereStatus = ` AND UPPER(COALESCE(st.lookup_key, '')) = ANY($${params.length}::text[])`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.tenant_id,
+          r.company_id,
+          c.company_name,
+          r.employee_id,
+          e.employee_code,
+          e.employee_name,
+          e.employee_lastname,
+          eu.display_name AS employee_user_display_name,
+          eu.username AS employee_username,
+          r.target_punch_id,
+          r.request_type_id,
+          rt.lookup_key AS request_type_key,
+          rt.lookup_label AS request_type_label,
+          r.reason,
+          r.current_values,
+          r.requested_values,
+          r.request_status_id,
+          st.lookup_key AS request_status_key,
+          st.lookup_label AS request_status_label,
+          r.supervisor_notes,
+          r.approved_by,
+          au.display_name AS approved_by_display_name,
+          au.username AS approved_by_username,
+          r.approved_at,
+          r.support_document_path,
+          r.support_document_name,
+          r.support_document_mime,
+          r.support_document_size_bytes,
+          r.is_active,
+          r.created_at,
+          r.updated_at,
+          p.punch_datetime AS target_punch_datetime,
+          p.punch_key AS target_punch_key,
+          pm.lookup_label AS target_punch_key_label,
+          p.is_active AS target_punch_is_active
+        FROM public.employee_time_punch_change_requests r
+        LEFT JOIN public.companies c
+          ON c.id = r.company_id
+        LEFT JOIN public.employees e
+          ON e.id = r.employee_id
+        LEFT JOIN public.users eu
+          ON eu.id = e.user_id
+        LEFT JOIN public.lookup_values rt
+          ON rt.id = r.request_type_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        LEFT JOIN public.users au
+          ON au.id = r.approved_by
+        LEFT JOIN public.employee_time_punches p
+          ON p.id = r.target_punch_id
+        LEFT JOIN LATERAL (
+          SELECT lv.lookup_label
+          FROM public.lookup_values lv
+          WHERE lv.lookup_group_id = $1::uuid
+            AND lv.sort_order = p.punch_key
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = r.tenant_id)
+          ORDER BY CASE WHEN lv.tenant_id = r.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
+          LIMIT 1
+        ) pm ON true
+        WHERE r.tenant_id = $2::uuid
+          AND ($3::boolean = true OR r.is_active = true)
+          ${whereStatus}
+        ORDER BY r.created_at DESC
+      `,
+      params
+    );
+
+    return res.status(200).json({ success: true, requests: result.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/time-punch-requests/:id/support-document', async (req: Request, res: Response) => {
+  try {
+    const employeeContext = await resolveEmployeeContext(req);
+    const approverContext = await resolveApproverContext(req);
+    const tenantId = employeeContext?.tenant_id || approverContext?.userContext.tenant_id || null;
+    if (!tenantId) {
+      return res.status(403).json({ error: 'No existe contexto de acceso para descargar adjuntos' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const requestResult = await pool.query(
+      `
+        SELECT
+          employee_id,
+          support_document_path,
+          support_document_name,
+          support_document_mime
+        FROM public.employee_time_punch_change_requests
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+        LIMIT 1
+      `,
+      [requestId, tenantId]
+    );
+
+    const found = requestResult.rows[0];
+    if (!found) {
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+    const canAccessAsOwner = Boolean(
+      employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
+    );
+    if (!canAccessAsOwner && !approverContext) {
+      return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
+    }
+
+    const rawSupportPath = String(found.support_document_path || '').trim();
+    if (!rawSupportPath) {
+      return res.status(404).json({ error: 'La solicitud no tiene documento adjunto' });
+    }
+
+    const supportPath = rawSupportPath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!supportPath || supportPath.includes('..')) {
+      return res.status(400).json({ error: 'Ruta de documento adjunto invalida' });
+    }
+    if (!supportPath.startsWith(`${tenantId}/`)) {
+      return res.status(403).json({ error: 'Ruta de documento no permitida para este tenant' });
+    }
+
+    const config = await resolveSupportDocumentStorageConfig(tenantId);
+    const absoluteFilePath = path.join(config.absolutePath, supportPath);
+    await fs.access(absoluteFilePath);
+
+    const fileName = sanitizeSupportDocumentName(found.support_document_name || 'respaldo-marcacion.pdf')
+      .replace(/"/g, '');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    if (found.support_document_mime) {
+      res.setHeader('Content-Type', String(found.support_document_mime));
+    }
+    return res.sendFile(absoluteFilePath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'Archivo adjunto no encontrado' });
+    }
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Response) => {
+  try {
+    const approver = await resolveApproverContext(req);
+    if (!approver) {
+      return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de marcacion' });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    const decision = String(req.body?.decision || '').trim().toUpperCase();
+    const supervisorNotes = normalizeNullableText(req.body?.supervisor_notes);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+    if (!['APPROVE', 'REJECT'].includes(decision)) {
+      return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    if (decision === 'REJECT' && !supervisorNotes) {
+      return res.status(400).json({ error: 'supervisor_notes es obligatorio para denegar' });
+    }
+
+    const currentResult = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.tenant_id,
+          r.company_id,
+          r.employee_id,
+          r.target_punch_id,
+          r.current_values,
+          r.requested_values,
+          UPPER(COALESCE(rt.lookup_key, '')) AS request_type_key,
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key,
+          e.user_id AS employee_user_id
+        FROM public.employee_time_punch_change_requests r
+        LEFT JOIN public.lookup_values rt
+          ON rt.id = r.request_type_id
+        LEFT JOIN public.lookup_values st
+          ON st.id = r.request_status_id
+        LEFT JOIN public.employees e
+          ON e.id = r.employee_id
+        WHERE r.id = $1::uuid
+          AND r.tenant_id = $2::uuid
+          AND r.is_active = true
+        LIMIT 1
+      `,
+      [requestId, approver.userContext.tenant_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (isClosedTimePunchChangeStatusKey(current.request_status_key)) {
+      return res.status(400).json({ error: 'La solicitud ya tiene estado final' });
+    }
+
+    const approvedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      approver.userContext.tenant_id,
+      TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['APPROVED', 'APROBADO']
+    );
+    const rejectedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+      approver.userContext.tenant_id,
+      TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY,
+      ['REJECTED', 'RECHAZADO', 'DENEGADO']
+    );
+    const decisionStatusId = decision === 'APPROVE' ? approvedStatusId : rejectedStatusId;
+    if (!decisionStatusId) {
+      return res.status(400).json({ error: 'No existe estado destino configurado para la decision' });
+    }
+
+    const requestedValues = current.requested_values || {};
+    if (decision === 'APPROVE') {
+      if (current.request_type_key === 'CREATE_PUNCH') {
+        if (!requestedValues.punch_datetime || !Number.isFinite(Number(requestedValues.punch_key))) {
+          return res.status(400).json({ error: 'requested_values incompleto para crear marcacion' });
+        }
+        await pool.query(
+          `
+            INSERT INTO public.employee_time_punches (
+              id,
+              tenant_id,
+              company_id,
+              employee_id,
+              time_clock_device_id,
+              punch_datetime,
+              punch_key,
+              punch_source_id,
+              time_punch_status_id,
+              service_ticket_number,
+              notes,
+              is_active,
+              created_by
+            )
+            VALUES (
+              gen_random_uuid(),
+              $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::integer, $7::uuid, $8::uuid,
+              NULL, $9, $10::boolean, $11
+            )
+          `,
+          [
+            current.tenant_id,
+            requestedValues.company_id || current.company_id,
+            current.employee_id,
+            requestedValues.time_clock_device_id || null,
+            requestedValues.punch_datetime,
+            Math.trunc(Number(requestedValues.punch_key)),
+            requestedValues.punch_source_id || FIXED_PUNCH_SOURCE_ID,
+            requestedValues.time_punch_status_id || null,
+            normalizeNullableText(requestedValues.notes) || 'Marcacion creada por aprobacion',
+            requestedValues.is_active === false ? false : true,
+            getActor(req),
+          ]
+        );
+      } else if (current.request_type_key === 'UPDATE_PUNCH' || current.request_type_key === 'TOGGLE_ACTIVE') {
+        if (!current.target_punch_id) {
+          return res.status(400).json({ error: 'No existe target_punch_id para aplicar la aprobacion' });
+        }
+        const targetResult = await pool.query(
+          `
+            SELECT id
+            FROM public.employee_time_punches
+            WHERE id = $1::uuid
+              AND tenant_id = $2::uuid
+              AND employee_id = $3::uuid
+            LIMIT 1
+          `,
+          [current.target_punch_id, current.tenant_id, current.employee_id]
+        );
+        if (!targetResult.rows[0]) {
+          return res.status(400).json({ error: 'La marcacion objetivo ya no existe para aplicar la aprobacion' });
+        }
+
+        const updates: string[] = [];
+        const params: any[] = [current.target_punch_id, current.tenant_id, current.employee_id];
+        let next = 4;
+
+        if (requestedValues.punch_datetime) {
+          updates.push(`punch_datetime = $${next++}::timestamptz`);
+          params.push(requestedValues.punch_datetime);
+        }
+        if (requestedValues.punch_key !== undefined) {
+          updates.push(`punch_key = $${next++}::integer`);
+          params.push(Math.trunc(Number(requestedValues.punch_key)));
+        }
+        if (requestedValues.time_clock_device_id !== undefined) {
+          updates.push(`time_clock_device_id = $${next++}::uuid`);
+          params.push(requestedValues.time_clock_device_id || null);
+        }
+        if (requestedValues.punch_source_id !== undefined) {
+          updates.push(`punch_source_id = $${next++}::uuid`);
+          params.push(requestedValues.punch_source_id || null);
+        }
+        if (requestedValues.time_punch_status_id !== undefined) {
+          updates.push(`time_punch_status_id = $${next++}::uuid`);
+          params.push(requestedValues.time_punch_status_id || null);
+        }
+        if (requestedValues.notes !== undefined) {
+          updates.push(`notes = $${next++}`);
+          params.push(normalizeNullableText(requestedValues.notes));
+        }
+        if (requestedValues.is_active !== undefined) {
+          updates.push(`is_active = $${next++}::boolean`);
+          params.push(Boolean(requestedValues.is_active));
+        }
+
+        if (updates.length > 0) {
+          updates.push(`updated_by = $${next++}`);
+          params.push(getActor(req));
+          updates.push('updated_at = now()');
+
+          await pool.query(
+            `
+              UPDATE public.employee_time_punches
+              SET ${updates.join(', ')}
+              WHERE id = $1::uuid
+                AND tenant_id = $2::uuid
+                AND employee_id = $3::uuid
+            `,
+            params
+          );
+        }
+      }
+    }
+
+    const finalNotes =
+      supervisorNotes ||
+      (decision === 'APPROVE' ? 'Aprobada por supervisor' : 'Denegada por supervisor');
+
+    const updated = await pool.query(
+      `
+        UPDATE public.employee_time_punch_change_requests
+        SET
+          request_status_id = $3::uuid,
+          supervisor_notes = $4,
+          approved_by = $5::uuid,
+          approved_at = now(),
+          updated_by = $6,
+          updated_at = now()
+        WHERE id = $1::uuid
+          AND tenant_id = $2::uuid
+        RETURNING *
+      `,
+      [
+        requestId,
+        approver.userContext.tenant_id,
+        decisionStatusId,
+        finalNotes,
+        approver.userContext.user_id,
+        getActor(req),
+      ]
+    );
+
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      approver.userContext.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['TIME_PUNCH_CHANGE_REQUEST_DECIDED']
+    );
+    if (notificationTypeId && current.employee_user_id) {
+      await pool.query(
+        `
+          INSERT INTO public.user_notifications (
+            id,
+            tenant_id,
+            user_id,
+            notification_type_id,
+            title,
+            message,
+            icon_key,
+            ref_table,
+            ref_id,
+            is_read,
+            is_active,
+            created_by
+          )
+          VALUES (
+            gen_random_uuid(),
+            $1::uuid, $2::uuid, $3::uuid, $4, $5, 'ClipboardCheck',
+            'employee_time_punch_change_requests', $6::uuid, false, true, $7
+          )
+        `,
+        [
+          approver.userContext.tenant_id,
+          current.employee_user_id,
+          notificationTypeId,
+          decision === 'APPROVE' ? 'Solicitud de marcacion aprobada' : 'Solicitud de marcacion denegada',
+          finalNotes,
+          requestId,
+          getActor(req),
+        ]
+      );
+    }
 
     return res.status(200).json({ success: true, request: updated.rows[0] || null });
   } catch (err: any) {

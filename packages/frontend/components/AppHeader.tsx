@@ -6,7 +6,7 @@
 
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bell, ChevronRight, Home, LogOut, User } from 'lucide-react';
 import { SidebarTrigger } from './ui/sidebar';
 import { Separator } from './ui/separator';
@@ -33,6 +33,8 @@ export function AppHeader() {
   const { profile, signOut } = useAuth();
   const { getScreenByPath, menuScreens } = usePermissions();
   const [currentPath, setCurrentPath] = useState('');
+  const [isElevated, setIsElevated] = useState(false);
+  const headerRef = useRef<HTMLElement | null>(null);
 
   // Detectar ruta actual
   useEffect(() => {
@@ -46,6 +48,29 @@ export function AppHeader() {
       window.addEventListener('popstate', handleLocationChange);
       return () => window.removeEventListener('popstate', handleLocationChange);
     }
+  }, []);
+
+  useEffect(() => {
+    const headerEl = headerRef.current;
+    if (!headerEl) return;
+
+    const scrollContainer = headerEl.closest('[data-slot="sidebar-inset"]') as HTMLElement | null;
+
+    const readScrollTop = () => (scrollContainer ? scrollContainer.scrollTop : window.scrollY);
+    const updateShadow = () => {
+      const next = readScrollTop() > 0;
+      setIsElevated((prev) => (prev === next ? prev : next));
+    };
+
+    updateShadow();
+
+    if (scrollContainer) {
+      scrollContainer.addEventListener('scroll', updateShadow, { passive: true });
+      return () => scrollContainer.removeEventListener('scroll', updateShadow);
+    }
+
+    window.addEventListener('scroll', updateShadow, { passive: true });
+    return () => window.removeEventListener('scroll', updateShadow);
   }, []);
 
   // Obtener información de la pantalla actual
@@ -64,7 +89,12 @@ export function AppHeader() {
   };
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-2 border-b bg-background px-4">
+    <header
+      ref={headerRef}
+      className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow ${
+        isElevated ? 'shadow-sm' : 'shadow-none'
+      }`}
+    >
       <div className="flex items-center gap-2 flex-1">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="h-6" />

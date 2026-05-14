@@ -7,6 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { usePermissions } from '../contexts/PermissionsContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Dashboard } from './Dashboard';
 
 // Importar todas las pantallas
@@ -31,6 +32,7 @@ import { EmployeeCompaniesManagement } from './screens/org/EmployeeCompaniesMana
 import { EmployeeProfilesManagement } from './screens/org/EmployeeProfilesManagement';
 import { EmployeeShiftPlanningManagement } from './screens/employees/EmployeeShiftPlanningManagement';
 import { TimePunchesManagement } from './screens/attendance/TimePunchesManagement';
+import ShiftChangeApprovalsManagement from './screens/attendance/ShiftChangeApprovalsManagement';
 import TenantsManagement from './security/TenantsManagement';
 import SecurityAuthorizationCatalog from './screens/security/SecurityAuthorizationCatalog';
 import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
@@ -40,11 +42,16 @@ import KioskPunch from './kiosk/KioskPunch';
 import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
 import KioskShiftChange from './kiosk/KioskShiftChange';
+import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
+import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 
 export function Router() {
   const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
+  const { profile } = useAuth();
   const [currentPath, setCurrentPath] = useState('');
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const isApprovalRole = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
 
   // Detectar cambios de ruta
   useEffect(() => {
@@ -136,7 +143,10 @@ export function Router() {
 
     // ── Empleados ────────────────────────────────────────────────────────────
     '/dashboard/employees/shift-planning': <EmployeeShiftPlanningManagement />,
+    '/dashboard/employees/shift-change-approvals': <ShiftChangeApprovalsManagement />,
+    '/dashboard/employees/manage': isApprovalRole ? <TimePunchChangeApprovalsManagement /> : <TimePunchesManagement />,
     '/dashboard/employees/requests': <RequestsApprovalsManagement />,
+    '/dashboard/employees/time-punch-change-approvals': <TimePunchChangeApprovalsManagement />,
     '/dashboard/attendance/shifts': <EmployeeShiftPlanningManagement />,
     '/dashboard/attendance/timeclock': <TimePunchesManagement />,
     '/dashboard/attendance/time-punches': <TimePunchesManagement />,
@@ -147,12 +157,14 @@ export function Router() {
     '/dashboard/kiosk/attendance': <KioskPunchHistory />,
     '/dashboard/kiosk/requests': <KioskRequests />,
     '/dashboard/kiosk/shift-change': <KioskShiftChange />,
+    '/dashboard/kiosk/time-punch-requests': <KioskTimePunchRequests />,
     '/kiosk/punch': <KioskPunch />,
     '/kiosk/timeclock': <KioskPunch />,
     '/kiosk/attendance': <KioskPunchHistory />,
     '/kiosk/my-punches': <KioskPunchHistory />,
     '/kiosk/requests': <KioskRequests />,
     '/kiosk/shift-change': <KioskShiftChange />,
+    '/kiosk/time-punch-requests': <KioskTimePunchRequests />,
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,

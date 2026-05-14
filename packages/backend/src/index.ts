@@ -648,6 +648,9 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           ec.work_location_id,
           wl.work_location_code,
           wl.work_location_name,
+          wl.country_id AS work_location_country_id,
+          wl.state_id AS work_location_state_id,
+          wl.city_id AS work_location_city_id,
           ec.employee_profile_id,
           ep.profile_name AS employee_profile_name,
           ec.payroll_group_id,
@@ -722,10 +725,16 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const tenantId = String(context.tenant_id);
     const employeeId = String(context.employee_id);
     const companyId = context.company_id ? String(context.company_id) : '';
-    const countryId = context.country_id ? String(context.country_id) : '';
-    const stateId = context.state_id ? String(context.state_id) : '';
-    const cityId = context.city_id ? String(context.city_id) : '';
     const workLocationId = context.work_location_id ? String(context.work_location_id) : '';
+    const companyCountryId = context.country_id ? String(context.country_id) : '';
+    const companyStateId = context.state_id ? String(context.state_id) : '';
+    const companyCityId = context.city_id ? String(context.city_id) : '';
+    const workLocationCountryId = context.work_location_country_id ? String(context.work_location_country_id) : '';
+    const workLocationStateId = context.work_location_state_id ? String(context.work_location_state_id) : '';
+    const workLocationCityId = context.work_location_city_id ? String(context.work_location_city_id) : '';
+    const employeeCountryId = workLocationCountryId || companyCountryId;
+    const employeeStateId = workLocationStateId || companyStateId;
+    const employeeCityId = workLocationCityId || companyCityId;
 
     const now = new Date();
     const currentYear = now.getFullYear();
@@ -755,7 +764,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
     const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
 
-    const [recentPunchesResult, weekShiftsResult, requestsResult, holidaysRawResult, attendanceImpactResult] = await Promise.all([
+    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -791,44 +800,106 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       pool.query(
         `
           SELECT
+            p.id,
+            p.punch_datetime,
+            p.punch_key,
+            mv.lookup_label AS movement_label,
+            p.time_punch_status_id,
+            st.lookup_key AS time_punch_status_key,
+            st.lookup_label AS time_punch_status_label,
+            p.notes,
+            p.is_active
+          FROM public.employee_time_punches p
+          LEFT JOIN public.lookup_values st
+            ON st.id = p.time_punch_status_id
+          LEFT JOIN LATERAL (
+            SELECT lv.lookup_label
+            FROM public.lookup_values lv
+            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
+              AND lv.sort_order = p.punch_key
+              AND lv.is_active = true
+              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
+            LIMIT 1
+          ) mv ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.employee_id = $2::uuid
+            AND p.punch_datetime >= $3::date
+            AND p.punch_datetime < $4::date
+          ORDER BY p.punch_datetime ASC, p.created_at ASC
+          LIMIT 500
+        `,
+        [tenantId, employeeId, monthStartIso, monthEndExclusiveIso]
+      ),
+      pool.query(
+        `
+          SELECT
             p.shift_date,
-            COALESCE(approved_req.requested_shift_id, p.shift_id) AS effective_shift_id,
-            es.shift_name AS effective_shift_name,
-            es.shift_short_name AS effective_shift_short_name,
-            es.start_time AS effective_start_time,
-            es.work_minutes AS effective_work_minutes,
-            es.shift_icon_key AS effective_shift_icon_key,
-            es.shift_bg_color AS effective_shift_bg_color,
-            es.shift_text_color AS effective_shift_text_color,
+            p.shift_type_id,
+            stype.lookup_label AS shift_type_label,
+            pending_req.pending_request_id,
+            pending_req.pending_request_status_id,
+            pending_req.pending_request_status_key,
+            pending_req.pending_request_status_label,
+            pending_req.pending_requested_shift_id,
+            pending_req.pending_requested_shift_name,
+            pending_req.pending_requested_shift_short_name,
+            p.shift_id AS effective_shift_id,
+            s.shift_name AS effective_shift_name,
+            s.shift_short_name AS effective_shift_short_name,
+            COALESCE(NULLIF(TRIM(s.shift_short_name), ''), s.shift_name) AS effective_shift_display_name,
+            s.start_time AS effective_start_time,
+            s.work_minutes AS effective_work_minutes,
+            s.shift_icon_key AS effective_shift_icon_key,
+            s.shift_bg_color AS effective_shift_bg_color,
+            s.shift_text_color AS effective_shift_text_color,
             p.shift_id AS planned_shift_id,
-            ps.shift_name AS planned_shift_name,
-            ps.shift_short_name AS planned_shift_short_name
-          FROM public.employee_shift_plans p
-          INNER JOIN public.shifts ps
-            ON ps.id = p.shift_id
+            s.shift_name AS planned_shift_name,
+            s.shift_short_name AS planned_shift_short_name
+          FROM public.employees e
+          INNER JOIN public.employee_shift_plans p
+            ON e.id = p.employee_id
+           AND e.tenant_id = p.tenant_id
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.lookup_values stype
+            ON stype.id = p.shift_type_id
           LEFT JOIN LATERAL (
             SELECT
-              r.requested_shift_id
+              r.id AS pending_request_id,
+              r.request_status_id AS pending_request_status_id,
+              st.lookup_key AS pending_request_status_key,
+              st.lookup_label AS pending_request_status_label,
+              r.requested_shift_id AS pending_requested_shift_id,
+              rs.shift_name AS pending_requested_shift_name,
+              rs.shift_short_name AS pending_requested_shift_short_name
             FROM public.employee_shift_change_requests r
             LEFT JOIN public.lookup_values st
               ON st.id = r.request_status_id
+            LEFT JOIN public.shifts rs
+              ON rs.id = r.requested_shift_id
             WHERE r.tenant_id = p.tenant_id
               AND r.employee_id = p.employee_id
               AND r.shift_date = p.shift_date
               AND r.is_active = true
-              AND UPPER(COALESCE(st.lookup_key, '')) IN ('APPROVED', 'APROBADO')
-            ORDER BY r.approved_at DESC NULLS LAST, r.updated_at DESC NULLS LAST, r.created_at DESC
+              AND (
+                UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
+                OR UPPER(COALESCE(st.lookup_label, '')) LIKE 'PENDIENTE%'
+                OR UPPER(COALESCE(st.lookup_label, '')) LIKE 'EN REVISI%'
+              )
+            ORDER BY r.created_at DESC
             LIMIT 1
-          ) approved_req ON true
-          INNER JOIN public.shifts es
-            ON es.id = COALESCE(approved_req.requested_shift_id, p.shift_id)
-          WHERE p.tenant_id = $1::uuid
-            AND p.employee_id = $2::uuid
+          ) pending_req ON true
+          WHERE e.tenant_id = $1::uuid
+            AND e.user_id = $2::uuid
+            AND e.is_active = true
             AND p.is_active = true
-            AND p.shift_date BETWEEN $3::date AND $4::date
+            AND p.shift_date >= $3::date
+            AND p.shift_date < $4::date
           ORDER BY p.shift_date ASC
         `,
-        [tenantId, employeeId, weekStartIso, weekEndIso]
+        [tenantId, context.user_id, monthStartIso, monthEndExclusiveIso]
       ),
       pool.query(
         `
@@ -844,7 +915,10 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             r.justification_type_id,
             jt.justification_name,
             r.attendance_event_id,
-            ae.event_name
+            ae.event_name,
+            r.justify_method_id,
+            jm.lookup_key AS justify_method_key,
+            jm.lookup_label AS justify_method_label
           FROM public.employee_absence_requests r
           LEFT JOIN public.lookup_values rs
             ON rs.id = r.request_status_id
@@ -852,12 +926,47 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             ON jt.id = r.justification_type_id
           LEFT JOIN public.attendance_events ae
             ON ae.id = r.attendance_event_id
+          LEFT JOIN public.lookup_values jm
+            ON jm.id = r.justify_method_id
           WHERE r.tenant_id = $1::uuid
             AND r.employee_id = $2::uuid
-          ORDER BY r.created_at DESC
-          LIMIT 12
+            AND r.is_active = true
+            AND r.start_datetime::date < $4::date
+            AND COALESCE(r.end_datetime, r.start_datetime)::date >= $3::date
+          ORDER BY r.start_datetime ASC, r.created_at ASC
+          LIMIT 300
         `,
-        [tenantId, employeeId]
+        [tenantId, employeeId, monthStartIso, monthEndExclusiveIso]
+      ),
+      pool.query(
+        `
+          SELECT
+            r.id,
+            r.shift_date,
+            r.reason,
+            r.request_status_id,
+            st.lookup_key AS request_status_key,
+            st.lookup_label AS request_status_label,
+            r.current_shift_id,
+            cs.shift_name AS current_shift_name,
+            r.requested_shift_id,
+            rsf.shift_name AS requested_shift_name
+          FROM public.employee_shift_change_requests r
+          LEFT JOIN public.lookup_values st
+            ON st.id = r.request_status_id
+          LEFT JOIN public.shifts cs
+            ON cs.id = r.current_shift_id
+          LEFT JOIN public.shifts rsf
+            ON rsf.id = r.requested_shift_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = $2::uuid
+            AND r.is_active = true
+            AND r.shift_date >= $3::date
+            AND r.shift_date < $4::date
+          ORDER BY r.shift_date ASC, r.created_at ASC
+          LIMIT 300
+        `,
+        [tenantId, employeeId, monthStartIso, monthEndExclusiveIso]
       ),
       pool.query(
         `
@@ -923,8 +1032,21 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       ),
     ]);
 
+    const normalizeDateOnly = (value: any): string => {
+      if (!value) return '';
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+      }
+      const raw = String(value);
+      const isoPrefix = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (isoPrefix?.[1]) return isoPrefix[1];
+      const parsed = new Date(raw);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+      return raw.slice(0, 10);
+    };
+
     const holidaysCurrentMonth = (holidaysRawResult.rows || []).flatMap((row: any) => {
-      const dateRaw = String(row?.holiday_date || '').slice(0, 10);
+      const dateRaw = normalizeDateOnly(row?.holiday_date);
       if (!dateRaw) return [];
 
       const [year, month, day] = dateRaw.split('-').map((part: string) => Number(part));
@@ -938,32 +1060,48 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       if (projectedDate < monthStartIso || projectedDate >= monthEndExclusiveIso) return [];
       if (isRecurring && month !== currentMonth) return [];
 
-      const rowCompany = row?.company_id ? String(row.company_id) : '';
       const rowCountry = row?.country_id ? String(row.country_id) : '';
       const rowState = row?.state_id ? String(row.state_id) : '';
       const rowCity = row?.city_id ? String(row.city_id) : '';
       const rowWorkLocation = row?.work_location_id ? String(row.work_location_id) : '';
+      const rowCompany = row?.company_id ? String(row.company_id) : '';
 
-      const matchScope = (employeeScope: string, holidayScope: string): boolean => {
-        if (holidayScope) return employeeScope ? holidayScope === employeeScope : false;
-        return true;
-      };
+      // Alcance geografico:
+      // - Nacional: country coincide, state/city NULL
+      // - Provincial: country+state coincide, city NULL
+      // - Cantonal: country+state+city coincide
+      // (si un campo viene NULL en holidays, no restringe ese nivel).
+      if (rowCompany && rowCompany !== companyId) return [];
+      if (rowCountry && rowCountry !== employeeCountryId) return [];
+      if (rowState && rowState !== employeeStateId) return [];
+      if (rowCity && rowCity !== employeeCityId) return [];
 
-      if (!matchScope(companyId, rowCompany)) return [];
-      if (!matchScope(countryId, rowCountry)) return [];
-      if (!matchScope(stateId, rowState)) return [];
-      if (!matchScope(cityId, rowCity)) return [];
-      if (!matchScope(workLocationId, rowWorkLocation)) return [];
+      // Metadata de alcance para depuracion/UX (no bloquea inclusion).
+      const geoScopeLevel = rowWorkLocation
+        ? 'WORK_LOCATION'
+        : rowCity
+          ? 'CITY'
+          : rowState
+            ? 'STATE'
+            : rowCountry
+              ? 'NATIONAL'
+              : 'TENANT';
 
       return [{
         ...row,
         holiday_date: projectedDate,
+        geo_scope_level: geoScopeLevel,
       }];
     }).sort((a: any, b: any) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
 
+    const weekShiftsRows = (monthShiftsResult.rows || []).filter((row: any) => {
+      const dateKey = normalizeDateOnly(row?.shift_date);
+      return dateKey >= weekStartIso && dateKey <= weekEndIso;
+    });
+
     const shiftsByDate = new Map<string, any>();
-    for (const row of weekShiftsResult.rows || []) {
-      const dateKey = String(row.shift_date).slice(0, 10);
+    for (const row of weekShiftsRows) {
+      const dateKey = normalizeDateOnly(row.shift_date);
       if (dateKey) shiftsByDate.set(dateKey, row);
     }
 
@@ -1011,6 +1149,182 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         });
       }
     }
+
+    const iconFromPunch = (punchKey: any, movementLabel: string): string => {
+      const key = Number(punchKey);
+      if (key === 1) return 'DoorOpen';
+      if (key === 2) return 'Utensils';
+      if (key === 3) return 'UtensilsCrossed';
+      if (key === 4) return 'DoorClosed';
+      if (key === 5) return 'ArrowRightCircle';
+      if (key === 6) return 'ArrowLeftCircle';
+      const normalized = String(movementLabel || '').toLowerCase();
+      if (normalized.includes('permiso') && (normalized.includes('retorno') || normalized.includes('regreso'))) return 'ArrowLeftCircle';
+      if (normalized.includes('permiso') && normalized.includes('salida')) return 'ArrowRightCircle';
+      if (normalized.includes('almuerzo') || normalized.includes('lunch') || normalized.includes('comida')) {
+        if (normalized.includes('retorno') || normalized.includes('regreso')) return 'UtensilsCrossed';
+        return 'Utensils';
+      }
+      if (normalized.includes('entrada') || normalized.includes('inicio')) return 'DoorOpen';
+      if (normalized.includes('salida') || normalized.includes('fin')) return 'DoorClosed';
+      return 'Fingerprint';
+    };
+    const isStartPunch = (punchKey: any, movementLabel: string): boolean => {
+      const key = Number(punchKey);
+      if ([1, 2, 5].includes(key)) return true;
+      if ([3, 4, 6].includes(key)) return false;
+      const normalized = String(movementLabel || '').toLowerCase();
+      if (normalized.includes('entrada') || normalized.includes('inicio')) return true;
+      if (normalized.includes('salida') || normalized.includes('retorno') || normalized.includes('fin')) return false;
+      return true;
+    };
+
+    const iconFromRequest = (row: any): string => {
+      const src = `${row?.justification_name || ''} ${row?.event_name || ''} ${row?.justify_method_key || ''} ${row?.justify_method_label || ''}`.toLowerCase();
+      if (src.includes('vacac')) return 'Plane';
+      if (src.includes('matern')) return 'Baby';
+      if (src.includes('enferm') || src.includes('medic')) return 'Stethoscope';
+      if (src.includes('ausen')) return 'UserX';
+      if (src.includes('planif')) return 'CalendarCheck2';
+      return 'FileCheck';
+    };
+
+    const calendarPunches = (monthPunchesResult.rows || []).flatMap((row: any) => {
+      const dateKey = normalizeDateOnly(row?.punch_datetime);
+      if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
+      const isStart = isStartPunch(row?.punch_key, String(row?.movement_label || ''));
+      return [{
+        date: dateKey,
+        icon_key: iconFromPunch(row?.punch_key, String(row?.movement_label || '')),
+        title: row?.movement_label || `Marcacion ${row?.punch_key ?? ''}`.trim(),
+        subtitle: String(row?.punch_datetime || '').slice(11, 16),
+        bg_color: isStart ? '#DCFCE7' : '#FEE2E2',
+        text_color: isStart ? '#166534' : '#991B1B',
+        status_key: row?.time_punch_status_key || null,
+        sort_datetime: String(row?.punch_datetime || ''),
+      }];
+    }).sort((a: any, b: any) => String(a?.sort_datetime || '').localeCompare(String(b?.sort_datetime || '')));
+
+    const calendarShifts = (monthShiftsResult.rows || []).flatMap((row: any) => {
+      const dateKey = normalizeDateOnly(row?.shift_date);
+      if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
+      const startTime = String(row?.effective_start_time || '').slice(0, 5) || '--:--';
+      const entries: any[] = [{
+        date: dateKey,
+        icon_key: row?.effective_shift_icon_key || 'Clock3',
+        title: row?.effective_shift_display_name || row?.effective_shift_short_name || row?.effective_shift_name || row?.planned_shift_short_name || row?.planned_shift_name || 'Turno',
+        subtitle: startTime,
+        bg_color: row?.effective_shift_bg_color || '#DCFCE7',
+        text_color: row?.effective_shift_text_color || '#14532D',
+        shift_type_id: row?.shift_type_id || null,
+        shift_type_label: row?.shift_type_label || null,
+      }];
+      if (row?.pending_request_id) {
+        entries.push({
+          date: dateKey,
+          icon_key: 'RefreshCw',
+          title: (row?.pending_requested_shift_short_name || row?.pending_requested_shift_name)
+            ? `Cambio pendiente a ${row.pending_requested_shift_short_name || row.pending_requested_shift_name}`
+            : 'Cambio de turno pendiente',
+          subtitle: row?.pending_request_status_label || 'Pendiente',
+          bg_color: '#FEF3C7',
+          text_color: '#92400E',
+          pending_shift_change: true,
+          pending_request_id: row?.pending_request_id,
+          pending_request_status_key: row?.pending_request_status_key || null,
+        });
+      }
+      return entries;
+    });
+
+    const calendarRequests = [
+      ...(monthAbsenceRequestsResult.rows || []).flatMap((row: any) => {
+        const startKey = normalizeDateOnly(row?.start_datetime);
+        const endKeyRaw = normalizeDateOnly(row?.end_datetime) || startKey;
+        if (!startKey) return [];
+
+        const startDate = new Date(`${startKey}T00:00:00`);
+        const endDate = new Date(`${endKeyRaw}T00:00:00`);
+        if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return [];
+
+        const from = startDate <= endDate ? startDate : endDate;
+        const to = startDate <= endDate ? endDate : startDate;
+        const entries: any[] = [];
+        const cursor = new Date(from);
+
+        while (cursor <= to) {
+          const dateKey = cursor.toISOString().slice(0, 10);
+          if (dateKey >= monthStartIso && dateKey < monthEndExclusiveIso) {
+            entries.push({
+              date: dateKey,
+              icon_key: iconFromRequest(row),
+              title: row?.justification_name || row?.event_name || 'Solicitud',
+              subtitle: row?.request_status_label || '-',
+              bg_color: '#FEF3C7',
+              text_color: '#92400E',
+              status_key: row?.request_status_key || null,
+              request_kind: 'ABSENCE_REQUEST',
+            });
+          }
+          cursor.setDate(cursor.getDate() + 1);
+        }
+
+        return entries;
+      }),
+      ...(monthShiftChangeRequestsResult.rows || []).flatMap((row: any) => {
+        const dateKey = normalizeDateOnly(row?.shift_date);
+        if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
+        return [{
+          date: dateKey,
+          icon_key: 'RefreshCw',
+          title: 'Cambio de turno',
+          subtitle: row?.request_status_label || '-',
+          bg_color: '#E0E7FF',
+          text_color: '#3730A3',
+          status_key: row?.request_status_key || null,
+          request_kind: 'SHIFT_CHANGE_REQUEST',
+        }];
+      }),
+    ];
+
+    const calendarHolidays = holidaysCurrentMonth.map((row: any) => ({
+      date: normalizeDateOnly(row?.holiday_date),
+      icon_key: 'CalendarDays',
+      title: row?.holiday_name || 'Feriado',
+      subtitle: 'No laborable',
+      bg_color: '#DCFCE7',
+      text_color: '#166534',
+      holiday_id: row?.id || null,
+    }));
+
+    const birthdayRaw = normalizeDateOnly(context.employee_birthday);
+    if (birthdayRaw) {
+      const [birthYearRaw, birthMonthRaw, birthDayRaw] = birthdayRaw.split('-').map((part: string) => Number(part));
+      if (Number.isFinite(birthMonthRaw) && Number.isFinite(birthDayRaw)) {
+        const birthDateCurrentYear = `${String(currentYear).padStart(4, '0')}-${String(birthMonthRaw).padStart(2, '0')}-${String(birthDayRaw).padStart(2, '0')}`;
+        if (birthDateCurrentYear >= monthStartIso && birthDateCurrentYear < monthEndExclusiveIso) {
+          calendarHolidays.push({
+            date: birthDateCurrentYear,
+            icon_key: 'Cake',
+            title: 'Cumpleaños',
+            subtitle: `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() || 'Empleado',
+            bg_color: '#FCE7F3',
+            text_color: '#9D174D',
+            holiday_id: null,
+          });
+        }
+      }
+    }
+
+    calendarHolidays.sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
+
+    const requestsTimeline = [...(monthAbsenceRequestsResult.rows || []), ...(monthShiftChangeRequestsResult.rows || [])]
+      .sort((a: any, b: any) => {
+        const left = String(b?.start_datetime || b?.shift_date || '');
+        const right = String(a?.start_datetime || a?.shift_date || '');
+        return left.localeCompare(right);
+      })
+      .slice(0, 20);
 
     const employee = {
       user_id: context.user_id,
@@ -1081,8 +1395,26 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         end: weekEndIso,
         days: weekDays,
       },
-      requests: requestsResult.rows || [],
+      requests: requestsTimeline,
       holidays: holidaysCurrentMonth,
+      month_punches: monthPunchesResult.rows || [],
+      month_shifts: monthShiftsResult.rows || [],
+      month_absence_requests: monthAbsenceRequestsResult.rows || [],
+      month_shift_change_requests: monthShiftChangeRequestsResult.rows || [],
+      calendars: {
+        month: {
+          year: currentYear,
+          month: currentMonth,
+          start: monthStartIso,
+          end_exclusive: monthEndExclusiveIso,
+        },
+        modules: {
+          module2_punches: calendarPunches,
+          module3_shifts: calendarShifts,
+          module4_requests: calendarRequests,
+          module5_holidays: calendarHolidays,
+        },
+      },
       attendance_impact: {
         plus_events: plusEvents,
         minus_events: minusEvents,

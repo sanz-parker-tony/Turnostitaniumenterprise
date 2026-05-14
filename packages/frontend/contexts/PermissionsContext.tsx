@@ -40,6 +40,49 @@ const EXCLUDED_SCREEN_KEYS = new Set([
 ]);
 const APPROVAL_ALLOWED_ROLES = new Set(['SUPERVISOR', 'RHADMIN']);
 
+function applySupervisorMenuOverrides(screens: MenuScreen[]): MenuScreen[] {
+  return screens.map((screen) => {
+    const next = { ...screen };
+
+    if (next.menu_group_key === 'EMPLOYEE') {
+      next.menu_group_name = 'Aprobar';
+    }
+
+    if (
+      next.screen_key === 'REQUESTS_MANAGEMENT' ||
+      next.screen_key === 'ATT_APPROVALS' ||
+      next.route_path === '/dashboard/attendance/approvals' ||
+      next.route_path === '/dashboard/employees/requests'
+    ) {
+      next.screen_name = 'Aprobar Justificaciones';
+      next.menu_label = 'Justificaciones';
+      next.route_path = '/dashboard/attendance/approvals';
+    }
+
+    if (
+      next.screen_key === 'SHIFT_CHANGE_APPROVALS' ||
+      next.route_path === '/dashboard/employees/shift-change-approvals'
+    ) {
+      next.screen_name = 'Aprobar Cambio de turnos';
+      next.menu_label = 'Cambio de turnos';
+      next.route_path = '/dashboard/employees/shift-change-approvals';
+    }
+
+    if (
+      next.screen_key === 'EMPLOYEE_MANAGEMENT' ||
+      next.screen_key === 'TIME_PUNCH_CHANGE_APPROVALS' ||
+      next.route_path === '/dashboard/employees/manage' ||
+      next.route_path === '/dashboard/employees/time-punch-change-approvals'
+    ) {
+      next.screen_name = 'Aprobar Marcaciones';
+      next.menu_label = 'Marcaciones';
+      next.route_path = '/dashboard/employees/time-punch-change-approvals';
+    }
+
+    return next;
+  });
+}
+
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile, session } = useAuth();
   const [menuScreens, setMenuScreens] = useState<MenuScreen[]>([]);
@@ -118,8 +161,13 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
           return true;
         });
 
+        const roleAdjustedScreens =
+          currentRoleKey === 'SUPERVISOR' || currentRoleKey === 'RHADMIN'
+            ? applySupervisorMenuOverrides(filteredScreens)
+            : filteredScreens;
+
         const dedupedScreens = Array.from(
-          filteredScreens.reduce((acc, screen) => {
+          roleAdjustedScreens.reduce((acc, screen) => {
             const dedupeKey = `${screen.menu_group_key}::${(screen.menu_label || '').trim().toUpperCase()}`;
             const existing = acc.get(dedupeKey);
             if (!existing) {

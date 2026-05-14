@@ -5,7 +5,7 @@ import { createClient } from '@/utils/backend/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Search } from 'lucide-react';
+import { Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -21,6 +21,8 @@ type Row = {
   start_datetime: string;
   end_datetime: string;
   notes: string | null;
+  support_document_name: string | null;
+  support_document_mime: string | null;
   request_status_key: string | null;
   request_status_label: string | null;
   approval_notes: string | null;
@@ -61,6 +63,38 @@ export default function RequestsApprovalsManagement() {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
+  };
+
+  const openSupportDocument = async (row: Row) => {
+    try {
+      const api = createClient();
+      const {
+        data: { session },
+      } = await api.auth.getSession();
+      const token =
+        session?.access_token ||
+        localStorage.getItem('tt-access-token') ||
+        localStorage.getItem('access_token');
+      if (!token) throw new Error('No hay sesion activa');
+
+      const response = await fetch(`http://localhost:3001/kiosk/requests/${row.id}/support-document`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || `HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const fileUrl = window.URL.createObjectURL(blob);
+      window.open(fileUrl, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo abrir el adjunto');
+    }
   };
 
   const load = async () => {
@@ -150,8 +184,8 @@ export default function RequestsApprovalsManagement() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Gestion de Solicitudes</h1>
-        <p className="text-sm text-gray-600">Aprobacion y denegacion con trazabilidad del aprobador.</p>
+        <h1 className="text-2xl font-semibold text-gray-900">Aprobar Justificaciones</h1>
+        <p className="text-sm text-gray-600">Revision, observacion y decision de solicitudes de justificacion.</p>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -196,17 +230,20 @@ export default function RequestsApprovalsManagement() {
                   <span className="text-gray-700">{r.notes || '-'}</span>
                 </div>
 
-                <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
-                  <div className="font-medium text-slate-800">Trazabilidad del aprobador</div>
-                  <div className="mt-1 text-slate-700">
-                    Aprobador: {r.approved_by_display_name || r.approved_by_username || '-'}
-                  </div>
-                  <div className="text-slate-700">
-                    Fecha decision: {r.approved_at ? new Date(r.approved_at).toLocaleString('es-EC') : '-'}
-                  </div>
-                  <div className="text-slate-700">
-                    Observacion aprobador: {r.approval_notes || '-'}
-                  </div>
+                <div className="mb-3 flex items-center gap-3 text-sm">
+                  {r.support_document_name ? (
+                    <button
+                      type="button"
+                      onClick={() => void openSupportDocument(r)}
+                      className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-blue-700 hover:bg-blue-100"
+                      title={r.support_document_name}
+                    >
+                      <Paperclip className="h-3.5 w-3.5" />
+                      Ver adjunto
+                    </button>
+                  ) : (
+                    <span className="text-gray-500">Sin adjunto</span>
+                  )}
                 </div>
 
                 {pending ? (
@@ -235,7 +272,20 @@ export default function RequestsApprovalsManagement() {
                       </Button>
                     </div>
                   </>
-                ) : null}
+                ) : (
+                  <div className="mb-3 rounded border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <div className="font-medium text-slate-800">Trazabilidad del aprobador</div>
+                    <div className="mt-1 text-slate-700">
+                      Aprobador: {r.approved_by_display_name || r.approved_by_username || '-'}
+                    </div>
+                    <div className="text-slate-700">
+                      Fecha decision: {r.approved_at ? new Date(r.approved_at).toLocaleString('es-EC') : '-'}
+                    </div>
+                    <div className="text-slate-700">
+                      Observacion aprobador: {r.approval_notes || '-'}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
