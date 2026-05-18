@@ -315,7 +315,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
       
       if (!result.success) {
         // Formatear errores
-        const errorMessages = result.errors.map(err => 
+        const errorMessages = result.errors.map((err: { row: number; message: any; column: any; }) => 
           err.row === 0 
             ? err.message 
             : `Fila ${err.row}, ${err.column}: ${err.message}`
@@ -348,6 +348,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
       // Determinar el nombre de la propiedad del payload según la entidad
       const payloadKey = {
         departments: 'departments',
+        workLocations: 'workLocations',
         payRoles: 'payrollGroups',
         areas: 'areas',
         costCenters: 'costCenters',

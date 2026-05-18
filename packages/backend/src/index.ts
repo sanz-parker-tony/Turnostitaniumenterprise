@@ -60,6 +60,7 @@ import settingsRouter from './routes/settings-routes';
 import shiftPlanningRouter from './routes/shift-planning.routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
 import employeeTimePunchesRouter from './routes/employee-time-punches-routes';
+import employeeAbsenceRequestsRouter from './routes/employee-absence-requests-routes';
 import kioskRouter from './routes/kiosk-routes';
 import shiftConstructorRouter from './routes/shift-constructor-routes';
 import subscriptionPlansRouter from './routes/subscription-plans-routes';
@@ -1973,6 +1974,9 @@ router.use('/employee-shift-planning', requireAuth, employeeShiftPlanningRouter)
 // Employee Time Punches
 router.use('/employee-time-punches', requireAuth, employeeTimePunchesRouter);
 
+// Employee Absence Requests (Solicitud de Permisos de Empleados)
+router.use('/employee-absence-requests', requireAuth, employeeAbsenceRequestsRouter);
+
 // Kiosk (employee self-service)
 router.use('/kiosk', requireAuth, kioskRouter);
 
@@ -2004,7 +2008,7 @@ router.get('/status', (req: Request, res: Response) => {
       config: ['/shift-constructor', '/work-patterns', '/time-clock-devices', '/profile-attendance-events'],
       planning: ['/api/shift-planning/generate'],
       employees: ['/employee-shift-planning'],
-      attendance: ['/employee-time-punches', '/kiosk'],
+      attendance: ['/employee-time-punches', '/employee-absence-requests', '/kiosk'],
     },
   });
 });
