@@ -1,8 +1,7 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CalendarDays,
   ChevronLeft,
   ChevronRight,
   MapPin,
@@ -25,6 +24,10 @@ interface OptionItem {
   lookup_key?: string | null;
   lookup_label?: string | null;
   lookup_short_label?: string | null;
+  icon_key?: string | null;
+  icon_glyph?: string | null;
+  icon_color?: string | null;
+  sort_order?: number | null;
 }
 
 interface HolidayItem {
@@ -35,6 +38,12 @@ interface HolidayItem {
   state_id: string | null;
   city_id: string | null;
   work_location_id: string | null;
+  holiday_type_id?: string | null;
+  holiday_type_key?: string | null;
+  holiday_type_label?: string | null;
+  holiday_type_icon_key?: string | null;
+  holiday_type_icon_glyph?: string | null;
+  holiday_type_icon_color?: string | null;
   holiday_date: string;
   holiday_name: string;
   is_recurring: boolean;
@@ -50,6 +59,7 @@ interface CalendarCatalogsResponse {
     countries: OptionItem[];
     states: OptionItem[];
     cities: OptionItem[];
+    holiday_types: OptionItem[];
   };
 }
 
@@ -65,6 +75,7 @@ type HolidayFormData = {
   state_id: string;
   city_id: string;
   work_location_id: string;
+  holiday_type_id: string;
   holiday_date: string;
   holiday_name: string;
   is_recurring: boolean;
@@ -171,6 +182,7 @@ export function CalendarManagement() {
   const [countries, setCountries] = useState<OptionItem[]>([]);
   const [states, setStates] = useState<OptionItem[]>([]);
   const [cities, setCities] = useState<OptionItem[]>([]);
+  const [holidayTypes, setHolidayTypes] = useState<OptionItem[]>([]);
 
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [selectedWorkLocationId, setSelectedWorkLocationId] = useState('');
@@ -189,6 +201,7 @@ export function CalendarManagement() {
     state_id: '',
     city_id: '',
     work_location_id: '',
+    holiday_type_id: '',
     holiday_date: '',
     holiday_name: '',
     is_recurring: false,
@@ -228,6 +241,7 @@ export function CalendarManagement() {
     setCountries(payload.catalogs?.countries || []);
     setStates(payload.catalogs?.states || []);
     setCities(payload.catalogs?.cities || []);
+    setHolidayTypes(payload.catalogs?.holiday_types || []);
   };
 
   const loadMonth = async () => {
@@ -278,6 +292,21 @@ export function CalendarManagement() {
     return workLocations.filter((wl) => wl.company_id === selectedCompanyId);
   }, [workLocations, selectedCompanyId]);
 
+  const holidayTypeById = useMemo(() => {
+    const map = new Map<string, OptionItem>();
+    holidayTypes.forEach((item) => {
+      if (item?.id) map.set(item.id, item);
+    });
+    return map;
+  }, [holidayTypes]);
+
+  const resolveTypeFromHoliday = (item: HolidayItem): OptionItem | null =>
+    holidayTypeById.get(String(item.holiday_type_id || '')) || null;
+
+  const defaultHolidayTypeId = useMemo(() => {
+    return holidayTypes[0]?.id || '';
+  }, [holidayTypes]);
+
   const holidaysByDate = useMemo(() => {
     const grouped: Record<string, HolidayItem[]> = {};
     holidays.forEach((holiday) => {
@@ -287,10 +316,26 @@ export function CalendarManagement() {
       grouped[dateOnly].push({
         ...holiday,
         holiday_date: dateOnly,
+        holiday_type_icon_key:
+          holiday.holiday_type_icon_key ||
+          holidayTypeById.get(String(holiday.holiday_type_id || ''))?.icon_key ||
+          null,
+        holiday_type_icon_glyph:
+          holiday.holiday_type_icon_glyph ||
+          holidayTypeById.get(String(holiday.holiday_type_id || ''))?.icon_glyph ||
+          null,
+        holiday_type_icon_color:
+          holiday.holiday_type_icon_color ||
+          holidayTypeById.get(String(holiday.holiday_type_id || ''))?.icon_color ||
+          null,
+        holiday_type_label:
+          holiday.holiday_type_label ||
+          holidayTypeById.get(String(holiday.holiday_type_id || ''))?.lookup_label ||
+          null,
       });
     });
     return grouped;
-  }, [holidays]);
+  }, [holidays, holidayTypeById]);
 
   const dayRecords = selectedDate ? holidaysByDate[selectedDate] || [] : [];
 
@@ -304,6 +349,7 @@ export function CalendarManagement() {
       work_location_id: selectedWorkLocationId || '',
       holiday_date: dateKey,
       holiday_name: '',
+      holiday_type_id: defaultHolidayTypeId,
       is_recurring: false,
       is_paid: true,
       is_working_day: false,
@@ -320,6 +366,7 @@ export function CalendarManagement() {
       state_id: holiday.state_id || '',
       city_id: holiday.city_id || '',
       work_location_id: holiday.work_location_id || '',
+      holiday_type_id: holiday.holiday_type_id || '',
       holiday_date: holidayDateOnly || holiday.holiday_date,
       holiday_name: holiday.holiday_name,
       is_recurring: toBoolean(holiday.is_recurring),
@@ -370,6 +417,12 @@ export function CalendarManagement() {
       if (!formData.company_id) throw new Error('Empresa es obligatoria');
       if (!formData.holiday_date) throw new Error('Fecha es obligatoria');
       if (!formData.holiday_name.trim()) throw new Error('Nombre de feriado es obligatorio');
+      if (!normalizeNullableId(formData.holiday_type_id)) {
+        throw new Error('Tipo de feriado es obligatorio');
+      }
+      if (!holidayTypeById.has(String(formData.holiday_type_id))) {
+        throw new Error('Tipo de feriado invalido o inactivo');
+      }
 
       const countryId = resolveValidId(formData.country_id, countries);
       const stateId = resolveValidId(formData.state_id, states);
@@ -381,6 +434,7 @@ export function CalendarManagement() {
         state_id: stateId,
         city_id: cityId,
         work_location_id: normalizeNullableId(formData.work_location_id),
+        holiday_type_id: normalizeNullableId(formData.holiday_type_id),
       };
 
       if (editingId) {
@@ -636,6 +690,13 @@ export function CalendarManagement() {
               const dateKey = toDateKey(year, month, day);
               const dayItems = holidaysByDate[dateKey] || [];
               const hasHoliday = dayItems.length > 0;
+              const firstItem = dayItems[0];
+              const firstType = firstItem ? resolveTypeFromHoliday(firstItem) : null;
+              const primaryTypeGlyph =
+                firstItem?.holiday_type_icon_glyph ||
+                firstType?.icon_glyph ||
+                '';
+              const headerTypePreview = dayItems.slice(0, 3);
 
               return (
                 <div
@@ -648,7 +709,21 @@ export function CalendarManagement() {
                   }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-gray-800">{day}</span>
+                    <span className="inline-flex items-center gap-1 text-sm font-semibold text-gray-800">
+                      <span>{day}</span>
+                      {headerTypePreview.map((item) => {
+                        const previewType = resolveTypeFromHoliday(item);
+                        const previewGlyph = item.holiday_type_icon_glyph || previewType?.icon_glyph || '';
+                        return (
+                          <span key={`g-${item.id}`} className="text-[10px] leading-none">
+                            {previewGlyph}
+                          </span>
+                        );
+                      })}
+                      {!headerTypePreview.length && hasHoliday && primaryTypeGlyph ? (
+                        <span className="text-xs leading-none">{primaryTypeGlyph}</span>
+                      ) : null}
+                    </span>
                     {hasHoliday && (
                       <span className="inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-blue-600 text-white text-[10px]">
                         {dayItems.length}
@@ -660,6 +735,8 @@ export function CalendarManagement() {
                     {dayItems.map((item) => {
                       const holidayText =
                         String(item.holiday_name || '').trim() || '(Sin nombre)';
+                      const itemType = resolveTypeFromHoliday(item);
+                      const itemGlyph = item.holiday_type_icon_glyph || itemType?.icon_glyph || '';
                       return (
                       <button
                         type="button"
@@ -668,10 +745,13 @@ export function CalendarManagement() {
                           event.stopPropagation();
                           openEditModalForHoliday(item);
                         }}
-                        className={`w-full text-left text-[11px] truncate rounded border px-1 py-0.5 underline decoration-current ${getHolidayScopeChipClass(item)} hover:brightness-95`}
+                        className={`w-full text-left text-[11px] truncate rounded border px-1.5 py-0.5 ${getHolidayScopeChipClass(item)} hover:brightness-95`}
                         title={`Editar: ${holidayText}`}
                       >
-                        {holidayText}
+                        <span className="inline-flex items-center gap-1">
+                          {itemGlyph ? <span className="text-xs leading-none">{itemGlyph}</span> : null}
+                          <span className="truncate">{holidayText}</span>
+                        </span>
                       </button>
                     )})}
                   </div>
@@ -693,8 +773,7 @@ export function CalendarManagement() {
           />
           <div className="relative w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="size-4 text-blue-700" />
+              <div className="flex items-center">
                 <h3 className="text-base font-semibold">
                   {editingId ? 'Editar feriado' : 'Nuevo feriado'} - {selectedDate}
                 </h3>
@@ -717,19 +796,39 @@ export function CalendarManagement() {
                   {modalError}
                 </div>
               )}
-              {dayRecords.length > 0 && (
-                <div className="rounded-md border bg-white p-3 space-y-2">
+              <div className="rounded-md border bg-white p-3 space-y-2">
+                <div className="flex items-center justify-between">
                   <div className="text-xs font-semibold text-gray-700">Registros del dia</div>
+                  <button
+                    onClick={() => resetFormForDate(selectedDate)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                  >
+                    <Plus className="size-3" />
+                    Nuevo en esta fecha
+                  </button>
+                </div>
+                {dayRecords.length === 0 ? (
+                  <div className="text-xs text-gray-500">
+                    No hay feriados registrados para esta fecha. Completa el formulario para crear el primero.
+                  </div>
+                ) : (
                   <div className="space-y-1">
                     {dayRecords.map((row) => (
+                      (() => {
+                        const rowType = holidayTypeById.get(String(row.holiday_type_id || '')) || null;
+                        const rowGlyph = String(
+                          row.holiday_type_icon_glyph || rowType?.icon_glyph || ''
+                        ).trim();
+                        return (
                       <div
                         key={row.id}
                         className={`flex items-center justify-between rounded border px-2 py-1.5 ${
                           editingId === row.id ? 'border-blue-400 bg-blue-50' : 'border-gray-200'
                         }`}
                       >
-                        <div className="text-xs text-gray-700 truncate pr-2">
-                          {row.holiday_name}
+                        <div className="inline-flex items-center gap-1.5 text-xs text-gray-700 truncate pr-2">
+                          {rowGlyph ? <span className="text-sm leading-none">{rowGlyph}</span> : null}
+                          <span className="truncate">{row.holiday_name}</span>
                         </div>
                         <button
                           onClick={() => fillFormFromHoliday(row)}
@@ -739,17 +838,12 @@ export function CalendarManagement() {
                           <Pencil className="size-3" />
                         </button>
                       </div>
+                        );
+                      })()
                     ))}
                   </div>
-                  <button
-                    onClick={() => resetFormForDate(selectedDate)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded border text-xs hover:bg-gray-100"
-                  >
-                    <Plus className="size-3" />
-                    Nuevo para este dia
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 <div className="space-y-1">
@@ -792,6 +886,27 @@ export function CalendarManagement() {
                     className="w-full border rounded px-2 py-1.5 text-sm"
                     placeholder="Ej: Independencia, Carnaval..."
                   />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-700">Tipo de feriado</label>
+                  <select
+                    value={formData.holiday_type_id}
+                    onChange={(event) =>
+                      setFormData((prev) => ({ ...prev, holiday_type_id: event.target.value }))
+                    }
+                    className="w-full border rounded px-2 py-1.5 text-sm"
+                  >
+                    <option value="">-- Seleccionar --</option>
+                    {holidayTypes.map((holidayType) => (
+                      <option key={holidayType.id} value={holidayType.id}>
+                        {`${holidayType.icon_glyph || ''} ${holidayType.lookup_label || holidayType.lookup_key || holidayType.id}`.trim()}
+                      </option>
+                    ))}
+                  </select>
+                  {formData.holiday_type_id && !holidayTypeById.has(formData.holiday_type_id) ? (
+                    <div className="text-[11px] text-amber-700">El tipo seleccionado ya no esta activo. Elige otro tipo.</div>
+                  ) : null}
                 </div>
 
                 <div className="space-y-1">

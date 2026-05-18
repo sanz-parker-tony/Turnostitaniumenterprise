@@ -4,28 +4,28 @@
 CREATE TABLE IF NOT EXISTS public.countries
 (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
-    country_code character varying NOT NULL,
-    country_name character varying NOT NULL,
-    country_short_name character varying,
+    country_key character varying NOT NULL,
+    country_label character varying NOT NULL,
+    country_short_label character varying,
     is_active boolean NOT NULL DEFAULT true,
     created_by character varying NOT NULL DEFAULT 'system',
     created_at timestamp with time zone NOT NULL DEFAULT now(),
     updated_by character varying,
     updated_at timestamp with time zone,
     CONSTRAINT countries_pkey PRIMARY KEY (id),
-    CONSTRAINT countries_country_code_key UNIQUE (country_code)
+    CONSTRAINT countries_country_key_key UNIQUE (country_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_countries_active_name
-    ON public.countries (is_active, country_name);
+    ON public.countries (is_active, country_label);
 
 CREATE TABLE IF NOT EXISTS public.states
 (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     country_id uuid NOT NULL,
-    state_code character varying NOT NULL,
-    state_name character varying NOT NULL,
-    state_short_name character varying,
+    state_key character varying NOT NULL,
+    state_label character varying NOT NULL,
+    state_short_label character varying,
     is_active boolean NOT NULL DEFAULT true,
     created_by character varying NOT NULL DEFAULT 'system',
     created_at timestamp with time zone NOT NULL DEFAULT now(),
@@ -36,20 +36,20 @@ CREATE TABLE IF NOT EXISTS public.states
         REFERENCES public.countries (id)
         ON UPDATE NO ACTION
         ON DELETE NO ACTION,
-    CONSTRAINT states_country_state_code_key UNIQUE (country_id, state_code)
+    CONSTRAINT states_country_state_key_key UNIQUE (country_id, state_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_states_country_active_name
-    ON public.states (country_id, is_active, state_name);
+    ON public.states (country_id, is_active, state_label);
 
 CREATE TABLE IF NOT EXISTS public.cities
 (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     country_id uuid NOT NULL,
     state_id uuid NOT NULL,
-    city_code character varying NOT NULL,
-    city_name character varying NOT NULL,
-    city_short_name character varying,
+    city_key character varying NOT NULL,
+    city_label character varying NOT NULL,
+    city_short_label character varying,
     is_active boolean NOT NULL DEFAULT true,
     created_by character varying NOT NULL DEFAULT 'system',
     created_at timestamp with time zone NOT NULL DEFAULT now(),
@@ -64,11 +64,11 @@ CREATE TABLE IF NOT EXISTS public.cities
         REFERENCES public.states (id)
         ON UPDATE NO ACTION
         ON DELETE NO ACTION,
-    CONSTRAINT cities_state_city_code_key UNIQUE (state_id, city_code)
+    CONSTRAINT cities_state_city_key_key UNIQUE (state_id, city_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cities_state_active_name
-    ON public.cities (state_id, is_active, city_name);
+    ON public.cities (state_id, is_active, city_label);
 
 DO $$
 BEGIN

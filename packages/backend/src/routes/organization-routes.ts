@@ -828,7 +828,14 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
     const selectedCountryId = normalizeScopeFilter(req.query.country_id);
     const selectedStateId = normalizeScopeFilter(req.query.state_id);
 
-    const [companies, workLocations, countries, statesRaw, citiesRaw] = await Promise.all([
+    const holidayTypeGroupPromise = Postgres
+      .from('lookup_groups')
+      .select('id')
+      .eq('lookup_group_key', 'HOLIDAY_TYPE')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    const [companies, workLocations, countries, statesRaw, citiesRaw, holidayTypeGroup] = await Promise.all([
       Postgres
         .from('companies')
         .select('id, company_code, company_name')
@@ -853,6 +860,7 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
         .from('cities')
         .select('*')
         .eq('is_active', true),
+      holidayTypeGroupPromise,
     ]);
 
     if (companies.error) {
@@ -869,6 +877,9 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
     }
     if (citiesRaw.error) {
       return res.status(500).json({ error: citiesRaw.error.message });
+    }
+    if (holidayTypeGroup.error) {
+      return res.status(500).json({ error: holidayTypeGroup.error.message });
     }
 
     const countryOptions = (countries.data || [])
@@ -891,6 +902,43 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
       cityOptions = cityOptions.filter((city: any) => String(city.country_id || '') === selectedCountryId);
     }
 
+    let holidayTypeRows: any[] = [];
+    if (holidayTypeGroup.data?.id) {
+      let holidayTypes = await Postgres
+        .from('lookup_values')
+        .select('id, lookup_key, lookup_label, lookup_short_label, sort_order, metadata')
+        .eq('lookup_group_id', holidayTypeGroup.data.id)
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+        .order('lookup_label', { ascending: true });
+
+      if (holidayTypes.error && String(holidayTypes.error.message || '').toLowerCase().includes('metadata')) {
+        holidayTypes = await Postgres
+          .from('lookup_values')
+          .select('id, lookup_key, lookup_label, lookup_short_label, sort_order')
+          .eq('lookup_group_id', holidayTypeGroup.data.id)
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true })
+          .order('lookup_label', { ascending: true });
+      }
+
+      if (holidayTypes.error) {
+        return res.status(500).json({ error: holidayTypes.error.message });
+      }
+      holidayTypeRows = holidayTypes.data || [];
+    }
+
+    const holidayTypeOptions = holidayTypeRows.map((row: any) => ({
+      id: row?.id,
+      lookup_key: row?.lookup_key || null,
+      lookup_label: row?.lookup_label || null,
+      lookup_short_label: row?.lookup_short_label || null,
+      sort_order: row?.sort_order ?? null,
+      icon_key: row?.metadata?.icon_key || null,
+      icon_glyph: row?.metadata?.icon_glyph || null,
+      icon_color: row?.metadata?.icon_color || null,
+    }));
+
     return res.status(200).json({
       success: true,
       tenant_id: tenantId,
@@ -900,6 +948,7 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
         countries: countryOptions,
         states: stateOptions,
         cities: cityOptions,
+        holiday_types: holidayTypeOptions,
       },
     });
   } catch (err: any) {
@@ -944,6 +993,41 @@ router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) =>
       return res.status(500).json({ error: error.message });
     }
 
+    const holidayTypeIds = Array.from(
+      new Set(
+        (data || [])
+          .map((row: any) => row?.holiday_type_id)
+          .filter((id: any) => !!id)
+          .map((id: any) => String(id))
+      )
+    );
+
+    let holidayTypeRows: any[] = [];
+    if (holidayTypeIds.length > 0) {
+      let holidayTypeQuery = await Postgres
+        .from('lookup_values')
+        .select('id, lookup_key, lookup_label, metadata')
+        .in('id', holidayTypeIds);
+
+      if (holidayTypeQuery.error && String(holidayTypeQuery.error.message || '').toLowerCase().includes('metadata')) {
+        holidayTypeQuery = await Postgres
+          .from('lookup_values')
+          .select('id, lookup_key, lookup_label')
+          .in('id', holidayTypeIds);
+      }
+
+      if (holidayTypeQuery.error) {
+        return res.status(500).json({ error: holidayTypeQuery.error.message });
+      }
+      holidayTypeRows = holidayTypeQuery.data || [];
+    }
+
+    const holidayTypeById = new Map<string, any>();
+    holidayTypeRows.forEach((row: any) => {
+      if (!row?.id) return;
+      holidayTypeById.set(String(row.id), row);
+    });
+
     const targetYear = String(year).padStart(4, '0');
     const targetMonth = String(month).padStart(2, '0');
     const monthItems = (data || []).flatMap((row: any) => {
@@ -980,9 +1064,15 @@ router.get('/holidays/calendar', withDocs(async (req: Request, res: Response) =>
 
       // Proyecta recurrentes al anio visualizado para que el frontend pinte en la celda correcta.
       const projectedDate = `${targetYear}-${targetMonth}-${rowDay}`;
+      const typeRow = row?.holiday_type_id ? holidayTypeById.get(String(row.holiday_type_id)) : null;
       return [{
         ...row,
         holiday_date: projectedDate,
+        holiday_type_key: typeRow?.lookup_key || null,
+        holiday_type_label: typeRow?.lookup_label || null,
+        holiday_type_icon_key: typeRow?.metadata?.icon_key || null,
+        holiday_type_icon_glyph: typeRow?.metadata?.icon_glyph || null,
+        holiday_type_icon_color: typeRow?.metadata?.icon_color || null,
       }];
     });
 
@@ -1085,6 +1175,7 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
         id,
         holiday_date,
         holiday_name,
+        holiday_type_id,
         is_recurring,
         company_id,
         country_id,
@@ -1100,6 +1191,41 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
       return res.status(500).json({ error: error.message });
     }
 
+    const holidayTypeIds = Array.from(
+      new Set(
+        (data || [])
+          .map((row: any) => row?.holiday_type_id)
+          .filter((id: any) => !!id)
+          .map((id: any) => String(id))
+      )
+    );
+
+    let holidayTypeRows: any[] = [];
+    if (holidayTypeIds.length > 0) {
+      let holidayTypeQuery = await Postgres
+        .from('lookup_values')
+        .select('id, lookup_key, lookup_label, metadata')
+        .in('id', holidayTypeIds);
+
+      if (holidayTypeQuery.error && String(holidayTypeQuery.error.message || '').toLowerCase().includes('metadata')) {
+        holidayTypeQuery = await Postgres
+          .from('lookup_values')
+          .select('id, lookup_key, lookup_label')
+          .in('id', holidayTypeIds);
+      }
+
+      if (holidayTypeQuery.error) {
+        return res.status(500).json({ error: holidayTypeQuery.error.message });
+      }
+      holidayTypeRows = holidayTypeQuery.data || [];
+    }
+
+    const holidayTypeById = new Map<string, any>();
+    holidayTypeRows.forEach((row: any) => {
+      if (!row?.id) return;
+      holidayTypeById.set(String(row.id), row);
+    });
+
     const startDate = new Date(`${fromRaw}T00:00:00`);
     const endDate = new Date(`${toRaw}T00:00:00`);
 
@@ -1110,6 +1236,7 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
       const isRecurring = row?.is_recurring === true || String(row?.is_recurring) === 'true';
       if (!isRecurring) {
         if (dateIso < fromRaw || dateIso > toRaw) return [];
+        const typeRow = row?.holiday_type_id ? holidayTypeById.get(String(row.holiday_type_id)) : null;
         return [{
           holiday_date: dateIso,
           company_id: row?.company_id || null,
@@ -1119,6 +1246,12 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
           work_location_id: row?.work_location_id || null,
           holiday_id: row?.id || null,
           holiday_name: row?.holiday_name || null,
+          holiday_type_id: row?.holiday_type_id || null,
+          holiday_type_key: typeRow?.lookup_key || null,
+          holiday_type_label: typeRow?.lookup_label || null,
+          holiday_type_icon_key: typeRow?.metadata?.icon_key || null,
+          holiday_type_icon_glyph: typeRow?.metadata?.icon_glyph || null,
+          holiday_type_icon_color: typeRow?.metadata?.icon_color || null,
           is_recurring: false,
         }];
       }
@@ -1130,6 +1263,7 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
         const year = String(cursor.getFullYear());
         const candidate = `${year}-${month}-${day}`;
         if (candidate >= fromRaw && candidate <= toRaw) {
+          const typeRow = row?.holiday_type_id ? holidayTypeById.get(String(row.holiday_type_id)) : null;
           projected.push({
             holiday_date: candidate,
             company_id: row?.company_id || null,
@@ -1139,6 +1273,12 @@ router.get('/holidays/range-scopes', withDocs(async (req: Request, res: Response
             work_location_id: row?.work_location_id || null,
             holiday_id: row?.id || null,
             holiday_name: row?.holiday_name || null,
+            holiday_type_id: row?.holiday_type_id || null,
+            holiday_type_key: typeRow?.lookup_key || null,
+            holiday_type_label: typeRow?.lookup_label || null,
+            holiday_type_icon_key: typeRow?.metadata?.icon_key || null,
+            holiday_type_icon_glyph: typeRow?.metadata?.icon_glyph || null,
+            holiday_type_icon_color: typeRow?.metadata?.icon_color || null,
             is_recurring: true,
           });
         }

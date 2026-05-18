@@ -38,6 +38,7 @@ import {
 // Importar routers de mantenimiento
 import actionsRouter from './routes/actions-mgmt-routes';
 import attendanceRouter from './routes/attendance-events-routes';
+import holidaysRouter from './routes/holidays-routes';
 import {
   ensureSystemSettingsScreen,
   ensureMaintenanceManagementScreens,
@@ -1897,6 +1898,9 @@ router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 // Attendance Events
 router.use('/attendance-events', attendanceRouter);
 
+// Holidays
+router.use('/holidays', requireAuth, holidaysRouter);
+
 // Bootstrap Screens
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
 router.post('/bootstrap/ensure-maintenance-screens', requireAuth, ensureMaintenanceManagementScreens);
@@ -2004,7 +2008,7 @@ router.get('/status', (req: Request, res: Response) => {
       auth: ['/auth/diagnostics', '/auth/create-system-admin'],
       users: ['/users/profile', '/users/change-password'],
       tenants: ['/tenants/:id', '/tenant/settings'],
-      maintenance: ['/actions', '/attendance-events', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
+      maintenance: ['/actions', '/attendance-events', '/holidays', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
       config: ['/shift-constructor', '/work-patterns', '/time-clock-devices', '/profile-attendance-events'],
       planning: ['/api/shift-planning/generate'],
       employees: ['/employee-shift-planning'],
