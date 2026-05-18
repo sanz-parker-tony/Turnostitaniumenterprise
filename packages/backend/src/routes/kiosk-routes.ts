@@ -42,6 +42,10 @@ type UserContext = {
   email: string | null;
 };
 
+const REQUESTS_APPROVAL_SCREEN_KEYS = ['REQUESTS_MANAGEMENT', 'ATT_APPROVALS'];
+const SHIFT_CHANGE_APPROVAL_SCREEN_KEYS = ['SHIFT_CHANGE_APPROVALS'];
+const TIME_PUNCH_APPROVAL_SCREEN_KEYS = ['TIME_PUNCH_CHANGE_APPROVALS'];
+
 function getActor(req: Request): string {
   const user = (req as any).user;
   return user?.email || user?.id || 'system';
@@ -51,10 +55,17 @@ function isIsoDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function toLocalIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function getTomorrowIsoDate(): string {
   const now = new Date();
   now.setDate(now.getDate() + 1);
-  return now.toISOString().slice(0, 10);
+  return toLocalIsoDate(now);
 }
 
 function diffDaysInclusive(fromIso: string, toIso: string): number {
@@ -824,7 +835,67 @@ async function getApproverRoleKeys(tenantId: string, userId: string): Promise<st
 }
 
 function hasApprovalPermission(roleKeys: string[]): boolean {
-  return roleKeys.some((roleKey) => ['SUPERVISOR', 'RHADMIN'].includes(roleKey));
+  return roleKeys.some((roleKey) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
+}
+
+async function hasScreenActionPermissionForUser(
+  tenantId: string,
+  userId: string,
+  screenKeys: string[],
+  actionKey: string
+): Promise<boolean> {
+  if (!screenKeys.length || !actionKey) return false;
+
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM public.user_roles ur
+      JOIN public.roles r
+        ON r.id = ur.role_id
+       AND r.is_active = true
+      JOIN public.role_screen_actions rsa
+        ON rsa.tenant_id = ur.tenant_id
+       AND rsa.role_id = ur.role_id
+       AND rsa.is_active = true
+       AND rsa.is_allowed = true
+      JOIN public.screen_actions sa
+        ON sa.id = rsa.screen_action_id
+       AND sa.is_active = true
+      JOIN public.screens s
+        ON s.id = sa.screen_id
+       AND s.is_active = true
+      JOIN public.actions a
+        ON a.id = sa.action_id
+       AND a.is_active = true
+      WHERE ur.tenant_id = $1::uuid
+        AND ur.user_id = $2::uuid
+        AND ur.is_active = true
+        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        AND s.screen_key = ANY($3::text[])
+        AND a.action_key = $4
+      LIMIT 1
+    `,
+    [tenantId, userId, screenKeys, actionKey]
+  );
+
+  return result.rows.length > 0;
+}
+
+async function assertApproverActionPermission(params: {
+  userContext: UserContext;
+  screenKeys: string[];
+  actionKey: string;
+  errorMessage: string;
+}): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const allowed = await hasScreenActionPermissionForUser(
+    params.userContext.tenant_id,
+    params.userContext.user_id,
+    params.screenKeys,
+    params.actionKey
+  );
+  if (allowed) return { ok: true };
+  return { ok: false, status: 403, error: params.errorMessage };
 }
 
 async function resolveApproverContext(req: Request): Promise<{
@@ -838,6 +909,40 @@ async function resolveApproverContext(req: Request): Promise<{
   if (!hasApprovalPermission(roleKeys)) return null;
 
   return { userContext, roleKeys };
+}
+
+async function resolveManagedEmployeeIdsForApprover(
+  tenantId: string,
+  userId: string
+): Promise<string[]> {
+  const result = await pool.query(
+    `
+      SELECT DISTINCT ura.employee_id::text AS employee_id
+      FROM user_roles ur
+      JOIN roles r
+        ON r.id = ur.role_id
+       AND r.is_active = true
+      JOIN user_role_employee_assignments ura
+        ON ura.tenant_id = ur.tenant_id
+       AND ura.user_role_id = ur.id
+       AND ura.is_active = true
+      JOIN employees e
+        ON e.id = ura.employee_id
+       AND e.tenant_id = ura.tenant_id
+       AND e.is_active = true
+      WHERE ur.tenant_id = $1::uuid
+        AND ur.user_id = $2::uuid
+        AND ur.is_active = true
+        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+    `,
+    [tenantId, userId]
+  );
+
+  return result.rows
+    .map((row) => String(row.employee_id || '').trim())
+    .filter(Boolean);
 }
 
 async function getEmployeeCompanies(tenantId: string, employeeId: string) {
@@ -1758,7 +1863,21 @@ router.get('/requests/:id/support-document', async (req: Request, res: Response)
     const canAccessAsOwner = Boolean(
       employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
     );
-    if (!canAccessAsOwner && !approverContext) {
+    const canAccessAsApprover = approverContext
+      ? (
+          (await hasScreenActionPermissionForUser(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id,
+            REQUESTS_APPROVAL_SCREEN_KEYS,
+            'VIEW'
+          )) &&
+          (await resolveManagedEmployeeIdsForApprover(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id
+          )).includes(String(found.employee_id || ''))
+        )
+      : false;
+    if (!canAccessAsOwner && !canAccessAsApprover) {
       return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
     }
 
@@ -2310,6 +2429,22 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
     if (!canApprove) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
     }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext,
+      screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para la pantalla de aprobaciones',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
+    }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      userContext.tenant_id,
+      userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(200).json({ success: true, requests: [] });
+    }
 
     const status = String(req.query.status || 'pending').toUpperCase();
     const statusKeys =
@@ -2321,7 +2456,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         ? []
         : ['ENVIADA', 'ENVIADO', 'SENT', 'PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N'];
 
-    const params: any[] = [userContext.tenant_id];
+    const params: any[] = [userContext.tenant_id, managedEmployeeIds];
     let whereStatus = '';
 
     if (statusKeys.length > 0) {
@@ -2378,6 +2513,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
         LEFT JOIN public.users au ON au.id = r.approved_by
         WHERE r.tenant_id = $1::uuid
+          AND r.employee_id = ANY($2::uuid[])
           AND r.is_active = true
           ${whereStatus}
         ORDER BY r.created_at DESC
@@ -2400,6 +2536,15 @@ router.get('/requests/approvals/catalogs', async (req: Request, res: Response) =
     const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
     if (!hasApprovalPermission(roleKeys)) {
       return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
+    }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext,
+      screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para la pantalla de aprobaciones',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
     }
 
     const methods = await pool.query(
@@ -2435,6 +2580,22 @@ router.patch('/requests/:id/review-fields', async (req: Request, res: Response) 
     if (!hasApprovalPermission(roleKeys)) {
       return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
     }
+    const canEditApprovals = await assertApproverActionPermission({
+      userContext,
+      screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
+      actionKey: 'EDIT',
+      errorMessage: 'No tiene permiso EDIT para revisar solicitudes',
+    });
+    if (!canEditApprovals.ok) {
+      return res.status(canEditApprovals.status).json({ error: canEditApprovals.error });
+    }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      userContext.tenant_id,
+      userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'No tiene empleados asignados para revisión' });
+    }
 
     const requestId = normalizeNullableText(req.params.id);
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
@@ -2457,9 +2618,10 @@ router.patch('/requests/:id/review-fields', async (req: Request, res: Response) 
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
+          AND r.employee_id = ANY($3::uuid[])
         LIMIT 1
       `,
-      [requestId, userContext.tenant_id]
+      [requestId, userContext.tenant_id, managedEmployeeIds]
     );
     const current = currentResult.rows[0];
     if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -2522,6 +2684,13 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     if (!canApprove) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
     }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      userContext.tenant_id,
+      userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'No tiene empleados asignados para aprobación' });
+    }
 
     const requestId = normalizeNullableText(req.params.id);
     const decision = String(req.body?.decision || '').toUpperCase();
@@ -2530,6 +2699,16 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
     if (!['APPROVE', 'REJECT'].includes(decision)) {
       return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    const decisionActionKey = decision === 'APPROVE' ? 'APPROVE' : 'REJECT';
+    const canDecide = await assertApproverActionPermission({
+      userContext,
+      screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
+      actionKey: decisionActionKey,
+      errorMessage: `No tiene permiso ${decisionActionKey} para aprobar solicitudes`,
+    });
+    if (!canDecide.ok) {
+      return res.status(canDecide.status).json({ error: canDecide.error });
     }
     const resolvedApprovalNotes =
       approvalNotes || (decision === 'APPROVE' ? 'Aprobada por supervisor' : 'Denegada por supervisor');
@@ -2544,9 +2723,10 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
+          AND r.employee_id = ANY($3::uuid[])
         LIMIT 1
       `,
-      [requestId, userContext.tenant_id]
+      [requestId, userContext.tenant_id, managedEmployeeIds]
     );
     const current = currentResult.rows[0];
     if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
@@ -2685,7 +2865,7 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
 
     const now = new Date();
     const defaultFrom = getTomorrowIsoDate();
-    const defaultTo = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const defaultTo = toLocalIsoDate(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
     const dateFrom = fromQuery || defaultFrom;
     const dateTo = toQuery || defaultTo;
 
@@ -2851,6 +3031,22 @@ router.get('/request-shift-change/approvals', async (req: Request, res: Response
     if (!approver) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de turno' });
     }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext: approver.userContext,
+      screenKeys: SHIFT_CHANGE_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para la pantalla de aprobación de turnos',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
+    }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      approver.userContext.tenant_id,
+      approver.userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(200).json({ success: true, requests: [] });
+    }
 
     const status = String(req.query.status || 'pending').trim().toUpperCase();
     const statusKeys =
@@ -2862,7 +3058,7 @@ router.get('/request-shift-change/approvals', async (req: Request, res: Response
         ? []
         : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO'];
 
-    const params: any[] = [approver.userContext.tenant_id];
+    const params: any[] = [approver.userContext.tenant_id, managedEmployeeIds];
     let whereStatus = '';
     if (statusKeys.length > 0) {
       params.push(statusKeys);
@@ -2930,6 +3126,7 @@ router.get('/request-shift-change/approvals', async (req: Request, res: Response
         LEFT JOIN public.users au
           ON au.id = r.approved_by
         WHERE r.tenant_id = $1::uuid
+          AND r.employee_id = ANY($2::uuid[])
           AND r.is_active = true
           ${whereStatus}
         ORDER BY r.created_at DESC, r.shift_date DESC
@@ -2964,7 +3161,7 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
 
     const now = new Date();
     const defaultFrom = getTomorrowIsoDate();
-    const defaultTo = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const defaultTo = toLocalIsoDate(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
     const dateFrom = fromQuery || defaultFrom;
     const dateTo = toQuery || defaultTo;
 
@@ -3265,7 +3462,7 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
             AND ur.is_active = true
             AND r.is_active = true
             AND u.is_active = true
-            AND r.role_key IN ('SUPERVISOR', 'RHADMIN')
+            AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
             AND (ur.valid_from IS NULL OR ur.valid_from <= now())
             AND (ur.valid_to IS NULL OR ur.valid_to >= now())
         `,
@@ -3354,7 +3551,21 @@ router.get('/request-shift-change/:id/support-document', async (req: Request, re
     const canAccessAsOwner = Boolean(
       employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
     );
-    if (!canAccessAsOwner && !approverContext) {
+    const canAccessAsApprover = approverContext
+      ? (
+          (await hasScreenActionPermissionForUser(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id,
+            SHIFT_CHANGE_APPROVAL_SCREEN_KEYS,
+            'VIEW'
+          )) &&
+          (await resolveManagedEmployeeIdsForApprover(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id
+          )).includes(String(found.employee_id || ''))
+        )
+      : false;
+    if (!canAccessAsOwner && !canAccessAsApprover) {
       return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
     }
 
@@ -3611,6 +3822,13 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
     if (!hasApprovalPermission(roleKeys)) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de turno' });
     }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      userContext.tenant_id,
+      userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'No tiene empleados asignados para aprobación' });
+    }
 
     const requestId = normalizeNullableText(req.params.id);
     const decision = String(req.body?.decision || '').trim().toUpperCase();
@@ -3619,6 +3837,16 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
     if (!['APPROVE', 'REJECT'].includes(decision)) {
       return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    const decisionActionKey = decision === 'APPROVE' ? 'APPROVE' : 'REJECT';
+    const canDecide = await assertApproverActionPermission({
+      userContext,
+      screenKeys: SHIFT_CHANGE_APPROVAL_SCREEN_KEYS,
+      actionKey: decisionActionKey,
+      errorMessage: `No tiene permiso ${decisionActionKey} para aprobar cambios de turno`,
+    });
+    if (!canDecide.ok) {
+      return res.status(canDecide.status).json({ error: canDecide.error });
     }
 
     const currentResult = await pool.query(
@@ -3637,10 +3865,11 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
           ON st.id = r.request_status_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
+          AND r.employee_id = ANY($3::uuid[])
           AND r.is_active = true
         LIMIT 1
       `,
-      [requestId, userContext.tenant_id]
+      [requestId, userContext.tenant_id, managedEmployeeIds]
     );
 
     const current = currentResult.rows[0];
@@ -4140,7 +4369,7 @@ router.post('/time-punch-requests', async (req: Request, res: Response) => {
             AND ur.is_active = true
             AND r.is_active = true
             AND u.is_active = true
-            AND r.role_key IN ('SUPERVISOR', 'RHADMIN')
+            AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
             AND (ur.valid_from IS NULL OR ur.valid_from <= now())
             AND (ur.valid_to IS NULL OR ur.valid_to >= now())
         `,
@@ -4424,6 +4653,15 @@ router.get('/time-punch-requests/approvals/catalogs', async (req: Request, res: 
     if (!approver) {
       return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes de marcacion' });
     }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext: approver.userContext,
+      screenKeys: TIME_PUNCH_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para la pantalla de aprobación de marcaciones',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
+    }
 
     const [typesResult, statusesResult, punchKeysResult, punchStatusesResult] = await Promise.all([
       pool.query(
@@ -4494,6 +4732,22 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
     if (!approver) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de marcacion' });
     }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext: approver.userContext,
+      screenKeys: TIME_PUNCH_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para la pantalla de aprobación de marcaciones',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
+    }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      approver.userContext.tenant_id,
+      approver.userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(200).json({ success: true, requests: [] });
+    }
 
     const status = String(req.query.status || 'PENDING').trim().toUpperCase();
     const statusKeys =
@@ -4508,7 +4762,7 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
         : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO'];
 
     const includeInactive = status === 'CANCELLED' || status === 'ALL';
-    const params: any[] = [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id, includeInactive];
+    const params: any[] = [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id, includeInactive, managedEmployeeIds];
     let whereStatus = '';
     if (statusKeys.length > 0) {
       params.push(statusKeys);
@@ -4581,6 +4835,7 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
         ) pm ON true
         WHERE r.tenant_id = $2::uuid
           AND ($3::boolean = true OR r.is_active = true)
+          AND r.employee_id = ANY($4::uuid[])
           ${whereStatus}
         ORDER BY r.created_at DESC
       `,
@@ -4627,7 +4882,21 @@ router.get('/time-punch-requests/:id/support-document', async (req: Request, res
     const canAccessAsOwner = Boolean(
       employeeContext && String(found.employee_id || '') === String(employeeContext.employee_id || '')
     );
-    if (!canAccessAsOwner && !approverContext) {
+    const canAccessAsApprover = approverContext
+      ? (
+          (await hasScreenActionPermissionForUser(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id,
+            TIME_PUNCH_APPROVAL_SCREEN_KEYS,
+            'VIEW'
+          )) &&
+          (await resolveManagedEmployeeIdsForApprover(
+            approverContext.userContext.tenant_id,
+            approverContext.userContext.user_id
+          )).includes(String(found.employee_id || ''))
+        )
+      : false;
+    if (!canAccessAsOwner && !canAccessAsApprover) {
       return res.status(403).json({ error: 'No tiene permisos para ver el adjunto de esta solicitud' });
     }
 
@@ -4669,6 +4938,13 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
     if (!approver) {
       return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de marcacion' });
     }
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      approver.userContext.tenant_id,
+      approver.userContext.user_id
+    );
+    if (managedEmployeeIds.length === 0) {
+      return res.status(403).json({ error: 'No tiene empleados asignados para aprobación' });
+    }
 
     const requestId = normalizeNullableText(req.params.id);
     const decision = String(req.body?.decision || '').trim().toUpperCase();
@@ -4676,6 +4952,16 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
     if (!['APPROVE', 'REJECT'].includes(decision)) {
       return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    const decisionActionKey = decision === 'APPROVE' ? 'APPROVE' : 'REJECT';
+    const canDecide = await assertApproverActionPermission({
+      userContext: approver.userContext,
+      screenKeys: TIME_PUNCH_APPROVAL_SCREEN_KEYS,
+      actionKey: decisionActionKey,
+      errorMessage: `No tiene permiso ${decisionActionKey} para aprobar cambios de marcacion`,
+    });
+    if (!canDecide.ok) {
+      return res.status(canDecide.status).json({ error: canDecide.error });
     }
     if (decision === 'REJECT' && !supervisorNotes) {
       return res.status(400).json({ error: 'supervisor_notes es obligatorio para denegar' });
@@ -4703,10 +4989,11 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
           ON e.id = r.employee_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
+          AND r.employee_id = ANY($3::uuid[])
           AND r.is_active = true
         LIMIT 1
       `,
-      [requestId, approver.userContext.tenant_id]
+      [requestId, approver.userContext.tenant_id, managedEmployeeIds]
     );
     const current = currentResult.rows[0];
     if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });

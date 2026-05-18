@@ -64,7 +64,7 @@ function isPendingStatus(statusKey: string | null | undefined): boolean {
 export default function ShiftChangeApprovalsManagement() {
   const { profile } = useAuth();
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
+  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -209,7 +209,7 @@ export default function ShiftChangeApprovalsManagement() {
   if (!canUse) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-        Esta pantalla esta habilitada solo para los roles SUPERVISOR y RHADMIN.
+        Esta pantalla esta habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
       </div>
     );
   }
@@ -272,7 +272,7 @@ export default function ShiftChangeApprovalsManagement() {
                       color: row.current_shift_text_color || '#1E293B',
                     }}
                   >
-                    <div className="text-xs uppercase tracking-wide opacity-80">Turno actual</div>
+                    <div className="text-xs uppercase tracking-wide opacity-80">Turno original</div>
                     <div className="font-semibold">{formatShiftTitle(row.current_shift_name, row.current_shift_short_name)}</div>
                     <div className="text-xs opacity-90">Inicio: {formatTime(row.current_shift_start_time)}</div>
                   </div>
@@ -362,4 +362,3 @@ export default function ShiftChangeApprovalsManagement() {
     </div>
   );
 }
-

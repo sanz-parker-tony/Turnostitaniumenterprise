@@ -174,6 +174,14 @@ function PolygonMapAutoFit({ points }: { points: GeoPoint[] }) {
   return null;
 }
 
+function PolygonMapViewController({ center, zoom }: { center: LatLngExpression; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, zoom, { animate: true });
+  }, [map, center, zoom]);
+  return null;
+}
+
 function PolygonEditorField({
   value,
   onChange,
@@ -183,7 +191,14 @@ function PolygonEditorField({
 }) {
   const [points, setPoints] = useState<GeoPoint[]>(() => parseGeofencePoints(value));
   const [center, setCenter] = useState<LatLngExpression>([-2.17, -79.92]);
-  const [zoom, setZoom] = useState(14);
+  const [zoom, setZoom] = useState(16);
+  const [mapSearchTerm, setMapSearchTerm] = useState('');
+  const [mapSearchLoading, setMapSearchLoading] = useState(false);
+  const [mapSearchError, setMapSearchError] = useState('');
+  const [mapSearchResults, setMapSearchResults] = useState<
+    Array<{ display_name: string; lat: string; lon: string }>
+  >([]);
+  const [showMapSearchResults, setShowMapSearchResults] = useState(false);
 
   useEffect(() => {
     const nextPoints = parseGeofencePoints(value);
@@ -200,10 +215,115 @@ function PolygonEditorField({
     onChange(toGeofenceGeoJson(nextPoints));
   };
 
+  const handleMapSearch = async () => {
+    const query = mapSearchTerm.trim();
+    if (!query) {
+      setMapSearchResults([]);
+      setMapSearchError('');
+      return;
+    }
+
+    setMapSearchLoading(true);
+    setMapSearchError('');
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(query)}`;
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      const rows = Array.isArray(payload) ? payload : [];
+      setMapSearchResults(rows);
+      setShowMapSearchResults(rows.length > 0);
+
+      if (rows.length > 0) {
+        const first = rows[0];
+        const lat = Number(first.lat);
+        const lng = Number(first.lon);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          setCenter([lat, lng]);
+          setZoom(18);
+        }
+      }
+    } catch (error: any) {
+      setMapSearchResults([]);
+      setMapSearchError(error?.message || 'No se pudo consultar el mapa');
+    } finally {
+      setMapSearchLoading(false);
+    }
+  };
+
+  const applySearchResult = (row: { display_name: string; lat: string; lon: string }) => {
+    const lat = Number(row.lat);
+    const lng = Number(row.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setCenter([lat, lng]);
+    setZoom(19);
+    setShowMapSearchResults(false);
+  };
+
   const polygonPositions = points.map((point) => [point.lat, point.lng] as [number, number]);
 
   return (
     <div className="space-y-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+        <input
+          type="text"
+          value={mapSearchTerm}
+          onChange={(event) => setMapSearchTerm(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void handleMapSearch();
+            }
+          }}
+          placeholder="Buscar en mapa por nombre (ej. Plastigama Duran)"
+          className="w-full border rounded px-2 py-1.5 text-sm bg-white"
+        />
+        <button
+          type="button"
+          className="w-full sm:w-auto px-3 py-2 text-sm border rounded bg-white hover:bg-gray-50 disabled:opacity-60"
+          onClick={() => void handleMapSearch()}
+          disabled={mapSearchLoading}
+        >
+          {mapSearchLoading ? 'Buscando...' : 'Buscar lugar'}
+        </button>
+      </div>
+
+      {mapSearchError ? (
+        <div className="text-xs text-red-600">{mapSearchError}</div>
+      ) : null}
+
+      {mapSearchResults.length > 0 ? (
+        <div className="rounded border bg-white">
+          <button
+            type="button"
+            onClick={() => setShowMapSearchResults((prev) => !prev)}
+            className="w-full px-2 py-1.5 text-left text-xs bg-gray-50 hover:bg-gray-100"
+          >
+            {showMapSearchResults ? 'Ocultar resultados' : 'Mostrar resultados'} ({mapSearchResults.length})
+          </button>
+          {showMapSearchResults ? (
+            <div className="max-h-28 overflow-auto">
+              {mapSearchResults.map((row, idx) => (
+                <button
+                  key={`${row.lat}-${row.lon}-${idx}`}
+                  type="button"
+                  onClick={() => applySearchResult(row)}
+                  className="block w-full text-left text-xs px-2 py-1.5 hover:bg-sky-50 border-t"
+                >
+                  {row.display_name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button
           type="button"
@@ -228,7 +348,7 @@ function PolygonEditorField({
             if (!navigator.geolocation) return;
             navigator.geolocation.getCurrentPosition((pos) => {
               setCenter([Number(pos.coords.latitude), Number(pos.coords.longitude)]);
-              setZoom(16);
+              setZoom(18);
             });
           }}
         >
@@ -242,11 +362,14 @@ function PolygonEditorField({
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <div className="lg:col-span-2 rounded-md border bg-white overflow-hidden">
-          <MapContainer center={center} zoom={zoom} className="h-[320px] w-full">
+          <MapContainer center={center} zoom={zoom} className="h-[320px] w-full" maxZoom={22} minZoom={3}>
             <TileLayer
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              maxNativeZoom={19}
+              maxZoom={22}
             />
+            <PolygonMapViewController center={center} zoom={zoom} />
             <PolygonMapClickCapture onAddPoint={(point) => commitPoints([...points, point])} />
             <PolygonMapAutoFit points={points} />
             {polygonPositions.length >= 2 && (
@@ -326,8 +449,8 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
-      { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
+      { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
     tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'geofence_polygon', 'is_active'],
   },

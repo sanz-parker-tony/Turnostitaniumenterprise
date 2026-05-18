@@ -38,6 +38,9 @@ import SecurityAuthorizationCatalog from './screens/security/SecurityAuthorizati
 import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
 import { RoleScreenActionsManagement } from './screens/security/RoleScreenActionsManagement';
 import SubscriptionPlansManagement from './screens/security/SubscriptionPlansManagement';
+import SecurityUserScopesManagement from './screens/security/SecurityUserScopesManagement';
+import SecurityUserEmployeeAccessManagement from './screens/security/SecurityUserEmployeeAccessManagement';
+import SecurityRolePermissionsManagement from './screens/security/SecurityRolePermissionsManagement';
 import KioskPunch from './kiosk/KioskPunch';
 import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
@@ -51,7 +54,7 @@ export function Router() {
   const { profile } = useAuth();
   const [currentPath, setCurrentPath] = useState('');
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const isApprovalRole = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
+  const isApprovalRole = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   // Detectar cambios de ruta
   useEffect(() => {
@@ -176,7 +179,10 @@ export function Router() {
     '/dashboard/security/actions':             <SecurityAuthorizationCatalog />,
     '/dashboard/security/screen-actions':      <ScreenActionsManagement />,
     '/dashboard/security/role-screen-actions': <RoleScreenActionsManagement />,
+    '/dashboard/security/role-permissions':    <SecurityRolePermissionsManagement />,
     '/dashboard/security/subscription-plans':  <SubscriptionPlansManagement />,
+    '/dashboard/security/user-role-scopes':    <SecurityUserScopesManagement />,
+    '/dashboard/security/user-employee-access': <SecurityUserEmployeeAccessManagement />,
   };
 
   // Si la ruta existe en el mapa, renderizarla

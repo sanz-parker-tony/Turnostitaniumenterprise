@@ -6,20 +6,16 @@
 'use client';
 
 import ScreenPageShell from '@/components/ScreenPageShell';
-import UnderConstruction from '@/components/UnderConstruction';
+import SecurityRolePermissionsManagement from '@/components/screens/security/SecurityRolePermissionsManagement';
 
 export default function SecurityRolePermissionsPage() {
   return (
     <ScreenPageShell
       screenKey="SEC_ROLE_PERMS"
       title="Permisos por Rol"
-      description="Asignación de permisos a roles del sistema"
+      description="Autorizacion de roles sobre pantallas y acciones (TENANT_ADMIN)"
     >
-      <UnderConstruction
-        screenName="Asignación de Permisos a Roles"
-        screenKey="SEC_ROLE_PERMS"
-        description="Esta interfaz permitirá configurar qué pantallas y acciones (CREATE, READ, UPDATE, DELETE, EXPORT) tiene acceso cada rol, con una matriz visual para facilitar la configuración masiva."
-      />
+      <SecurityRolePermissionsManagement />
     </ScreenPageShell>
   );
 }

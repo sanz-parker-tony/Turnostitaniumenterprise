@@ -34,7 +34,7 @@ type Row = {
 export default function RequestsApprovalsManagement() {
   const { profile } = useAuth();
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
+  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
@@ -176,7 +176,7 @@ export default function RequestsApprovalsManagement() {
   if (!canUse) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-        Esta pantalla esta habilitada solo para los roles SUPERVISOR y RHADMIN.
+        Esta pantalla esta habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
       </div>
     );
   }

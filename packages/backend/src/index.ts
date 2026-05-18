@@ -50,10 +50,12 @@ import lookupValuesRouter from './routes/lookup-values-routes';
 import menuGroupsRouter from './routes/menu-groups-routes';
 import organizationRouter from './routes/organization-routes';
 import roleScreenActionsRouter from './routes/role-screen-actions-mgmt-routes';
+import securityRolePermissionsRouter from './routes/security-role-permissions-routes';
 import rolesRouter from './routes/roles-routes';
 import scopeTypesRouter from './routes/scope-types-routes';
 import screenActionsRouter from './routes/screen-actions-mgmt-routes';
 import screensRouter from './routes/screens-mgmt-routes';
+import securityUserScopesRouter from './routes/security-user-scopes-routes';
 import settingsRouter from './routes/settings-routes';
 import shiftPlanningRouter from './routes/shift-planning.routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
@@ -345,8 +347,6 @@ router.get('/users/menu-screens', requireAuth, async (req: Request, res: Respons
          AND smg.is_active = TRUE
         WHERE u.auth_user_id = $1
           AND u.is_active = TRUE
-          AND COALESCE(s.route_path, '') <> '/dashboard/org/employees'
-          AND s.screen_key <> 'ORG_EMPLOYEES'
         ORDER BY smg.sort_order, s.sort_order
       `,
       [authUserId]
@@ -1922,6 +1922,10 @@ router.use('/roles-management', requireAuth, rolesRouter); // Legacy alias
 // Scope Types
 router.use('/scope-types', requireAuth, scopeTypesRouter);
 router.use('/scope-types-management', requireAuth, scopeTypesRouter); // Legacy alias
+
+// Security - User Scopes / Employee Access
+router.use('/security-user-scopes', requireAuth, securityUserScopesRouter);
+router.use('/security-role-permissions', requireAuth, securityRolePermissionsRouter);
 
 // Screen Actions
 router.use('/screen-actions', requireAuth, screenActionsRouter);

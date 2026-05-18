@@ -1,6 +1,6 @@
 /**
  * Attendance > Approvals
- * Bandeja de aprobaciones para SUPERVISOR / RHADMIN
+ * Bandeja de aprobaciones para SUPERVISOR / RRHH_ADMIN / RHADMIN
  */
 
 'use client';
@@ -67,7 +67,7 @@ export default function ApprovalsPage() {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [draftById, setDraftById] = useState<Record<string, { justify_method_id: string; approval_notes: string }>>({});
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUseApprovals = roleKey === 'SUPERVISOR' || roleKey === 'RHADMIN';
+  const canUseApprovals = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -245,7 +245,7 @@ export default function ApprovalsPage() {
         description="Revisión y decisión de solicitudes de justificación"
       >
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          Esta pantalla está habilitada solo para los roles SUPERVISOR y RHADMIN.
+          Esta pantalla está habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
         </div>
       </ScreenPageShell>
     );
