@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI
 from ortools.sat.python import cp_model
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 app = FastAPI(title="Shift Planning Optimizer")
@@ -12,11 +12,32 @@ NIGHT_CODES = {"VELA", "NOCHE", "NOCT", "N"}
 
 
 class GeneratePlanningRequest(BaseModel):
+    class ReglasIA(BaseModel):
+        evitarTurnoNocheManana: bool = False
+        priorizarEquidadHoras: bool = False
+        equilibrarFeriados: bool = False
+        permitirSwaps: bool = False
+        modoDistribucionTurnos: Literal["ESCALONADOS", "IGUALES"] = "IGUALES"
+
+        @field_validator("modoDistribucionTurnos", mode="before")
+        @classmethod
+        def _normalize_distribution_mode(cls, value: Any) -> str:
+            # Compatibilidad con clientes que enviaban booleano.
+            if isinstance(value, bool):
+                return "ESCALONADOS" if value else "IGUALES"
+
+            mode = str(value or "").strip().upper()
+            if mode in {"ESCALONADOS", "IGUALES"}:
+                return mode
+            if not mode:
+                return "IGUALES"
+            raise ValueError("modoDistribucionTurnos debe ser ESCALONADOS o IGUALES")
+
     filtrosEmpleados: Dict[str, Any]
     rangoFechas: Dict[str, Any]
     patronActivo: Dict[str, Any]
     dotacionRequerida: List[Dict[str, Any]]
-    reglasIA: Dict[str, bool]
+    reglasIA: ReglasIA
     empleadosDisponibles: List[Dict[str, Any]]
     turnosDisponibles: List[Dict[str, Any]]
 
