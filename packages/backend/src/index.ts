@@ -70,6 +70,10 @@ import timeClockDevicesRouter from './routes/time-clock-devices-routes';
 import usersRouter from './routes/users-management-routes';
 import workPatternsRouter from './routes/work-patterns-routes';
 import profileAttendanceEventsRouter from './routes/profile-attendance-events-routes';
+import notificationsRouter from './routes/notifications-routes';
+import systemMessageKeysRouter from './routes/system-message-keys-routes';
+import translationsManagementRouter from './routes/translations-management-routes';
+import systemReportsRouter from './routes/system-reports-routes';
 
 const router = Router();
 
@@ -599,6 +603,321 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
   }
 });
 
+router.get('/dashboard/system-admin-summary', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const authUserId = user?.id;
+    if (!authUserId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const roleCheck = await pool.query(
+      `
+        SELECT 1
+        FROM users u
+        JOIN user_roles ur
+          ON ur.user_id = u.id
+         AND ur.is_active = true
+        JOIN roles r
+          ON r.id = ur.role_id
+         AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+          AND r.role_key = 'SYSTEM_ADMIN'
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    if (!roleCheck.rows[0]) {
+      return res.status(403).json({ error: 'Acceso solo permitido para SYSTEM_ADMIN' });
+    }
+
+    const now = new Date();
+    const parsedYear = Number(req.query.year);
+    const safeYear = Number.isFinite(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100
+      ? Math.trunc(parsedYear)
+      : now.getFullYear();
+
+    const parsedWeekStep = Number(req.query.week_step);
+    const safeWeekStep = [1, 2, 4, 8].includes(parsedWeekStep) ? parsedWeekStep : 1;
+
+    const yearStart = `${safeYear}-01-01`;
+    const yearEnd = `${safeYear + 1}-01-01`;
+
+    const [metricsResult, weeklyEmployeesResult, weeklyPunchesResult, devicesResult, topTenantsResult] = await Promise.all([
+      pool.query(
+        `
+          WITH pending_absence AS (
+            SELECT COUNT(*)::int AS total
+            FROM employee_absence_requests ear
+            LEFT JOIN lookup_values lv
+              ON lv.id = ear.request_status_id
+            WHERE ear.is_active = true
+              AND UPPER(COALESCE(lv.lookup_key, '')) = 'PENDING'
+          ),
+          pending_shift_change AS (
+            SELECT COUNT(*)::int AS total
+            FROM employee_shift_change_requests escr
+            LEFT JOIN lookup_values lv
+              ON lv.id = escr.request_status_id
+            WHERE escr.is_active = true
+              AND UPPER(COALESCE(lv.lookup_key, '')) = 'PENDING'
+          ),
+          punches_30 AS (
+            SELECT COUNT(*)::int AS total
+            FROM employee_time_punches p
+            WHERE p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+          ),
+          active_tenants AS (
+            SELECT COUNT(*)::int AS total
+            FROM tenants t
+            WHERE t.is_active = true
+              AND t.tenant_key <> 'SYSTEM'
+          ),
+          tenants_with_activity AS (
+            SELECT COUNT(DISTINCT p.tenant_id)::int AS total
+            FROM employee_time_punches p
+            JOIN tenants t
+              ON t.id = p.tenant_id
+            WHERE p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+              AND t.is_active = true
+              AND t.tenant_key <> 'SYSTEM'
+          )
+          SELECT
+            (SELECT total FROM active_tenants) AS active_tenants,
+            (SELECT total FROM tenants_with_activity) AS active_tenants_with_activity_30d,
+            CASE
+              WHEN (SELECT total FROM active_tenants) = 0 THEN 0
+              ELSE ROUND(
+                ((SELECT total FROM tenants_with_activity)::numeric / (SELECT total FROM active_tenants)::numeric) * 100.0,
+                2
+              )
+            END AS tenant_activity_rate_30d,
+            (SELECT COUNT(*)::int FROM users WHERE is_active = true) AS active_users,
+            (SELECT COUNT(*)::int FROM employees WHERE is_active = true) AS active_employees,
+            (SELECT COUNT(*)::int FROM companies WHERE is_active = true) AS active_companies,
+            (SELECT COUNT(*)::int FROM time_clock_devices WHERE is_active = true) AS active_devices,
+            (SELECT COUNT(*)::int FROM employee_time_punches WHERE is_active = true) AS total_punches,
+            (SELECT total FROM punches_30) AS total_punches_30d,
+            (
+              SELECT COUNT(*)::int
+              FROM employee_time_punches p
+              WHERE p.is_active = true
+                AND p.punch_datetime >= CURRENT_DATE
+                AND p.punch_datetime < (CURRENT_DATE + INTERVAL '1 day')
+            ) AS total_punches_today,
+            (
+              SELECT COUNT(*)::int
+              FROM employee_time_punches p
+              WHERE p.is_active = true
+                AND p.punch_datetime >= $1::date
+                AND p.punch_datetime < $2::date
+            ) AS total_punches_year,
+            CASE
+              WHEN (SELECT COUNT(*)::int FROM employees WHERE is_active = true) = 0 THEN 0
+              ELSE ROUND(
+                (SELECT total FROM punches_30)::numeric / (SELECT COUNT(*)::numeric FROM employees WHERE is_active = true),
+                2
+              )
+            END AS avg_punches_per_employee_30d,
+            (SELECT total FROM pending_absence) AS pending_absence_requests,
+            (SELECT total FROM pending_shift_change) AS pending_shift_change_requests
+        `,
+        [yearStart, yearEnd]
+      ),
+      pool.query(
+        `
+          WITH weeks AS (
+            SELECT
+              gs::date AS week_start,
+              ROW_NUMBER() OVER (ORDER BY gs)::int AS week_index,
+              TO_CHAR(gs::date, 'IW')::int AS iso_week
+            FROM generate_series(
+              date_trunc('week', $1::date)::timestamp,
+              date_trunc('week', ($2::date - interval '1 day'))::timestamp,
+              interval '1 week'
+            ) gs
+            WHERE gs < $2::date
+          ),
+          base AS (
+            SELECT COUNT(*)::int AS base_count
+            FROM employees e
+            WHERE e.is_active = true
+              AND e.created_at < $1::date
+          ),
+          weekly_new AS (
+            SELECT
+              date_trunc('week', e.created_at)::date AS week_start,
+              COUNT(*)::int AS new_employees
+            FROM employees e
+            WHERE e.is_active = true
+              AND e.created_at >= $1::date
+              AND e.created_at < $2::date
+            GROUP BY 1
+          ),
+          combined AS (
+            SELECT
+              w.week_start,
+              w.week_index,
+              w.iso_week,
+              COALESCE(wn.new_employees, 0)::int AS new_employees
+            FROM weeks w
+            LEFT JOIN weekly_new wn
+              ON wn.week_start = w.week_start
+          )
+          SELECT
+            c.week_start,
+            c.week_index,
+            c.iso_week,
+            c.new_employees,
+            (
+              (SELECT base_count FROM base)
+              + SUM(c.new_employees) OVER (ORDER BY c.week_start ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            )::int AS cumulative_employees
+          FROM combined c
+          WHERE ((c.week_index - 1) % $3::int) = 0
+             OR c.week_index = (SELECT MAX(week_index) FROM combined)
+          ORDER BY c.week_start
+        `,
+        [yearStart, yearEnd, safeWeekStep]
+      ),
+      pool.query(
+        `
+          WITH weeks AS (
+            SELECT
+              gs::date AS week_start,
+              ROW_NUMBER() OVER (ORDER BY gs)::int AS week_index,
+              TO_CHAR(gs::date, 'IW')::int AS iso_week
+            FROM generate_series(
+              date_trunc('week', $1::date)::timestamp,
+              date_trunc('week', ($2::date - interval '1 day'))::timestamp,
+              interval '1 week'
+            ) gs
+            WHERE gs < $2::date
+          ),
+          weekly_punches AS (
+            SELECT
+              date_trunc('week', p.punch_datetime)::date AS week_start,
+              COUNT(*)::int AS punches
+            FROM employee_time_punches p
+            WHERE p.is_active = true
+              AND p.punch_datetime >= $1::date
+              AND p.punch_datetime < $2::date
+            GROUP BY 1
+          ),
+          combined AS (
+            SELECT
+              w.week_start,
+              w.week_index,
+              w.iso_week,
+              COALESCE(wp.punches, 0)::int AS punches
+            FROM weeks w
+            LEFT JOIN weekly_punches wp
+              ON wp.week_start = w.week_start
+          )
+          SELECT
+            c.week_start,
+            c.week_index,
+            c.iso_week,
+            c.punches,
+            SUM(c.punches) OVER (ORDER BY c.week_start ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::int AS cumulative_punches
+          FROM combined c
+          WHERE ((c.week_index - 1) % $3::int) = 0
+             OR c.week_index = (SELECT MAX(week_index) FROM combined)
+          ORDER BY c.week_start
+        `,
+        [yearStart, yearEnd, safeWeekStep]
+      ),
+      pool.query(
+        `
+          WITH base AS (
+            SELECT
+              COALESCE(NULLIF(TRIM(d.device_name), ''), 'Sin dispositivo') AS device_name,
+              COUNT(*)::int AS punches
+            FROM employee_time_punches p
+            LEFT JOIN time_clock_devices d
+              ON d.id = p.time_clock_device_id
+            WHERE p.is_active = true
+              AND p.punch_datetime >= (now() - interval '90 days')
+            GROUP BY 1
+          )
+          SELECT
+            b.device_name,
+            b.punches,
+            SUM(b.punches) OVER ()::int AS total_punches_90d
+          FROM base b
+          ORDER BY b.punches DESC, b.device_name ASC
+          LIMIT 12
+        `
+      ),
+      pool.query(
+        `
+          SELECT
+            t.tenant_name,
+            COUNT(*)::int AS punches_30d
+          FROM employee_time_punches p
+          JOIN tenants t
+            ON t.id = p.tenant_id
+          WHERE p.is_active = true
+            AND p.punch_datetime >= (now() - interval '30 days')
+            AND t.tenant_key <> 'SYSTEM'
+          GROUP BY t.tenant_name
+          ORDER BY punches_30d DESC, t.tenant_name ASC
+          LIMIT 10
+        `
+      ),
+    ]);
+
+    const weeklyEmployees = (weeklyEmployeesResult.rows || []).map((row: any) => ({
+      week_start: row.week_start,
+      week_index: Number(row.week_index) || 0,
+      iso_week: Number(row.iso_week) || 0,
+      week_label: `S${String(row.iso_week || '').padStart(2, '0')}`,
+      new_employees: Number(row.new_employees) || 0,
+      cumulative_employees: Number(row.cumulative_employees) || 0,
+    }));
+
+    const weeklyPunches = (weeklyPunchesResult.rows || []).map((row: any) => ({
+      week_start: row.week_start,
+      week_index: Number(row.week_index) || 0,
+      iso_week: Number(row.iso_week) || 0,
+      week_label: `S${String(row.iso_week || '').padStart(2, '0')}`,
+      punches: Number(row.punches) || 0,
+      cumulative_punches: Number(row.cumulative_punches) || 0,
+    }));
+
+    const devices = (devicesResult.rows || []).map((row: any) => {
+      const punches = Number(row.punches) || 0;
+      const total = Number(row.total_punches_90d) || 0;
+      return {
+        device_name: row.device_name,
+        punches,
+        percentage: total > 0 ? Number(((punches / total) * 100).toFixed(2)) : 0,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      filters: {
+        year: safeYear,
+        week_step: safeWeekStep,
+      },
+      metrics: metricsResult.rows?.[0] || {},
+      weekly_employees: weeklyEmployees,
+      weekly_punches: weeklyPunches,
+      device_distribution_90d: devices,
+      top_tenants_30d: topTenantsResult.rows || [],
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Internal server error',
+    });
+  }
+});
+
 /**
  * GET /dashboard/employee-summary
  *
@@ -981,8 +1300,16 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             h.country_id,
             h.state_id,
             h.city_id,
-            h.work_location_id
+            h.work_location_id,
+            h.holiday_type_id,
+            ht.lookup_key AS holiday_type_key,
+            ht.lookup_label AS holiday_type_label,
+            to_jsonb(ht) -> 'metadata' ->> 'icon_key' AS holiday_type_icon_key,
+            to_jsonb(ht) -> 'metadata' ->> 'icon_glyph' AS holiday_type_icon_glyph,
+            to_jsonb(ht) -> 'metadata' ->> 'icon_color' AS holiday_type_icon_color
           FROM public.holidays h
+          LEFT JOIN public.lookup_values ht
+            ON ht.id = h.holiday_type_id
           WHERE h.tenant_id = $1::uuid
             AND h.is_active = true
           ORDER BY h.holiday_date ASC
@@ -1291,11 +1618,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
 
     const calendarHolidays = holidaysCurrentMonth.map((row: any) => ({
       date: normalizeDateOnly(row?.holiday_date),
-      icon_key: 'CalendarDays',
+      icon_key: row?.holiday_type_icon_key || 'CalendarDays',
       title: row?.holiday_name || 'Feriado',
       subtitle: 'No laborable',
       bg_color: '#DCFCE7',
-      text_color: '#166534',
+      text_color: row?.holiday_type_icon_color || '#166534',
       holiday_id: row?.id || null,
     }));
 
@@ -1908,9 +2235,9 @@ router.post('/bootstrap/ensure-security-screens', requireAuth, ensureSecurityMan
 router.post('/bootstrap/ensure-org-maintenance-screen', requireAuth, ensureOrgMaintenanceScreen);
 
 // Lookups
-router.use('/lookup-groups', lookupGroupsRouter);
+router.use('/lookup-groups', requireAuth, lookupGroupsRouter);
 router.use('/lookup-routes', requireAuth, lookupRouter);
-router.use('/lookup-values', lookupValuesRouter);
+router.use('/lookup-values', requireAuth, lookupValuesRouter);
 
 // Menu Groups
 router.use('/menu-groups', requireAuth, menuGroupsRouter);
@@ -1983,6 +2310,12 @@ router.use('/employee-absence-requests', requireAuth, employeeAbsenceRequestsRou
 
 // Kiosk (employee self-service)
 router.use('/kiosk', requireAuth, kioskRouter);
+router.use('/notifications', requireAuth, notificationsRouter);
+router.use('/system-message-keys', requireAuth, systemMessageKeysRouter);
+router.use('/messages-management', requireAuth, systemMessageKeysRouter); // Legacy alias
+router.use('/translations-management', requireAuth, translationsManagementRouter);
+router.use('/system-reports', requireAuth, systemReportsRouter);
+router.use('/system-reports-management', requireAuth, systemReportsRouter); // Legacy alias
 
 // ============================================================================
 // HEALTH & STATUS

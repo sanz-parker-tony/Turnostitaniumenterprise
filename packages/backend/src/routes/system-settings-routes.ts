@@ -8,8 +8,49 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
+
+async function requireSystemAdminRole(req: Request, res: Response): Promise<boolean> {
+  try {
+    const authUserId = String((req as any)?.user?.id || '').trim();
+    if (!authUserId) {
+      res.status(401).json({ error: 'No autenticado' });
+      return false;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM users u
+        JOIN user_roles ur
+          ON ur.user_id = u.id
+         AND ur.tenant_id = u.tenant_id
+         AND ur.is_active = true
+        JOIN roles r
+          ON r.id = ur.role_id
+         AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+          AND r.role_key = 'SYSTEM_ADMIN'
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    if (!result.rows.length) {
+      res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar system_settings' });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('[SYSTEM-SETTINGS] Error validando rol SYSTEM_ADMIN:', error);
+    res.status(500).json({ error: 'Error validando permisos' });
+    return false;
+  }
+}
 
 // ============================================================================
 // GET /system-settings - Listar todos los parámetros
@@ -111,6 +152,8 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 router.post('/', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const body = req.body;
     const {
       setting_key,
@@ -193,6 +236,8 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.put('/:id', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const id = req.params.id;
     const body = req.body;
     const {
@@ -288,6 +333,8 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const id = req.params.id;
     const body = req.body;
     const { is_active } = body;

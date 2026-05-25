@@ -8,6 +8,7 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
@@ -41,6 +42,9 @@ interface EffectiveSettingResult {
   setting_short_key: string;
   value_type_id: string | null;
   value_type_key: string | null;
+  allowed_lookup_group_id: string | null;
+  allowed_lookup_group_key: string | null;
+  allowed_lookup_group_name: string | null;
   default_value: string | null;
   effective_value: string | null;
   local_value: string | null;
@@ -56,6 +60,46 @@ function getPostgresClient() {
     process.env.Postgres_URL || '',
     process.env.Postgres_SERVICE_ROLE_KEY || ''
   );
+}
+
+async function requireSystemAdminRole(req: Request, res: Response): Promise<boolean> {
+  try {
+    const authUserId = String((req as any)?.user?.id || '').trim();
+    if (!authUserId) {
+      res.status(401).json({ error: 'No autenticado' });
+      return false;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM users u
+        JOIN user_roles ur
+          ON ur.user_id = u.id
+         AND ur.tenant_id = u.tenant_id
+         AND ur.is_active = true
+        JOIN roles r
+          ON r.id = ur.role_id
+         AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+          AND r.role_key = 'SYSTEM_ADMIN'
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    if (!result.rows.length) {
+      res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar system_settings' });
+      return false;
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error("❌ [requireSystemAdminRole]", error);
+    res.status(500).json({ error: 'Error validando permisos' });
+    return false;
+  }
 }
 
 function toNullableString(value: unknown): string | null {
@@ -119,6 +163,44 @@ async function getTypeKey(Postgres: any, valueTypeId: string | null): Promise<st
   return data?.lookup_key ?? null;
 }
 
+async function normalizeLookupValue(
+  Postgres: any,
+  allowedLookupGroupId: string | null,
+  rawValue: string
+): Promise<{ normalized: string | null; error: string | null }> {
+  const value = String(rawValue || '').trim();
+  if (!value) return { normalized: null, error: 'El valor de catálogo es obligatorio' };
+  if (!allowedLookupGroupId) {
+    return { normalized: null, error: 'El parámetro LOOKUP no tiene grupo permitido configurado' };
+  }
+
+  const { data: byKey } = await Postgres
+    .from('lookup_values')
+    .select('lookup_key')
+    .eq('lookup_group_id', allowedLookupGroupId)
+    .eq('lookup_key', value.toUpperCase())
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (byKey?.lookup_key) {
+    return { normalized: String(byKey.lookup_key), error: null };
+  }
+
+  const { data: byId } = await Postgres
+    .from('lookup_values')
+    .select('lookup_key')
+    .eq('lookup_group_id', allowedLookupGroupId)
+    .eq('id', value)
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (byId?.lookup_key) {
+    return { normalized: String(byId.lookup_key), error: null };
+  }
+
+  return { normalized: null, error: `El valor '${value}' no pertenece al catálogo permitido` };
+}
+
 // ============================================================================
 // CATÁLOGO MAESTRO — system_settings
 // ============================================================================
@@ -157,6 +239,8 @@ router.get('/system-settings', async (req: Request, res: Response) => {
 
 router.post('/system-settings', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const body = req.body;
     const { setting_key, setting_name, setting_short_key, value_type_id, default_value, is_active, created_by } = body;
 
@@ -216,6 +300,8 @@ router.post('/system-settings', async (req: Request, res: Response) => {
 
 router.put('/system-settings/:id', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const id = req.params.id;
     const body = req.body;
     const { setting_name, setting_short_key, value_type_id, default_value, is_active, updated_by } = body;
@@ -303,7 +389,11 @@ router.get('/all-effective', async (req: Request, res: Response) => {
 
     const { data: allSettings, error: settingsError } = await Postgres
       .from("system_settings")
-      .select("*, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
+      .select(`
+        *,
+        value_type:lookup_values!system_settings_value_type_fkey(lookup_key),
+        allowed_lookup_group:lookup_groups!system_settings_allowed_lookup_group_id_fkey(group_key, group_name)
+      `)
       .eq("is_active", true)
       .order("setting_key");
 
@@ -373,6 +463,9 @@ router.get('/all-effective', async (req: Request, res: Response) => {
         setting_short_key: ss.setting_short_key,
         value_type_id: ss.value_type_id,
         value_type_key: ss.value_type?.lookup_key ?? null,
+        allowed_lookup_group_id: ss.allowed_lookup_group_id ?? null,
+        allowed_lookup_group_key: ss.allowed_lookup_group?.group_key ?? null,
+        allowed_lookup_group_name: ss.allowed_lookup_group?.group_name ?? null,
         default_value: ss.default_value,
         effective_value: effectiveValue,
         local_value: localValue,
@@ -395,7 +488,11 @@ async function resolveEffectiveSetting(
 
   const { data: ss, error: ssError } = await Postgres
     .from("system_settings")
-    .select("*, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
+    .select(`
+      *,
+      value_type:lookup_values!system_settings_value_type_fkey(lookup_key),
+      allowed_lookup_group:lookup_groups!system_settings_allowed_lookup_group_id_fkey(group_key, group_name)
+    `)
     .eq("setting_key", settingKey)
     .eq("is_active", true)
     .single();
@@ -460,6 +557,9 @@ async function resolveEffectiveSetting(
     setting_short_key: ss.setting_short_key,
     value_type_id: ss.value_type_id,
     value_type_key: ss.value_type?.lookup_key ?? null,
+    allowed_lookup_group_id: ss.allowed_lookup_group_id ?? null,
+    allowed_lookup_group_key: ss.allowed_lookup_group?.group_key ?? null,
+    allowed_lookup_group_name: ss.allowed_lookup_group?.group_name ?? null,
     default_value: ss.default_value,
     effective_value: effectiveValue,
     local_value: localValue,
@@ -526,7 +626,7 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
 
     const { data: ss, error: ssErr } = await Postgres
       .from("system_settings")
-      .select("id, setting_key, value_type_id, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
+      .select("id, setting_key, value_type_id, allowed_lookup_group_id, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
       .eq("id", system_setting_id)
       .eq("is_active", true)
       .single();
@@ -537,9 +637,15 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
 
     const valueType = (ss as any).value_type;
     const typeKey = Array.isArray(valueType) ? valueType[0]?.lookup_key ?? null : valueType?.lookup_key ?? null;
-    const validationError = validateSettingValue(String(setting_value), typeKey);
+    let finalSettingValue = String(setting_value);
+    const validationError = validateSettingValue(finalSettingValue, typeKey);
     if (validationError) {
       return res.status(400).json({ error: validationError });
+    }
+    if (String(typeKey || '').toUpperCase() === 'LOOKUP') {
+      const normalized = await normalizeLookupValue(Postgres, (ss as any).allowed_lookup_group_id ?? null, finalSettingValue);
+      if (normalized.error) return res.status(400).json({ error: normalized.error });
+      finalSettingValue = String(normalized.normalized);
     }
 
     const { data: existing } = await Postgres
@@ -554,7 +660,7 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
       const { data, error } = await Postgres
         .from("tenant_settings")
         .update({
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           is_active: is_active !== false,
           updated_by: created_by || "ADMIN",
           updated_at: new Date().toISOString(),
@@ -570,7 +676,7 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
         .insert({
           tenant_id: tenantId,
           system_setting_id,
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           is_active: is_active !== false,
           created_by: created_by || "ADMIN",
         })
@@ -670,7 +776,7 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
 
     const { data: ss, error: ssErr } = await Postgres
       .from("system_settings")
-      .select("id, setting_key, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
+      .select("id, setting_key, allowed_lookup_group_id, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
       .eq("id", system_setting_id)
       .eq("is_active", true)
       .single();
@@ -681,8 +787,14 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
 
     const valueType = (ss as any).value_type;
     const typeKey = Array.isArray(valueType) ? valueType[0]?.lookup_key ?? null : valueType?.lookup_key ?? null;
-    const validationError = validateSettingValue(String(setting_value), typeKey);
+    let finalSettingValue = String(setting_value);
+    const validationError = validateSettingValue(finalSettingValue, typeKey);
     if (validationError) return res.status(400).json({ error: validationError });
+    if (String(typeKey || '').toUpperCase() === 'LOOKUP') {
+      const normalized = await normalizeLookupValue(Postgres, (ss as any).allowed_lookup_group_id ?? null, finalSettingValue);
+      if (normalized.error) return res.status(400).json({ error: normalized.error });
+      finalSettingValue = String(normalized.normalized);
+    }
 
     const { data: existing } = await Postgres
       .from("company_settings")
@@ -696,7 +808,7 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
       const { data, error } = await Postgres
         .from("company_settings")
         .update({
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           is_active: is_active !== false,
           updated_by: created_by || "ADMIN",
           updated_at: new Date().toISOString(),
@@ -713,7 +825,7 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
           tenant_id,
           company_id: companyId,
           system_setting_id,
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           is_active: is_active !== false,
           created_by: created_by || "ADMIN",
         })
@@ -817,7 +929,7 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
 
     const { data: ss, error: ssErr } = await Postgres
       .from("system_settings")
-      .select("id, setting_key, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
+      .select("id, setting_key, allowed_lookup_group_id, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)")
       .eq("id", system_setting_id)
       .eq("is_active", true)
       .single();
@@ -828,8 +940,14 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
 
     const valueType = (ss as any).value_type;
     const typeKey = Array.isArray(valueType) ? valueType[0]?.lookup_key ?? null : valueType?.lookup_key ?? null;
-    const validationError = validateSettingValue(String(setting_value), typeKey);
+    let finalSettingValue = String(setting_value);
+    const validationError = validateSettingValue(finalSettingValue, typeKey);
     if (validationError) return res.status(400).json({ error: validationError });
+    if (String(typeKey || '').toUpperCase() === 'LOOKUP') {
+      const normalized = await normalizeLookupValue(Postgres, (ss as any).allowed_lookup_group_id ?? null, finalSettingValue);
+      if (normalized.error) return res.status(400).json({ error: normalized.error });
+      finalSettingValue = String(normalized.normalized);
+    }
 
     const { data: existing } = await Postgres
       .from("employee_profile_settings")
@@ -844,7 +962,7 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
       const { data, error } = await Postgres
         .from("employee_profile_settings")
         .update({
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           company_id: company_id || null,
           is_active: is_active !== false,
           updated_by: created_by || "ADMIN",
@@ -863,7 +981,7 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
           company_id: company_id || null,
           employee_profile_id: profileId,
           system_setting_id,
-          setting_value: String(setting_value),
+          setting_value: finalSettingValue,
           is_active: is_active !== false,
           created_by: created_by || "ADMIN",
         })
@@ -912,27 +1030,51 @@ router.delete('/employee-profiles/:id/settings-overrides/:setting_id', async (re
 router.get('/lookup-values/setting-data-types', async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgresClient();
+    const groupIdFromQuery = String(req.query.lookup_group_id || '').trim();
+    const DEFAULT_DATA_TYPE_GROUP_ID = 'c4563361-5cf8-4333-c7d1-0868f75e6c2d';
+    let targetGroupId = groupIdFromQuery || DEFAULT_DATA_TYPE_GROUP_ID;
 
-    const { data: dataTypeGroup } = await Postgres
-      .from("lookup_groups")
-      .select("id")
-      .eq("lookup_group_key", "DATA_TYPE")
-      .limit(1)
-      .single();
+    if (!targetGroupId) {
+      const { data: dataTypeGroup } = await Postgres
+        .from("lookup_groups")
+        .select("id")
+        .eq("lookup_group_key", "DATA_TYPE")
+        .limit(1)
+        .single();
 
-    if (!dataTypeGroup) {
-      return res.status(200).json({ dataTypes: [] });
+      targetGroupId = dataTypeGroup?.id || '';
+    } else {
+      const { data: groupExists } = await Postgres
+        .from("lookup_groups")
+        .select("id")
+        .eq("id", targetGroupId)
+        .maybeSingle();
+
+      if (!groupExists) {
+        const { data: dataTypeGroup } = await Postgres
+          .from("lookup_groups")
+          .select("id")
+          .eq("lookup_group_key", "DATA_TYPE")
+          .limit(1)
+          .single();
+
+        targetGroupId = dataTypeGroup?.id || '';
+      }
+    }
+
+    if (!targetGroupId) {
+      return res.status(200).json({ dataTypes: [], group_id: null });
     }
 
     const { data, error } = await Postgres
       .from("lookup_values")
       .select("id, lookup_key, lookup_label, lookup_short_label")
       .eq("is_active", true)
-      .eq("lookup_group_id", dataTypeGroup.id)
+      .eq("lookup_group_id", targetGroupId)
       .order("sort_order");
 
     if (error) throw error;
-    return res.status(200).json({ dataTypes: data ?? [] });
+    return res.status(200).json({ dataTypes: data ?? [], group_id: targetGroupId });
   } catch (err: any) {
     console.error("❌ [getSettingDataTypes]", err);
     return res.status(500).json({ error: err.message });

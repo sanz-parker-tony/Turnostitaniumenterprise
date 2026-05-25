@@ -724,13 +724,13 @@ export function AttendanceEventsManagement() {
                         </button>
                         <button
                           onClick={() => handleToggleStatus(event)}
-                          className="inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:bg-accent hover:text-accent-foreground h-8 w-8"
+                          className="inline-flex items-center justify-center rounded-md border border-amber-300 bg-amber-100 text-amber-700 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 h-8 w-8"
                           title={event.is_active ? 'Desactivar' : 'Activar'}
                         >
                           {event.is_active ? (
-                            <PowerOff className="size-4 text-orange-600" />
+                            <PowerOff className="size-4" />
                           ) : (
-                            <Power className="size-4 text-green-600" />
+                            <Power className="size-4" />
                           )}
                         </button>
                       </div>

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { ShieldCheck } from 'lucide-react';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 type TargetRoleKey = 'SUPERVISOR' | 'RRHH_ADMIN' | 'RHADMIN';
 
@@ -271,7 +273,12 @@ export default function SecurityUserScopesManagement() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+    <div className="p-6 max-w-full flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+      <SystemAdminPageHeader
+        icon={ShieldCheck}
+        title="Alcances por Usuario"
+        subtitle="Configura alcances organizacionales para usuarios objetivo"
+      />
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="mb-2 text-sm font-medium text-slate-700">Usuario objetivo (SUPERVISOR / RRHH_ADMIN)</div>
         <select
@@ -581,3 +588,4 @@ export default function SecurityUserScopesManagement() {
     </div>
   );
 }
+

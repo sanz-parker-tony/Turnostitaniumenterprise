@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
@@ -7,6 +7,7 @@ import { publicApiToken } from '@/utils/backend/info';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 type RoleRow = {
   id: string;
@@ -233,7 +234,12 @@ export default function SecurityRolePermissionsManagement() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+    <div className="p-6 max-w-full flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+      <SystemAdminPageHeader
+        icon={ShieldCheck}
+        title="Permisos de Rol"
+        subtitle="Administracion de permisos por accion de pantalla para cada rol"
+      />
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-wrap items-end gap-3">
           <div className="min-w-[280px] flex-1">
@@ -277,7 +283,7 @@ export default function SecurityRolePermissionsManagement() {
 
         {selectedRole ? (
           <div className="text-xs text-slate-500">
-            Rol en gestion: <span className="font-medium text-slate-700">{selectedRole.role_name}</span> ({selectedRole.role_key}) ·
+            Rol en gestion: <span className="font-medium text-slate-700">{selectedRole.role_name}</span> ({selectedRole.role_key}) Â·
             {` ${allowedCount} acciones permitidas visibles de ${filteredActions.length}`}
           </div>
         ) : null}
@@ -300,7 +306,7 @@ export default function SecurityRolePermissionsManagement() {
                     <div className="flex min-w-0 items-center gap-2">
                       <ShieldCheck className="h-4 w-4 text-slate-500" />
                       <div className="truncate text-sm font-semibold text-slate-800">
-                        {group.menu_group_name} · {group.screen_name}
+                        {group.menu_group_name} Â· {group.screen_name}
                       </div>
                       <div className="truncate text-xs text-slate-500">{group.screen_key}</div>
                     </div>
@@ -323,7 +329,7 @@ export default function SecurityRolePermissionsManagement() {
                             <div className="text-sm font-medium text-slate-700">{action.action_name}</div>
                             <div className="text-xs text-slate-500">
                               {action.action_key}
-                              {action.ui_element_key ? ` · ${action.ui_element_key}` : ''}
+                              {action.ui_element_key ? ` Â· ${action.ui_element_key}` : ''}
                             </div>
                           </div>
                         </label>
@@ -339,3 +345,4 @@ export default function SecurityRolePermissionsManagement() {
     </div>
   );
 }
+

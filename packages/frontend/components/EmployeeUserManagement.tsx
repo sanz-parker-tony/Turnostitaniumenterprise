@@ -117,7 +117,7 @@ export default function EmployeeUserManagement({
           type="button"
           disabled={busy}
           onClick={() => activate(true)}
-          className="px-3 py-2 rounded bg-green-600 text-white text-sm disabled:opacity-50"
+          className="px-3 py-2 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
         >
           Activar
         </button>
@@ -125,7 +125,7 @@ export default function EmployeeUserManagement({
           type="button"
           disabled={busy}
           onClick={() => activate(false)}
-          className="px-3 py-2 rounded bg-red-600 text-white text-sm disabled:opacity-50"
+          className="px-3 py-2 rounded bg-amber-600 text-white text-sm hover:bg-amber-700 disabled:opacity-50"
         >
           Desactivar
         </button>

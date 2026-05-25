@@ -1685,7 +1685,7 @@ export function OrgMaintenance({
                         {'is_active' in item && (
                           <button
                             onClick={() => handleToggleStatus(item)}
-                            className="inline-flex items-center justify-center p-1.5 rounded border text-xs hover:bg-gray-100"
+                            className="inline-flex items-center justify-center p-1.5 rounded border text-xs text-amber-700 bg-amber-100 border-amber-300 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 transition-all duration-150"
                             title={item.is_active ? 'Desactivar' : 'Activar'}
                           >
                             <Power className="size-3" />

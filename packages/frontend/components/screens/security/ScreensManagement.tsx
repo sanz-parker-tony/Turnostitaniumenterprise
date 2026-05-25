@@ -1,7 +1,7 @@
 'use client';
 /**
- * ScreensManagement - Gestión de Pantallas
- * Turnos Titanium Enterprise — Seguridad → Pantallas
+ * ScreensManagement - GestiÃ³n de Pantallas
+ * Turnos Titanium Enterprise â€” Seguridad â†’ Pantallas
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -9,7 +9,11 @@ import {
   Monitor, Plus, Edit2, Power, PowerOff, Search, X,
   RefreshCw, ChevronUp, ChevronDown, Save, AlertCircle, Languages, Link2,
 } from 'lucide-react';
-import { projectId, publicApiToken } from '../../../utils/backend/info';
+import { publicApiToken } from '../../../utils/backend/info';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 const API = `http://localhost:3001/screens-management`;
 const SA_API = `http://localhost:3001/screen-actions-management`;
@@ -192,7 +196,7 @@ export function ScreensManagement() {
   const save = async () => {
     setPanelError(null);
     if (!form.screen_key || !form.screen_name || !form.menu_group_id) {
-      setPanelError('Clave, nombre y grupo de menú son obligatorios'); return;
+      setPanelError('Clave, nombre y grupo de menÃº son obligatorios'); return;
     }
     setSaving(true);
     try {
@@ -234,25 +238,28 @@ export function ScreensManagement() {
 
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#0074D9] flex items-center justify-center">
-            <Monitor className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Pantallas</h1>
-            <p className="text-sm text-gray-500">Gestión de pantallas del sistema y sus rutas de navegación</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={load} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"><RefreshCw className="w-4 h-4" /></button>
-          <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
-            <Plus className="w-4 h-4" /> Nueva Pantalla
-          </button>
-        </div>
-      </div>
-
+      <SystemAdminPageHeader
+        icon={Monitor}
+        title="Gestión de Pantallas"
+        subtitle="Gestión de pantallas del sistema y sus rutas de navegación"
+        rightSlot={
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Tip de diseño',
+                  text: 'Define la pantalla, su grupo de menú y su ruta. Luego podrás configurar traducciones y acciones.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={load} />
+            <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+              <Plus className="w-4 h-4" /> Nueva Pantalla
+            </button>
+          </>
+        }
+      />
       {/* Filtros */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
@@ -294,7 +301,7 @@ export function ScreensManagement() {
                       {col.label}<SortIcon field={col.f} />
                     </th>
                   ))}
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Etiqueta Menú</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Etiqueta MenÃº</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Grupo</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Ruta</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600 cursor-pointer" onClick={() => sortBy('sort_order')}>Orden<SortIcon field="sort_order" /></th>
@@ -309,23 +316,31 @@ export function ScreensManagement() {
                   <tr key={sc.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3"><span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">{sc.screen_key}</span></td>
                     <td className="px-4 py-3 font-medium text-gray-900">{sc.screen_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{sc.menu_label || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{sc.menu_label || 'â€”'}</td>
                     <td className="px-4 py-3">
                       {sc.menu_group_name
                         ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{sc.menu_group_name}</span>
-                        : <span className="text-gray-400">—</span>}
+                        : <span className="text-gray-400">â€”</span>}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{sc.route_path || '—'}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{sc.route_path || 'â€”'}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{sc.sort_order}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={sc.is_active ? BADGE.active : BADGE.inactive}>{sc.is_active ? 'Activa' : 'Inactiva'}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1">
-                        <button onClick={() => openEdit(sc)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Editar"><Edit2 className="w-4 h-4" /></button>
-                        <button onClick={() => toggleStatus(sc)} className={`p-1.5 rounded-lg ${sc.is_active ? 'text-gray-500 hover:text-orange-600 hover:bg-orange-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50'}`}>
-                          {sc.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                        </button>
+                        <GridActionIconButton
+                          onClick={() => openEdit(sc)}
+                          icon={<Edit2 className="w-4 h-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={() => toggleStatus(sc)}
+                          icon={sc.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                          label={sc.is_active ? 'Desactivar' : 'Activar'}
+                          tone='amber'
+                        />
                       </div>
                     </td>
                   </tr>
@@ -380,7 +395,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Datos ── */}
+              {/* â”€â”€ Tab: Datos â”€â”€ */}
               {activeTab === 'main' && (
                 <div className="space-y-4">
                   <div>
@@ -392,20 +407,20 @@ export function ScreensManagement() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Nombre <span className="text-red-500">*</span></label>
                     <input value={form.screen_name} onChange={e => setForm({ ...form, screen_name: e.target.value })}
-                      placeholder="Ej: Gestión de Roles"
+                      placeholder="Ej: GestiÃ³n de Roles"
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Etiqueta en Menú</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Etiqueta en MenÃº</label>
                     <input value={form.menu_label} onChange={e => setForm({ ...form, menu_label: e.target.value })}
                       placeholder="Ej: Roles"
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Grupo de Menú <span className="text-red-500">*</span></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Grupo de MenÃº <span className="text-red-500">*</span></label>
                     <select value={form.menu_group_id} onChange={e => setForm({ ...form, menu_group_id: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">— Seleccionar —</option>
+                      <option value="">â€” Seleccionar â€”</option>
                       {menuGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.menu_group_name}</option>)}
                     </select>
                   </div>
@@ -414,11 +429,11 @@ export function ScreensManagement() {
                     <input value={form.route_path} onChange={e => setForm({ ...form, route_path: e.target.value })}
                       placeholder="/dashboard/maintenance/roles"
                       className="w-full px-3 py-2 border rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <p className="text-xs text-gray-400 mt-1">Debe comenzar con / y usar solo minúsculas.</p>
+                    <p className="text-xs text-gray-400 mt-1">Debe comenzar con / y usar solo minÃºsculas.</p>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ícono (Lucide)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ãcono (Lucide)</label>
                       <input value={form.icon_key} onChange={e => setForm({ ...form, icon_key: e.target.value })}
                         placeholder="Ej: Shield"
                         className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -437,7 +452,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Traducciones ── */}
+              {/* â”€â”€ Tab: Traducciones â”€â”€ */}
               {activeTab === 'translations' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">Configure el nombre de la pantalla en cada idioma.</p>
@@ -455,7 +470,7 @@ export function ScreensManagement() {
                               [lang.code]: { ...prev[lang.code], name: e.target.value, label: prev[lang.code]?.label || '' }
                             }))}
                             className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                          <input placeholder="Etiqueta de menú traducida (opcional)" value={translations[lang.code]?.label || ''}
+                          <input placeholder="Etiqueta de menÃº traducida (opcional)" value={translations[lang.code]?.label || ''}
                             onChange={e => setTranslations(prev => ({
                               ...prev,
                               [lang.code]: { ...prev[lang.code], label: e.target.value, name: prev[lang.code]?.name || '' }
@@ -467,7 +482,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Acciones de Pantalla ── */}
+              {/* â”€â”€ Tab: Acciones de Pantalla â”€â”€ */}
               {activeTab === 'actions' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">
@@ -494,11 +509,11 @@ export function ScreensManagement() {
                               <div>
                                 <span className="text-sm font-medium text-gray-900">{sa.action_name}</span>
                                 <span className="ml-2 font-mono text-xs text-gray-400">{sa.action_key}</span>
-                                {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">· {sa.ui_element_key}</span>}
+                                {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">Â· {sa.ui_element_key}</span>}
                               </div>
                             </div>
                             <button onClick={() => toggleScreenActionStatus(sa)}
-                              className={`p-1.5 rounded-lg ${sa.is_active ? 'text-orange-500 hover:bg-orange-50' : 'text-green-600 hover:bg-green-50'}`}
+                              className="p-1.5 rounded-lg text-amber-700 bg-amber-100 border border-amber-300 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 transition-all duration-150"
                               title={sa.is_active ? 'Desactivar' : 'Activar'}>
                               {sa.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                             </button>
@@ -506,13 +521,13 @@ export function ScreensManagement() {
                         ))}
                       </div>
 
-                      {/* Agregar nueva acción */}
+                      {/* Agregar nueva acciÃ³n */}
                       <div className="border-t pt-4">
-                        <p className="text-xs font-medium text-gray-600 mb-2">Agregar acción a esta pantalla</p>
+                        <p className="text-xs font-medium text-gray-600 mb-2">Agregar acciÃ³n a esta pantalla</p>
                         <div className="flex gap-2">
                           <select value={newActionId} onChange={e => setNewActionId(e.target.value)}
                             className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">— Seleccionar acción —</option>
+                            <option value="">â€” Seleccionar acciÃ³n â€”</option>
                             {actionsCatalog
                               .filter(a => !screenActions.some(sa => sa.action_id === a.id))
                               .map(a => <option key={a.id} value={a.id}>{a.action_name} ({a.action_key})</option>)}
@@ -550,4 +565,5 @@ export function ScreensManagement() {
 }
 
 export default ScreensManagement;
+
 

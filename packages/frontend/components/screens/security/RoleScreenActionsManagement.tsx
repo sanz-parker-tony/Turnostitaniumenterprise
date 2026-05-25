@@ -1,15 +1,16 @@
-'use client';
+﻿'use client';
 /**
  * RoleScreenActionsManagement - Permisos de Acciones por Rol
- * Turnos Titanium Enterprise — Seguridad → Permisos por Rol
+ * Turnos Titanium Enterprise â€” Seguridad â†’ Permisos por Rol
  *
  * Vista matricial: selecciona tenant + rol y muestra todas las screen_actions
- * con toggle de is_allowed + botón de guardar bulk.
+ * con toggle de is_allowed + botÃ³n de guardar bulk.
  */
 
 import { useState, useEffect, useMemo } from 'react';
 import { ShieldCheck, RefreshCw, Save, AlertCircle, Filter, Search, Check, X, ChevronDown } from 'lucide-react';
 import { projectId, publicApiToken } from '../../../utils/backend/info';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 const API = `http://localhost:3001/role-screen-actions-management`;
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
@@ -45,13 +46,13 @@ export function RoleScreenActionsManagement() {
   const [selectedRole, setSelectedRole] = useState('');
   const [search, setSearch] = useState('');
 
-  // Estado local de permisos editables: screen_action_id → is_allowed
+  // Estado local de permisos editables: screen_action_id â†’ is_allowed
   const [localPerms, setLocalPerms] = useState<Record<string, boolean>>({});
   const [dirty, setDirty] = useState(false);
 
   const headers = () => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` });
 
-  // Carga catálogos al montar
+  // Carga catÃ¡logos al montar
   useEffect(() => {
     const loadCatalogs = async () => {
       setCatalogLoading(true);
@@ -90,7 +91,7 @@ export function RoleScreenActionsManagement() {
         // Construir mapa de permisos actuales
         const map: Record<string, boolean> = {};
         (data.permissions || []).forEach((p: Permission) => { map[p.screen_action_id] = p.is_allowed; });
-        // Completar con false para las screen_actions sin permiso aún
+        // Completar con false para las screen_actions sin permiso aÃºn
         setLocalPerms(map);
         setDirty(false);
       } catch (e: any) { setError(e.message); }
@@ -126,7 +127,7 @@ export function RoleScreenActionsManagement() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error guardando permisos');
-      setSaveMsg(`✅ Guardado: ${data.updated} actualizados, ${data.created} nuevos`);
+      setSaveMsg(`âœ… Guardado: ${data.updated} actualizados, ${data.created} nuevos`);
       setDirty(false);
       setTimeout(() => setSaveMsg(null), 4000);
 
@@ -141,7 +142,7 @@ export function RoleScreenActionsManagement() {
   const selectedTenantObj = tenants.find(t => t.id === selectedTenant);
   const selectedRoleObj = roles.find(r => r.id === selectedRole);
 
-  // Filtrado de screen_actions por búsqueda
+  // Filtrado de screen_actions por bÃºsqueda
   const filteredSA = useMemo(() => {
     if (!search) return screenActions;
     const s = search.toLowerCase();
@@ -166,28 +167,20 @@ export function RoleScreenActionsManagement() {
   const allowedCount = Object.values(localPerms).filter(Boolean).length;
 
   return (
-    <div className="flex flex-col h-full gap-4">
+    <div className="p-6 max-w-full flex flex-col h-full gap-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#0074D9] flex items-center justify-center"><ShieldCheck className="w-5 h-5 text-white" /></div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Permisos por Rol</h1>
-            <p className="text-sm text-gray-500">Asigna qué acciones puede ejecutar cada rol en cada pantalla</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {dirty && (
-            <button onClick={savePerms} disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-[#2ECC71] text-white rounded-lg hover:bg-green-600 text-sm font-medium disabled:opacity-60">
-              {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {saving ? 'Guardando...' : 'Guardar Cambios'}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Filtros de contexto */}
+      <SystemAdminPageHeader
+        icon={ShieldCheck}
+        title="Permisos por Rol"
+        subtitle="Asigna que acciones puede ejecutar cada rol en cada pantalla"
+        rightSlot={dirty ? (
+          <button onClick={savePerms} disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2ECC71] text-white rounded-lg hover:bg-green-600 text-sm font-medium disabled:opacity-60">
+            {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {saving ? "Guardando..." : "Guardar Cambios"}
+          </button>
+        ) : null}
+      />
       <div className="bg-white border rounded-xl p-4">
         <div className="flex items-center gap-3 flex-wrap">
           <Filter className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -195,7 +188,7 @@ export function RoleScreenActionsManagement() {
             <label className="block text-xs font-medium text-gray-500 mb-1">Tenant</label>
             <select value={selectedTenant} onChange={e => { setSelectedTenant(e.target.value); setSelectedRole(''); }}
               className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" disabled={catalogLoading}>
-              <option value="">— Seleccionar tenant —</option>
+              <option value="">â€” Seleccionar tenant â€”</option>
               {tenants.map(t => <option key={t.id} value={t.id}>{t.tenant_name}</option>)}
             </select>
           </div>
@@ -204,7 +197,7 @@ export function RoleScreenActionsManagement() {
             <select value={selectedRole} onChange={e => setSelectedRole(e.target.value)}
               className="w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!selectedTenant || catalogLoading}>
-              <option value="">— Seleccionar rol —</option>
+              <option value="">â€” Seleccionar rol â€”</option>
               {filteredRoles.map(r => <option key={r.id} value={r.id}>{r.role_name} ({r.role_key})</option>)}
             </select>
           </div>
@@ -245,7 +238,7 @@ export function RoleScreenActionsManagement() {
           {/* Contexto seleccionado */}
           <div className="flex items-center gap-2 text-sm">
             <span className="px-2 py-1 bg-blue-50 text-blue-700 rounded-full font-medium">{selectedTenantObj?.tenant_name}</span>
-            <span className="text-gray-400">→</span>
+            <span className="text-gray-400">â†’</span>
             <span className="px-2 py-1 bg-purple-50 text-purple-700 rounded-full font-medium">{selectedRoleObj?.role_name}</span>
             {dirty && <span className="px-2 py-1 bg-amber-50 text-amber-700 rounded-full text-xs">Cambios sin guardar</span>}
           </div>
@@ -254,7 +247,7 @@ export function RoleScreenActionsManagement() {
           <div className="flex-1 overflow-auto space-y-3">
             {grouped.length === 0 ? (
               <div className="flex items-center justify-center py-12 bg-white rounded-xl border">
-                <p className="text-gray-400">{search ? 'No hay resultados para esta búsqueda' : 'No hay acciones de pantalla configuradas'}</p>
+                <p className="text-gray-400">{search ? 'No hay resultados para esta bÃºsqueda' : 'No hay acciones de pantalla configuradas'}</p>
               </div>
             ) : grouped.map(group => (
               <div key={group.screen_key} className="bg-white rounded-xl border overflow-hidden">
@@ -277,7 +270,7 @@ export function RoleScreenActionsManagement() {
                             <p className="text-sm font-medium text-gray-900">{sa.action_name}</p>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="font-mono text-xs text-gray-400">{sa.action_key}</span>
-                              {sa.ui_element_key && <span className="text-xs text-gray-400">· {sa.ui_element_key}</span>}
+                              {sa.ui_element_key && <span className="text-xs text-gray-400">Â· {sa.ui_element_key}</span>}
                             </div>
                           </div>
                         </div>
@@ -298,7 +291,7 @@ export function RoleScreenActionsManagement() {
             ))}
           </div>
 
-          {/* Footer fijo con botón guardar si hay cambios */}
+          {/* Footer fijo con botÃ³n guardar si hay cambios */}
           {dirty && (
             <div className="flex items-center justify-between p-4 bg-amber-50 border border-amber-200 rounded-xl">
               <span className="text-sm text-amber-700 font-medium">Tienes cambios sin guardar</span>
@@ -316,4 +309,5 @@ export function RoleScreenActionsManagement() {
 }
 
 export default RoleScreenActionsManagement;
+
 

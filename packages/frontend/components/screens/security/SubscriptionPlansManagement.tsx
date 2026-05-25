@@ -1,7 +1,7 @@
 'use client';
 /**
- * SubscriptionPlansManagement - Gestión de Planes SaaS
- * Seguridad → Planes
+ * SubscriptionPlansManagement - GestiÃ³n de Planes SaaS
+ * Seguridad â†’ Planes
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -19,6 +19,10 @@ import {
   X,
 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 const API = 'http://localhost:3001/subscription-plans-management';
 
@@ -256,7 +260,7 @@ export default function SubscriptionPlansManagement() {
   };
 
   const removePlan = async (plan: SubscriptionPlan) => {
-    const ok = window.confirm(`¿Eliminar el plan ${plan.plan_name} (${plan.plan_key})?`);
+    const ok = window.confirm(`Â¿Eliminar el plan ${plan.plan_name} (${plan.plan_key})?`);
     if (!ok) return;
     try {
       const res = await fetch(`${API}/${plan.id}`, {
@@ -272,38 +276,40 @@ export default function SubscriptionPlansManagement() {
   };
 
   return (
-    <div className="flex flex-col h-full gap-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#0074D9] flex items-center justify-center">
-            <CreditCard className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Planes</h1>
-            <p className="text-sm text-gray-500">Gestión de planes de suscripción SaaS</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => void load()} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-          >
-            <Plus className="w-4 h-4" />
-            Nuevo Plan
-          </button>
-        </div>
-      </div>
-
+    <div className="p-6 max-w-full flex flex-col h-full gap-4">
+      <SystemAdminPageHeader
+        icon={CreditCard}
+        title="Gestión de Planes"
+        subtitle="Gestión de planes de suscripción SaaS"
+        rightSlot={(
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Tip comercial',
+                  text: 'Configura límites, precios y beneficios de cada plan para controlar la oferta del sistema.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={() => void load()} />
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo Plan
+            </button>
+          </>
+        )}
+      />
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por clave, nombre o descripción..."
+            placeholder="Buscar por clave, nombre o descripciÃ³n..."
             className="w-full pl-9 pr-4 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -339,7 +345,7 @@ export default function SubscriptionPlansManagement() {
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Clave</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Nombre</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Precio</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Límites</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">LÃ­mites</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Estado</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Acciones</th>
                 </tr>
@@ -379,27 +385,24 @@ export default function SubscriptionPlansManagement() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1">
-                        <button
+                        <GridActionIconButton
                           onClick={() => openEdit(plan)}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                          title="Editar"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
+                          icon={<Edit2 className="w-4 h-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
                           onClick={() => void toggleStatus(plan)}
-                          className={`p-1.5 rounded-lg ${plan.is_active ? 'text-gray-500 hover:text-orange-600 hover:bg-orange-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50'}`}
-                          title={plan.is_active ? 'Desactivar' : 'Activar'}
-                        >
-                          {plan.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                        </button>
-                        <button
+                          icon={plan.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                          label={plan.is_active ? 'Desactivar' : 'Activar'}
+                          tone='amber'
+                        />
+                        <GridActionIconButton
                           onClick={() => void removePlan(plan)}
-                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                          icon={<Trash2 className="w-4 h-4" />}
+                          label="Eliminar"
+                          tone="red"
+                        />
                       </div>
                     </td>
                   </tr>
@@ -411,9 +414,8 @@ export default function SubscriptionPlansManagement() {
       </div>
 
       {panelOpen && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/40" onClick={() => setPanelOpen(false)} />
-          <div className="w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-4xl max-h-[90vh] bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-blue-600" />
@@ -454,7 +456,7 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">DescripciÃ³n</label>
                   <textarea
                     value={form.plan_description}
                     onChange={(e) => setForm({ ...form, plan_description: e.target.value })}
@@ -496,7 +498,7 @@ export default function SubscriptionPlansManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Días de prueba</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">DÃ­as de prueba</label>
                   <input
                     type="number"
                     min={0}
@@ -507,48 +509,48 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Usuarios</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Usuarios</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_users}
                     onChange={(e) => setForm({ ...form, max_users: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacío = ilimitado"
+                    placeholder="vacÃ­o = ilimitado"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Empleados</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Empleados</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_employees}
                     onChange={(e) => setForm({ ...form, max_employees: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacío = ilimitado"
+                    placeholder="vacÃ­o = ilimitado"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Empresas</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Empresas</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_companies}
                     onChange={(e) => setForm({ ...form, max_companies: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacío = ilimitado"
+                    placeholder="vacÃ­o = ilimitado"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Localizaciones</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Localizaciones</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_locations}
                     onChange={(e) => setForm({ ...form, max_locations: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacío = ilimitado"
+                    placeholder="vacÃ­o = ilimitado"
                   />
                 </div>
 
@@ -564,13 +566,13 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Features (1 por línea)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Features (1 por lÃ­nea)</label>
                   <textarea
                     value={form.features_text}
                     onChange={(e) => setForm({ ...form, features_text: e.target.value })}
                     rows={5}
                     className="w-full px-3 py-2 border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder={'Control de marcaciones\nReportes avanzados\nIntegración nómina'}
+                    placeholder={'Control de marcaciones\nReportes avanzados\nIntegraciÃ³n nÃ³mina'}
                   />
                 </div>
 
@@ -616,4 +618,6 @@ export default function SubscriptionPlansManagement() {
     </div>
   );
 }
+
+
 

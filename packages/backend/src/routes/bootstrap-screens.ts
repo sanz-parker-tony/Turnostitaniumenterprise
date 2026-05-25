@@ -129,7 +129,7 @@ export async function ensureSystemSettingsScreen(req: Request, res: Response) {
       },
       {
         role_key: 'TENANT_ADMIN',
-        can_view: true, can_create: true, can_edit: true,
+        can_view: true, can_create: false, can_edit: false,
         can_delete: false, can_export: true, can_approve: false,
       },
       {
@@ -140,6 +140,7 @@ export async function ensureSystemSettingsScreen(req: Request, res: Response) {
     ];
 
     let permissionsCreated = 0;
+    let permissionsUpdated = 0;
 
     for (const permConfig of permissionsToCreate) {
       const { data: role, error: roleError } = await Postgres
@@ -166,7 +167,27 @@ export async function ensureSystemSettingsScreen(req: Request, res: Response) {
       }
 
       if (existingPerm) {
-        console.log(`⚠️ [BOOTSTRAP] Permission already exists for ${permConfig.role_key}`);
+        const { error: updatePermError } = await Postgres
+          .from('role_screen_permissions')
+          .update({
+            can_view: permConfig.can_view,
+            can_create: permConfig.can_create,
+            can_edit: permConfig.can_edit,
+            can_delete: permConfig.can_delete,
+            can_export: permConfig.can_export,
+            can_approve: permConfig.can_approve,
+            updated_by: 'SYSTEM',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existingPerm.id);
+
+        if (updatePermError) {
+          console.warn(`[BOOTSTRAP] Error updating permission for ${permConfig.role_key}:`, updatePermError);
+          continue;
+        }
+
+        console.log(`[BOOTSTRAP] Permission updated for ${permConfig.role_key}`);
+        permissionsUpdated++;
         continue;
       }
 
@@ -199,6 +220,7 @@ export async function ensureSystemSettingsScreen(req: Request, res: Response) {
       message: 'System Settings Screen created successfully',
       screen_id: screenId,
       permissions_created: permissionsCreated,
+      permissions_updated: permissionsUpdated,
       created: true,
     });
 

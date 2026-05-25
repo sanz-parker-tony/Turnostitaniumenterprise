@@ -1,350 +1,485 @@
 /**
  * role-screen-actions-mgmt-routes.ts
  * Turnos Titanium Enterprise
- * CRUD para role_screen_actions (permisos por rol → pantalla → acción)
- * NOTA: Rutas estáticas ANTES de rutas dinámicas (/:id)
+ * CRUD para role_screen_actions (permisos por rol -> pantalla -> accion)
  */
 
 import { Router, Request, Response } from 'express';
-import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
-function getPostgres() {
-  return createDbClient(
-    process.env.Postgres_URL || '',
-    process.env.Postgres_SERVICE_ROLE_KEY || ''
-  );
+function actor(req: Request) {
+  const user = (req as any)?.user;
+  return String(user?.email || user?.id || 'SYSTEM');
 }
 
-// ── Catálogos ────────────────────────────────────────────────────────────────
-
-router.get('/catalogs/tenants', async (req: Request, res: Response) => {
+// Catalogos
+router.get('/catalogs/tenants', async (_req: Request, res: Response) => {
   try {
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('tenants')
-      .select('id, tenant_key, tenant_name')
-      .order('tenant_name');
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json({ success: true, tenants: data || [] });
+    const result = await pool.query(
+      `
+        SELECT id, tenant_key, tenant_name
+        FROM tenants
+        ORDER BY tenant_name
+      `
+    );
+    return res.status(200).json({ success: true, tenants: result.rows });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
 
 router.get('/catalogs/roles', async (req: Request, res: Response) => {
   try {
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('roles')
-      .select('id, role_key, role_name, role_scope, tenant_id')
-      .eq('is_active', true)
-      .order('role_name');
-    if (error) return res.status(500).json({ error: error.message });
-    return res.status(200).json({ success: true, roles: data || [] });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-router.get('/catalogs/screen-actions', async (req: Request, res: Response) => {
-  try {
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('screen_actions')
-      .select(`
-        id, ui_element_key, is_active,
-        screen:screens!screen_actions_screen_id_fkey(screen_key, screen_name),
-        action:actions!screen_actions_action_id_fkey(action_key, action_name)
-      `)
-      .eq('is_active', true)
-      .order('created_at');
-
-    if (error) return res.status(500).json({ error: error.message });
-
-    const result = (data || []).map((sa: any) => ({
-      id: sa.id,
-      ui_element_key: sa.ui_element_key,
-      screen_key: sa.screen?.screen_key || null,
-      screen_name: sa.screen?.screen_name || null,
-      action_key: sa.action?.action_key || null,
-      action_name: sa.action?.action_name || null,
-      label: `${sa.screen?.screen_name || '?'} → ${sa.action?.action_name || '?'}`,
-    }));
-
-    return res.status(200).json({ success: true, screenActions: result || [] });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ── GET / - Listar con todos los joins ───────────────────────────────────────
-
-router.get('/', async (req: Request, res: Response) => {
-  try {
-    const Postgres = getPostgres();
-
-    // Query params opcionales
-    const tenantId = req.query.tenant_id as string;
-    const roleId = req.query.role_id as string;
-    const screenKey = req.query.screen_key as string;
-
-    let query = Postgres
-      .from('role_screen_actions')
-      .select(`
-        *,
-        tenant:tenants!role_screen_actions_tenant_id_fkey(tenant_key, tenant_name),
-        role:roles!role_screen_actions_role_id_fkey(role_key, role_name),
-        screen_action:screen_actions!role_screen_actions_screen_action_id_fkey(
-          id, ui_element_key,
-          screen:screens!screen_actions_screen_id_fkey(screen_key, screen_name),
-          action:actions!screen_actions_action_id_fkey(action_key, action_name)
-        )
-      `)
-      .order('created_at', { ascending: false });
-
-    if (tenantId) query = query.eq('tenant_id', tenantId);
-    if (roleId) query = query.eq('role_id', roleId);
-
-    const { data, error } = await query;
-
-    if (error) {
-      console.error('[ROLE-SCREEN-ACTIONS] GET /:', error);
-      return res.status(500).json({ error: error.message });
+    const tenantId = String(req.query.tenant_id || '').trim();
+    const params: any[] = [];
+    let where = 'WHERE r.is_active = true';
+    if (tenantId) {
+      params.push(tenantId);
+      where += ` AND r.tenant_id = $${params.length}`;
     }
 
-    const result = (data || []).map((rsa: any) => ({
-      ...rsa,
-      tenant_key: rsa.tenant?.tenant_key || null,
-      tenant_name: rsa.tenant?.tenant_name || null,
-      role_key: rsa.role?.role_key || null,
-      role_name: rsa.role?.role_name || null,
-      screen_key: rsa.screen_action?.screen?.screen_key || null,
-      screen_name: rsa.screen_action?.screen?.screen_name || null,
-      action_key: rsa.screen_action?.action?.action_key || null,
-      action_name: rsa.screen_action?.action?.action_name || null,
-      ui_element_key: rsa.screen_action?.ui_element_key || null,
-    })).filter((rsa: any) => {
-      if (screenKey) return rsa.screen_key === screenKey;
-      return true;
-    });
-
-    return res.status(200).json({ success: true, permissions: result, count: result.length });
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.role_key,
+          r.role_name,
+          r.role_scope,
+          r.tenant_id
+        FROM roles r
+        ${where}
+        ORDER BY r.role_name, r.role_key
+      `,
+      params
+    );
+    return res.status(200).json({ success: true, roles: result.rows });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
 
-// ── GET /:id ─────────────────────────────────────────────────────────────────
+router.get('/catalogs/screen-actions', async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `
+        SELECT
+          sa.id,
+          sa.ui_element_key,
+          s.screen_key,
+          s.screen_name,
+          a.action_key,
+          a.action_name,
+          (COALESCE(s.screen_name, s.screen_key) || ' -> ' || COALESCE(a.action_name, a.action_key)) AS label
+        FROM screen_actions sa
+        JOIN screens s
+          ON s.id = sa.screen_id
+         AND s.is_active = true
+        JOIN actions a
+          ON a.id = sa.action_id
+         AND a.is_active = true
+        WHERE sa.is_active = true
+        ORDER BY s.sort_order NULLS LAST, s.screen_name, a.action_name
+      `
+    );
+
+    return res.status(200).json({ success: true, screenActions: result.rows });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
+  }
+});
+
+// GET / - Listar permisos role_screen_actions
+router.get('/', async (req: Request, res: Response) => {
+  try {
+    const tenantId = String(req.query.tenant_id || '').trim();
+    const roleId = String(req.query.role_id || '').trim();
+    const screenKey = String(req.query.screen_key || '').trim();
+
+    const params: any[] = [];
+    let where = 'WHERE 1=1';
+
+    if (tenantId) {
+      params.push(tenantId);
+      where += ` AND rsa.tenant_id = $${params.length}`;
+    }
+    if (roleId) {
+      params.push(roleId);
+      where += ` AND rsa.role_id = $${params.length}`;
+    }
+    if (screenKey) {
+      params.push(screenKey);
+      where += ` AND s.screen_key = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          rsa.id,
+          rsa.tenant_id,
+          rsa.role_id,
+          rsa.screen_action_id,
+          rsa.is_allowed,
+          rsa.valid_from,
+          rsa.valid_to,
+          rsa.is_active,
+          rsa.created_by,
+          rsa.created_at,
+          rsa.updated_by,
+          rsa.updated_at,
+          t.tenant_key,
+          t.tenant_name,
+          r.role_key,
+          r.role_name,
+          s.screen_key,
+          s.screen_name,
+          a.action_key,
+          a.action_name,
+          sa.ui_element_key
+        FROM role_screen_actions rsa
+        JOIN tenants t ON t.id = rsa.tenant_id
+        JOIN roles r ON r.id = rsa.role_id
+        JOIN screen_actions sa ON sa.id = rsa.screen_action_id
+        JOIN screens s ON s.id = sa.screen_id
+        JOIN actions a ON a.id = sa.action_id
+        ${where}
+        ORDER BY s.sort_order NULLS LAST, s.screen_name, a.action_name
+      `,
+      params
+    );
+
+    return res.status(200).json({
+      success: true,
+      permissions: result.rows,
+      count: result.rows.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
+  }
+});
 
 router.get('/:id', async (req: Request, res: Response) => {
   try {
-    const id = req.params.id;
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('role_screen_actions')
-      .select(`
-        *,
-        tenant:tenants!role_screen_actions_tenant_id_fkey(tenant_key, tenant_name),
-        role:roles!role_screen_actions_role_id_fkey(role_key, role_name),
-        screen_action:screen_actions!role_screen_actions_screen_action_id_fkey(
-          id, ui_element_key,
-          screen:screens!screen_actions_screen_id_fkey(screen_key, screen_name),
-          action:actions!screen_actions_action_id_fkey(action_key, action_name)
-        )
-      `)
-      .eq('id', id)
-      .single();
-    if (error || !data) return res.status(404).json({ error: 'Permiso no encontrado' });
-    return res.status(200).json({ success: true, permission: data });
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'id es obligatorio' });
+
+    const result = await pool.query(
+      `
+        SELECT
+          rsa.*,
+          t.tenant_key,
+          t.tenant_name,
+          r.role_key,
+          r.role_name,
+          s.screen_key,
+          s.screen_name,
+          a.action_key,
+          a.action_name,
+          sa.ui_element_key
+        FROM role_screen_actions rsa
+        JOIN tenants t ON t.id = rsa.tenant_id
+        JOIN roles r ON r.id = rsa.role_id
+        JOIN screen_actions sa ON sa.id = rsa.screen_action_id
+        JOIN screens s ON s.id = sa.screen_id
+        JOIN actions a ON a.id = sa.action_id
+        WHERE rsa.id = $1
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Permiso no encontrado' });
+    return res.status(200).json({ success: true, permission: result.rows[0] });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
 
-// ── POST / ───────────────────────────────────────────────────────────────────
+router.post('/bulk-upsert', async (req: Request, res: Response) => {
+  const client = await pool.connect();
+  try {
+    const tenantId = String(req.body?.tenant_id || '').trim();
+    const roleId = String(req.body?.role_id || '').trim();
+    const permissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+
+    if (!tenantId || !roleId || !permissions.length) {
+      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_id, permissions[]' });
+    }
+
+    const roleResult = await client.query(
+      `
+        SELECT id
+        FROM roles
+        WHERE id = $1
+          AND tenant_id = $2
+        LIMIT 1
+      `,
+      [roleId, tenantId]
+    );
+    if (roleResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Rol no encontrado para el tenant indicado' });
+    }
+
+    await client.query('BEGIN');
+
+    let updated = 0;
+    let created = 0;
+    let deleted = 0;
+    for (const permission of permissions) {
+      const screenActionId = String(permission?.screen_action_id || '').trim();
+      if (!screenActionId) continue;
+      const isAllowed = Boolean(permission?.is_allowed);
+
+      const saResult = await client.query(
+        `
+          SELECT id
+          FROM screen_actions
+          WHERE id = $1
+          LIMIT 1
+        `,
+        [screenActionId]
+      );
+      if (saResult.rows.length === 0) continue;
+
+      const existingResult = await client.query(
+        `
+          SELECT id
+          FROM role_screen_actions
+          WHERE tenant_id = $1
+            AND role_id = $2
+            AND screen_action_id = $3
+          LIMIT 1
+        `,
+        [tenantId, roleId, screenActionId]
+      );
+
+      const existingId = existingResult.rows[0]?.id as string | undefined;
+      if (isAllowed) {
+        if (existingId) {
+          await client.query(
+            `
+              UPDATE role_screen_actions
+              SET
+                is_allowed = true,
+                is_active = true,
+                updated_by = $2,
+                updated_at = now()
+              WHERE id = $1
+            `,
+            [existingId, actor(req)]
+          );
+          updated++;
+        } else {
+          await client.query(
+            `
+              INSERT INTO role_screen_actions (
+                id,
+                tenant_id,
+                role_id,
+                screen_action_id,
+                is_allowed,
+                is_active,
+                created_by
+              )
+              VALUES (
+                gen_random_uuid(),
+                $1,
+                $2,
+                $3,
+                true,
+                true,
+                $4
+              )
+            `,
+            [tenantId, roleId, screenActionId, actor(req)]
+          );
+          created++;
+        }
+      } else if (existingId) {
+        await client.query(
+          `
+            DELETE FROM role_screen_actions
+            WHERE id = $1
+          `,
+          [existingId]
+        );
+        deleted++;
+      }
+    }
+
+    await client.query('COMMIT');
+
+    return res.status(200).json({
+      success: true,
+      updated,
+      created,
+      deleted,
+      message: `Permisos actualizados: ${updated} modificados, ${created} creados, ${deleted} eliminados`,
+    });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
+  } finally {
+    client.release();
+  }
+});
 
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const body = req.body;
-    const { tenant_id, role_id, screen_action_id, is_allowed = false, valid_from, valid_to, is_active = true } = body;
+    const {
+      tenant_id,
+      role_id,
+      screen_action_id,
+      is_allowed = false,
+      valid_from = null,
+      valid_to = null,
+      is_active = true,
+    } = req.body || {};
 
     if (!tenant_id || !role_id || !screen_action_id) {
       return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_id, screen_action_id' });
     }
 
-    const Postgres = getPostgres();
-    const { data: existing } = await Postgres
-      .from('role_screen_actions')
-      .select('id')
-      .eq('tenant_id', tenant_id)
-      .eq('role_id', role_id)
-      .eq('screen_action_id', screen_action_id)
-      .maybeSingle();
-    if (existing) return res.status(409).json({ error: 'Ya existe ese permiso para ese rol y pantalla-acción' });
+    const result = await pool.query(
+      `
+        INSERT INTO role_screen_actions (
+          id,
+          tenant_id,
+          role_id,
+          screen_action_id,
+          is_allowed,
+          valid_from,
+          valid_to,
+          is_active,
+          created_by
+        )
+        VALUES (
+          gen_random_uuid(),
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8
+        )
+        RETURNING *
+      `,
+      [tenant_id, role_id, screen_action_id, Boolean(is_allowed), valid_from, valid_to, Boolean(is_active), actor(req)]
+    );
 
-    const { data, error } = await Postgres
-      .from('role_screen_actions')
-      .insert({
-        tenant_id,
-        role_id,
-        screen_action_id,
-        is_allowed,
-        valid_from: valid_from || null,
-        valid_to: valid_to || null,
-        is_active,
-        created_by: 'system',
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[ROLE-SCREEN-ACTIONS] POST /:', error);
-      return res.status(500).json({ error: error.message });
-    }
-    return res.status(201).json({ success: true, permission: data, message: 'Permiso creado' });
+    return res.status(201).json({
+      success: true,
+      permission: result.rows[0],
+      message: 'Permiso creado',
+    });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    if (String(err?.code || '') === '23505') {
+      return res.status(409).json({ error: 'Ya existe ese permiso para ese rol y pantalla-accion' });
+    }
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
-
-// ── PUT /:id ─────────────────────────────────────────────────────────────────
 
 router.put('/:id', async (req: Request, res: Response) => {
   try {
-    const id = req.params.id;
-    const body = req.body;
-    const { is_allowed, valid_from, valid_to, is_active } = body;
+    const id = String(req.params.id || '').trim();
+    const { is_allowed, valid_from, valid_to, is_active } = req.body || {};
 
-    const Postgres = getPostgres();
-    const { data: existing } = await Postgres
-      .from('role_screen_actions')
-      .select('id')
-      .eq('id', id)
-      .maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Permiso no encontrado' });
+    const result = await pool.query(
+      `
+        UPDATE role_screen_actions
+        SET
+          is_allowed = COALESCE($2, is_allowed),
+          valid_from = $3,
+          valid_to = $4,
+          is_active = COALESCE($5, is_active),
+          updated_by = $6,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [
+        id,
+        typeof is_allowed === 'boolean' ? is_allowed : null,
+        valid_from === undefined ? null : valid_from,
+        valid_to === undefined ? null : valid_to,
+        typeof is_active === 'boolean' ? is_active : null,
+        actor(req),
+      ]
+    );
 
-    const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
-    if (is_allowed !== undefined) updateData.is_allowed = is_allowed;
-    if (valid_from !== undefined) updateData.valid_from = valid_from || null;
-    if (valid_to !== undefined) updateData.valid_to = valid_to || null;
-    if (is_active !== undefined) updateData.is_active = is_active;
-
-    const { data, error } = await Postgres
-      .from('role_screen_actions')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[ROLE-SCREEN-ACTIONS] PUT /:id:', error);
-      return res.status(500).json({ error: error.message });
-    }
-    return res.status(200).json({ success: true, permission: data, message: 'Permiso actualizado' });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Permiso no encontrado' });
+    return res.status(200).json({ success: true, permission: result.rows[0], message: 'Permiso actualizado' });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
-
-// ── PATCH /:id/allowed ───────────────────────────────────────────────────────
 
 router.patch('/:id/allowed', async (req: Request, res: Response) => {
   try {
-    const id = req.params.id;
-    const { is_allowed } = req.body;
-    if (typeof is_allowed !== 'boolean') return res.status(400).json({ error: 'is_allowed debe ser booleano' });
+    const id = String(req.params.id || '').trim();
+    const isAllowed = req.body?.is_allowed;
+    if (typeof isAllowed !== 'boolean') {
+      return res.status(400).json({ error: 'is_allowed debe ser booleano' });
+    }
 
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('role_screen_actions')
-      .update({ is_allowed, updated_by: 'system', updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .single();
+    const result = await pool.query(
+      `
+        UPDATE role_screen_actions
+        SET
+          is_allowed = $2,
+          updated_by = $3,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [id, isAllowed, actor(req)]
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: 'No encontrado' });
-    return res.status(200).json({ success: true, permission: data, message: `Permiso ${is_allowed ? 'concedido' : 'revocado'}` });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Permiso no encontrado' });
+    return res.status(200).json({
+      success: true,
+      permission: result.rows[0],
+      message: `Permiso ${isAllowed ? 'concedido' : 'revocado'}`,
+    });
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
-
-// ── PATCH /:id/status ────────────────────────────────────────────────────────
 
 router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
-    const id = req.params.id;
-    const { is_active } = req.body;
-    if (typeof is_active !== 'boolean') return res.status(400).json({ error: 'is_active debe ser booleano' });
-
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('role_screen_actions')
-      .update({ is_active, updated_by: 'system', updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: 'No encontrado' });
-    return res.status(200).json({ success: true, permission: data, message: `${is_active ? 'Activado' : 'Desactivado'}` });
-  } catch (err: any) {
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// ── POST /bulk-upsert ─────────────────────────────────────────────────────────
-// Actualización masiva: dado un rol, actualiza is_allowed para varios screen_actions
-
-router.post('/bulk-upsert', async (req: Request, res: Response) => {
-  try {
-    const body = req.body;
-    const { tenant_id, role_id, permissions } = body;
-    // permissions = [{ screen_action_id, is_allowed }]
-
-    if (!tenant_id || !role_id || !Array.isArray(permissions)) {
-      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_id, permissions[]' });
+    const id = String(req.params.id || '').trim();
+    const isActive = req.body?.is_active;
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ error: 'is_active debe ser booleano' });
     }
 
-    const Postgres = getPostgres();
-    let updated = 0;
-    let created = 0;
+    const result = await pool.query(
+      `
+        UPDATE role_screen_actions
+        SET
+          is_active = $2,
+          updated_by = $3,
+          updated_at = now()
+        WHERE id = $1
+        RETURNING *
+      `,
+      [id, isActive, actor(req)]
+    );
 
-    for (const perm of permissions) {
-      const { screen_action_id, is_allowed } = perm;
-      if (!screen_action_id) continue;
-
-      const { data: existing } = await Postgres
-        .from('role_screen_actions')
-        .select('id')
-        .eq('tenant_id', tenant_id)
-        .eq('role_id', role_id)
-        .eq('screen_action_id', screen_action_id)
-        .maybeSingle();
-
-      if (existing) {
-        await Postgres
-          .from('role_screen_actions')
-          .update({ is_allowed, updated_by: 'system', updated_at: new Date().toISOString() })
-          .eq('id', existing.id);
-        updated++;
-      } else {
-        await Postgres
-          .from('role_screen_actions')
-          .insert({ tenant_id, role_id, screen_action_id, is_allowed, is_active: true, created_by: 'system' });
-        created++;
-      }
-    }
-
-    return res.status(200).json({ success: true, message: `Permisos actualizados: ${updated} modificados, ${created} creados`, updated, created });
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Permiso no encontrado' });
+    return res.status(200).json({
+      success: true,
+      permission: result.rows[0],
+      message: isActive ? 'Activado' : 'Desactivado',
+    });
   } catch (err: any) {
-    console.error('[ROLE-SCREEN-ACTIONS] POST /bulk-upsert:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message || 'Error interno del servidor' });
   }
 });
 
 export default router;
-

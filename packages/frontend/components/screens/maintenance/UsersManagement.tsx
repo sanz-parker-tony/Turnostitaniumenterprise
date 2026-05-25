@@ -1,4 +1,4 @@
-﻿/**
+/**
  * UsersManagement.tsx - Gestión de Usuarios
  * Turnos Titanium Enterprise
  *
@@ -15,12 +15,14 @@
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
-  Users, RefreshCw, User, Shield,
+  Users, User, Shield,
   Key, Clock, ChevronRight, Trash2,
   Mail, Phone, Globe, Building,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 
 // ============================================================================
 // TIPOS
@@ -742,43 +744,33 @@ export function UsersManagement() {
   // ============================================================================
 
   return (
-    <div className="flex h-full min-h-screen bg-gray-50">
+    <div className="p-6 max-w-full flex flex-col h-full min-h-screen bg-gray-50 gap-4">
+      <SystemAdminPageHeader
+        icon={Users}
+        title="Gestion de Usuarios"
+        subtitle="Mantenimiento de usuarios, roles y alcances del sistema"
+        rightSlot={
+          <div className="flex gap-2">
+            <HeaderRefreshButton onClick={loadAll} />
+            <button
+              onClick={openCreateUser}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo Usuario
+            </button>
+          </div>
+        }
+      />
+      <div className="flex flex-1 min-h-0 bg-gray-50">
       {/* Panel izquierdo: lista de usuarios */}
       <div className={`${selectedUser ? 'w-1/2' : 'w-full'} flex flex-col transition-all duration-300`}>
-        {/* Header */}
-        <div className="p-6 bg-white border-b border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#0074D9]/10 rounded-lg">
-                <Users className="w-6 h-6 text-[#0074D9]" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  Gestión de Usuarios
-                </h1>
-                <p className="text-xs text-gray-500">
-                  {filteredUsers.length} de {users.length} usuarios
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={loadAll}
-                className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-              <button
-                onClick={openCreateUser}
-                className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
-              >
-                <Plus className="w-4 h-4" />
-                Nuevo Usuario
-              </button>
-            </div>
+        <div className="px-3 pb-3">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <p className="text-xs text-gray-500">
+              {filteredUsers.length} de {users.length} usuarios
+            </p>
           </div>
-
-          {/* Filtros */}
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1146,6 +1138,7 @@ export function UsersManagement() {
           </div>
         </div>
       )}
+      </div>
 
       {/* ================================================================ */}
       {/* MODAL: Crear/Editar Usuario */}
@@ -1435,5 +1428,6 @@ function InfoField({ icon: Icon, label, value, mono }: { icon: any; label: strin
     </div>
   );
 }
+
 
 

@@ -69,7 +69,6 @@ export async function updateSystemTenantSettings(req: Request, res: Response) {
       .from('tenants')
       .update({
         tenant_name: tenant_name.trim(),
-        updated_at: new Date().toISOString(),
       })
       .eq('tenant_key', 'SYSTEM')
       .select('id, tenant_key, tenant_name, is_active')
@@ -128,7 +127,6 @@ export async function updateTenant(req: Request, res: Response) {
       .from('tenants')
       .update({
         tenant_name: body.tenant_name,
-        updated_at: new Date().toISOString(),
       })
       .eq('id', tenantId)
       .select()

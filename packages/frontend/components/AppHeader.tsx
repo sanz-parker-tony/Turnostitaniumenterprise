@@ -29,11 +29,38 @@ import {
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 
+type UserNotification = {
+  id: string;
+  title: string;
+  message: string;
+  icon_key: string | null;
+  is_read: boolean;
+  created_at: string;
+};
+
+const API_BASE_URL = 'http://localhost:3001';
+
+function getReadableDateTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleString('es-EC', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function AppHeader() {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, session } = useAuth();
   const { getScreenByPath, menuScreens } = usePermissions();
   const [currentPath, setCurrentPath] = useState('');
   const [isElevated, setIsElevated] = useState(false);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const headerRef = useRef<HTMLElement | null>(null);
 
   // Detectar ruta actual
@@ -88,6 +115,77 @@ export function AppHeader() {
     }
   };
 
+  const loadNotifications = async (includeRead = false) => {
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) return;
+
+    setLoadingNotifications(true);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/notifications/me?include_read=${includeRead ? 'true' : 'false'}&limit=20`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+
+      setNotifications(Array.isArray(payload?.notifications) ? payload.notifications : []);
+      setUnreadCount(Number(payload?.unread_count || 0));
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
+  const markNotificationAsRead = async (notificationId: string) => {
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) return;
+
+    await fetch(`${API_BASE_URL}/notifications/${notificationId}/read`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await loadNotifications(notificationsOpen);
+  };
+
+  const markAllAsRead = async () => {
+    const token = session?.access_token || localStorage.getItem('tt-access-token');
+    if (!token) return;
+
+    await fetch(`${API_BASE_URL}/notifications/me/read-all`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    await loadNotifications(notificationsOpen);
+  };
+
+  useEffect(() => {
+    if (!session?.access_token) return;
+    void loadNotifications(false);
+
+    const timer = window.setInterval(() => {
+      void loadNotifications(false);
+    }, 30000);
+
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    if (notificationsOpen) {
+      void loadNotifications(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notificationsOpen]);
+
   return (
     <header
       ref={headerRef}
@@ -139,24 +237,59 @@ export function AppHeader() {
       {/* Right side - Notifications & User */}
       <div className="flex items-center gap-2">
         {/* Notifications */}
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setNotificationsOpen}>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="h-5 w-5" />
-              <Badge 
-                variant="destructive" 
-                className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center p-0 text-xs"
+              <Badge
+                variant="destructive"
+                className="absolute -top-1 -right-1 h-5 min-w-5 px-1 flex items-center justify-center p-0 text-xs"
               >
-                0
+                {unreadCount > 99 ? '99+' : unreadCount}
               </Badge>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel>Notificaciones</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <div className="p-4 text-center text-sm text-muted-foreground">
-              No hay notificaciones nuevas
-            </div>
+            {unreadCount > 0 && (
+              <>
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    void markAllAsRead();
+                  }}
+                >
+                  Marcar todas como leidas
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
+            {loadingNotifications ? (
+              <div className="p-4 text-center text-sm text-muted-foreground">Cargando...</div>
+            ) : notifications.length === 0 ? (
+              <div className="p-4 text-center text-sm text-muted-foreground">No hay notificaciones nuevas</div>
+            ) : (
+              notifications.map((item) => (
+                <DropdownMenuItem
+                  key={item.id}
+                  className="flex flex-col items-start gap-1 py-2"
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    if (!item.is_read) {
+                      void markNotificationAsRead(item.id);
+                    }
+                  }}
+                >
+                  <div className="w-full flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium leading-tight">{item.title || 'Notificacion'}</span>
+                    {!item.is_read && <span className="h-2 w-2 rounded-full bg-red-500" />}
+                  </div>
+                  <p className="text-xs text-muted-foreground whitespace-normal">{item.message}</p>
+                  <span className="text-[11px] text-muted-foreground">{getReadableDateTime(item.created_at)}</span>
+                </DropdownMenuItem>
+              ))
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
 

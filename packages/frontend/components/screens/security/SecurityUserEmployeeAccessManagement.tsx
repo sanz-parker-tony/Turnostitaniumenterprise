@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { UsersRound } from 'lucide-react';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 type TargetRoleKey = 'SUPERVISOR' | 'RRHH_ADMIN' | 'RHADMIN';
 
@@ -300,6 +302,11 @@ export default function SecurityUserEmployeeAccessManagement() {
 
   return (
     <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+      <SystemAdminPageHeader
+        icon={UsersRound}
+        title="Acceso de Empleados"
+        subtitle="Autoriza o revoca acceso explicito de empleados por supervisor o rol"
+      />
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <label className="mb-1 block text-xs font-medium text-slate-600">Usuario objetivo</label>

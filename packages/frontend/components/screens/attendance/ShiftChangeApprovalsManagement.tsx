@@ -61,6 +61,24 @@ function isPendingStatus(statusKey: string | null | undefined): boolean {
   return ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN'].includes(key);
 }
 
+function normalizeStatusKey(statusKey: string | null | undefined, statusLabel: string | null | undefined): string {
+  return String(statusKey || statusLabel || '').trim().toUpperCase();
+}
+
+function approvalStatusBadgeClass(statusKey: string | null | undefined, statusLabel: string | null | undefined): string {
+  const key = normalizeStatusKey(statusKey, statusLabel);
+  if (['APPROVED', 'APROBADO', 'APROBADA'].includes(key)) {
+    return 'border-green-200 bg-green-100 text-green-800';
+  }
+  if (['REJECTED', 'DENEGADO', 'DENEGADA', 'RECHAZADO', 'RECHAZADA'].includes(key)) {
+    return 'border-red-200 bg-red-100 text-red-800';
+  }
+  if (['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN REVISIÓN'].includes(key)) {
+    return 'border-yellow-300 bg-yellow-100 text-yellow-900';
+  }
+  return 'border-slate-200 bg-slate-100 text-slate-700';
+}
+
 export default function ShiftChangeApprovalsManagement() {
   const { profile } = useAuth();
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
@@ -261,7 +279,12 @@ export default function ShiftChangeApprovalsManagement() {
                       <span>{row.company_name || '-'}</span>
                     </div>
                   </div>
-                  <Badge variant="secondary">{row.request_status_label || '-'}</Badge>
+                  <Badge
+                    variant="outline"
+                    className={approvalStatusBadgeClass(row.request_status_key, row.request_status_label)}
+                  >
+                    {row.request_status_label || '-'}
+                  </Badge>
                 </div>
 
                 <div className="mb-3 grid gap-3 md:grid-cols-[1fr_auto_1fr]">
