@@ -291,7 +291,7 @@ export function MenuGroupsManagement() {
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}
           className="text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="all">Todos</option>
+          <option value="all">Todos los estados</option>
           <option value="active">Activos</option>
           <option value="inactive">Inactivos</option>
         </select>

@@ -1000,7 +1000,7 @@ export default function SecurityAuthorizationCatalog() {
         }
       />
 
-      <div className="px-1 py-1">
+      <div className="rounded-lg border bg-white p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Tenant</label>

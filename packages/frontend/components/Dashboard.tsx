@@ -588,14 +588,10 @@ function SystemAdminInsights({
   payload,
   selectedYear,
   weekStep,
-  onYearChange,
-  onWeekStepChange,
 }: {
   payload: any;
   selectedYear: number;
   weekStep: number;
-  onYearChange: (year: number) => void;
-  onWeekStepChange: (step: number) => void;
 }) {
   const metrics = payload?.metrics || {};
   const employeesSeries = Array.isArray(payload?.weekly_employees) ? payload.weekly_employees : [];
@@ -603,7 +599,6 @@ function SystemAdminInsights({
   const deviceDistribution = Array.isArray(payload?.device_distribution_90d) ? payload.device_distribution_90d : [];
   const topTenants = Array.isArray(payload?.top_tenants_30d) ? payload.top_tenants_30d : [];
 
-  const yearOptions = [selectedYear - 2, selectedYear - 1, selectedYear, selectedYear + 1].filter((v, i, arr) => arr.indexOf(v) === i);
   const kpiCards = [
     {
       title: 'Tenants Activos',
@@ -638,57 +633,18 @@ function SystemAdminInsights({
   ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <CardTitle>Analitica Global del Fabricante</CardTitle>
-              <CardDescription>
-                Vision consolidada de adopcion, crecimiento y uso operativo del sistema.
-              </CardDescription>
-            </div>
-            <div className="flex gap-2">
-              <label className="text-sm text-muted-foreground flex items-center gap-2">
-                Anio
-                <select
-                  value={selectedYear}
-                  onChange={(e) => onYearChange(Number(e.target.value))}
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                >
-                  {yearOptions.map((year) => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-sm text-muted-foreground flex items-center gap-2">
-                Salto semanas
-                <select
-                  value={weekStep}
-                  onChange={(e) => onWeekStepChange(Number(e.target.value))}
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                >
-                  {[1, 2, 4, 8].map((step) => (
-                    <option key={step} value={step}>Cada {step}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </div>
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-sm">KPIs Operativos</CardTitle>
         </CardHeader>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">KPIs Operativos</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
+        <CardContent className="px-4 pt-0 pb-4">
           <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
             {kpiCards.map((kpi) => (
               <div key={kpi.title} className="rounded-lg border bg-card p-2">
                 <p className="text-xs text-muted-foreground">{kpi.title}</p>
-                <p className="mt-1 text-4xl font-semibold tracking-tight">{kpi.value}</p>
-                <p className="mt-2 text-[11px] text-muted-foreground leading-tight">{kpi.detail}</p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight">{kpi.value}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground leading-tight">{kpi.detail}</p>
               </div>
             ))}
           </div>
@@ -696,9 +652,9 @@ function SystemAdminInsights({
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="h-[360px] flex flex-col">
+        <Card className="h-[340px] flex flex-col">
           <CardHeader className="pb-3">
-            <CardTitle>Distribucion de Marcaciones por Dispositivo (90 dias)</CardTitle>
+            <CardTitle className="whitespace-nowrap">Marcaciones por Dispositivo (90 dias)</CardTitle>
             <CardDescription>Participacion porcentual por origen de dispositivo.</CardDescription>
           </CardHeader>
           <CardContent className="flex-1">
@@ -713,9 +669,9 @@ function SystemAdminInsights({
                       dataKey="punches"
                       nameKey="device_name"
                       cx="50%"
-                      cy="50%"
-                      innerRadius={56}
-                      outerRadius={88}
+                      cy="47%"
+                      innerRadius={48}
+                      outerRadius={76}
                       paddingAngle={2}
                       strokeWidth={0}
                     >
@@ -723,7 +679,7 @@ function SystemAdminInsights({
                         <Cell key={`device-cell-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Legend />
+                    <Legend verticalAlign="bottom" height={28} />
                     <RechartsTooltip formatter={(value: any, _: any, row: any) => [`${formatMetric(value)} marcaciones`, row?.payload?.device_name]} />
                   </PieChart>
                 </ResponsiveContainer>
@@ -732,7 +688,7 @@ function SystemAdminInsights({
           </CardContent>
         </Card>
 
-        <Card className="h-[360px] flex flex-col">
+        <Card className="h-[340px] flex flex-col">
           <CardHeader>
             <CardTitle>Top Tenants por Marcaciones (30 dias)</CardTitle>
             <CardDescription>Volumen de uso por tenant en el ultimo mes.</CardDescription>
@@ -760,7 +716,7 @@ function SystemAdminInsights({
           </CardContent>
         </Card>
 
-        <Card className="h-[360px] flex flex-col">
+        <Card className="h-[340px] flex flex-col">
           <CardHeader>
             <CardTitle>Incremento de Empleados por Semana ({selectedYear})</CardTitle>
             <CardDescription>Nuevos registros semanales de empleados activos.</CardDescription>
@@ -985,16 +941,48 @@ export function Dashboard() {
   };
 
   const expectedGroups = getMenuGroupsByRole(profile?.role_key);
+  const systemAdminYearOptions = [systemAdminYear - 2, systemAdminYear - 1, systemAdminYear, systemAdminYear + 1]
+    .filter((v, i, arr) => arr.indexOf(v) === i);
 
   return (
-    <div className="p-6 max-w-full space-y-6">
+    <div className="p-5 max-w-full space-y-4">
       <SystemAdminPageHeader
         icon={BarChart3}
         title={`Bienvenido, ${profile?.display_name || 'Usuario'}`}
-        subtitle="Sistema Enterprise de Control de Asistencias y Turnos de Trabajo"
+        subtitle={isSystemAdmin
+          ? 'Analitica global de adopcion, crecimiento y uso operativo del sistema'
+          : 'Sistema Enterprise de Control de Asistencias y Turnos de Trabajo'}
+        rightSlot={isSystemAdmin ? (
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground flex items-center gap-2">
+              Anio
+              <select
+                value={systemAdminYear}
+                onChange={(e) => setSystemAdminYear(Number(e.target.value))}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {systemAdminYearOptions.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-muted-foreground flex items-center gap-2">
+              Salto semanas
+              <select
+                value={systemAdminWeekStep}
+                onChange={(e) => setSystemAdminWeekStep(Number(e.target.value))}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {[1, 2, 4, 8].map((step) => (
+                  <option key={step} value={step}>Cada {step}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : undefined}
       />
 
-      <RoleInfo roleKey={profile?.role_key} />
+      {!isSystemAdmin ? <RoleInfo roleKey={profile?.role_key} /> : null}
 
       {isEmployee ? (
         employeeLoading ? (
@@ -1038,8 +1026,6 @@ export function Dashboard() {
                 payload={systemAdminPayload}
                 selectedYear={systemAdminYear}
                 weekStep={systemAdminWeekStep}
-                onYearChange={setSystemAdminYear}
-                onWeekStepChange={setSystemAdminWeekStep}
               />
             )
           ) : null}

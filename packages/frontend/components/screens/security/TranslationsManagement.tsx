@@ -328,6 +328,9 @@ export default function TranslationsManagement() {
             </div>
           </div>
         </div>
+        <p className="mt-3 text-sm text-gray-600">
+          Mostrando {rows.length} de {rows.length} {ENTITY_LABELS[entityType].toLowerCase()}
+        </p>
       </div>
 
       {error && (

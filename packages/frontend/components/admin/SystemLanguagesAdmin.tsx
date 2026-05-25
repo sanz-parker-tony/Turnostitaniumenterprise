@@ -250,24 +250,22 @@ export default function SystemLanguagesAdmin() {
         )}
       />
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
-              <Input
-                placeholder="Buscar por código o nombre..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Badge variant="outline" className="text-sm">
-              {filteredLanguages.length} idioma(s)
-            </Badge>
-          </div>
-        </CardHeader>
+      <div className="rounded-lg border bg-white p-4">
+        <div className="relative max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+          <Input
+            placeholder="Buscar por código o nombre..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <p className="mt-3 text-sm text-gray-600">
+          Mostrando {filteredLanguages.length} de {languages.length} idiomas
+        </p>
+      </div>
 
+      <Card>
         <CardContent>
           <div className="border rounded-lg overflow-hidden">
             <Table>
