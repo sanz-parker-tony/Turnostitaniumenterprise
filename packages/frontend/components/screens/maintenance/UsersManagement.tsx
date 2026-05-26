@@ -899,7 +899,7 @@ export function UsersManagement() {
               <button
                 onClick={() => handleToggleUserStatus(selectedUser)}
                 disabled={togglingId === selectedUser.id}
-                className="p-1.5 rounded-lg text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 disabled:opacity-50"
+                className="p-1.5 rounded-lg border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                 title={selectedUser.is_active ? 'Desactivar' : 'Activar'}
               >
                 {selectedUser.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
@@ -1042,10 +1042,10 @@ export function UsersManagement() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleToggleUserRoleStatus(ur); }}
                                 disabled={togglingId === ur.id}
-                                className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                className="p-1 rounded border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                                 title={ur.is_active ? 'Desactivar' : 'Activar'}
                               >
-                                {ur.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                {ur.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                               </button>
                               <button
                                 onClick={(e) => {
@@ -1116,10 +1116,10 @@ export function UsersManagement() {
                                         <button
                                           onClick={() => handleToggleScopeStatus(scope)}
                                           disabled={togglingId === scope.id}
-                                          className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                          className="p-1 rounded border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                                           title={scope.is_active ? 'Desactivar' : 'Activar'}
                                         >
-                                          {scope.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                          {scope.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                                         </button>
                                       </div>
                                     </div>

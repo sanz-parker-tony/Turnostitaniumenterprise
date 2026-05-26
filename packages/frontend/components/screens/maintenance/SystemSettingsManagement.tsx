@@ -712,7 +712,7 @@ export function SystemSettingsManagement() {
                       {setting.allowed_lookup_group_name && <div className="text-xs text-gray-500 mt-1">Grupo: {setting.allowed_lookup_group_name}</div>}
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${setting.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${setting.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'}`}>
                         {setting.is_active ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>

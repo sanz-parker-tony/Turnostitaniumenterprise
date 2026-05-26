@@ -226,7 +226,7 @@ router.get('/', async (req: Request, res: Response) => {
           FROM public.work_patterns
           WHERE tenant_id = $1
             AND ($2::boolean = true OR is_active = true)
-          ORDER BY is_active DESC, pattern_name ASC
+          ORDER BY pattern_name ASC, id ASC
         `,
         [tenantId, includeInactive]
       ),

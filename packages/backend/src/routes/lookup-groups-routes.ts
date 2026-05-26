@@ -61,6 +61,69 @@ async function hasRole(ctx: AuthContext, roleKey: 'SYSTEM_ADMIN' | 'TENANT_ADMIN
   return result.rows.length > 0;
 }
 
+type TableReference = {
+  schema_name: string;
+  table_name: string;
+  column_name: string;
+  constraint_name: string;
+};
+
+function quoteIdent(value: string): string {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+async function getForeignKeyReferences(targetTable: string): Promise<TableReference[]> {
+  const result = await pool.query(
+    `
+      SELECT
+        ns.nspname AS schema_name,
+        cls.relname AS table_name,
+        att.attname AS column_name,
+        con.conname AS constraint_name
+      FROM pg_constraint con
+      JOIN pg_class cls
+        ON cls.oid = con.conrelid
+      JOIN pg_namespace ns
+        ON ns.oid = cls.relnamespace
+      JOIN unnest(con.conkey) WITH ORDINALITY AS cols(attnum, ord)
+        ON TRUE
+      JOIN pg_attribute att
+        ON att.attrelid = cls.oid
+       AND att.attnum = cols.attnum
+      WHERE con.contype = 'f'
+        AND con.confrelid = $1::regclass
+        AND ns.nspname NOT IN ('pg_catalog', 'information_schema')
+    `,
+    [targetTable]
+  );
+
+  return result.rows || [];
+}
+
+async function findReferenceUsage(targetTable: string, id: string, ignoreTables: string[] = []): Promise<{ table: string; count: number }[]> {
+  const refs = await getForeignKeyReferences(targetTable);
+  const blocked: { table: string; count: number }[] = [];
+  const ignoreSet = new Set(ignoreTables.map(t => t.toLowerCase()));
+
+  for (const ref of refs) {
+    const fqTable = `${ref.schema_name}.${ref.table_name}`;
+    if (ignoreSet.has(fqTable.toLowerCase())) continue;
+
+    const sql = `
+      SELECT COUNT(*)::int AS total
+      FROM ${quoteIdent(ref.schema_name)}.${quoteIdent(ref.table_name)}
+      WHERE ${quoteIdent(ref.column_name)} = $1
+    `;
+    const usageResult = await pool.query(sql, [id]);
+    const total = Number(usageResult.rows?.[0]?.total || 0);
+    if (total > 0) {
+      blocked.push({ table: fqTable, count: total });
+    }
+  }
+
+  return blocked;
+}
+
 // ============================================================================
 // GET /lookup-groups - Listar todos los grupos
 // ============================================================================
@@ -432,6 +495,97 @@ router.put('/:id', async (req: Request, res: Response) => {
 
   } catch (err) {
     console.error('[LOOKUP-GROUPS] Error en PUT /:id:', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// ============================================================================
+// DELETE /lookup-groups/:id - Eliminar grupo
+// ============================================================================
+
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const ctx = await resolveAuthContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+
+    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
+      hasRole(ctx, 'SYSTEM_ADMIN'),
+      hasRole(ctx, 'TENANT_ADMIN'),
+    ]);
+    if (!isSystemAdmin && !isTenantAdmin) {
+      return res.status(403).json({ error: 'No autorizado para eliminar grupos de catalogo' });
+    }
+
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'ID invalido' });
+
+    const Postgres = createDbClient(
+      process.env.Postgres_URL || '',
+      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    );
+
+    const { data: existingGroup, error: existingErr } = await Postgres
+      .from('lookup_groups')
+      .select('id, lookup_group_key, created_by')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (existingErr) return res.status(500).json({ error: existingErr.message });
+    if (!existingGroup) return res.status(404).json({ error: 'Grupo no encontrado' });
+
+    if (!isSystemAdmin) {
+      const ownerTag = `TENANT_ADMIN:${ctx.tenantId}`;
+      if (String(existingGroup.created_by || '') !== ownerTag) {
+        return res.status(403).json({
+          error: 'TENANT_ADMIN solo puede eliminar grupos de catalogo creados por su tenant',
+        });
+      }
+    }
+
+    const { data: relatedValues, error: valuesErr } = await Postgres
+      .from('lookup_values')
+      .select('id')
+      .eq('lookup_group_id', id);
+
+    if (valuesErr) return res.status(500).json({ error: valuesErr.message });
+    if (Array.isArray(relatedValues) && relatedValues.length > 0) {
+      return res.status(409).json({
+        error: `No se puede eliminar el grupo ${existingGroup.lookup_group_key} porque tiene valores asociados.`,
+      });
+    }
+
+    const usage = await findReferenceUsage('public.lookup_groups', id, ['public.lookup_values', 'public.lookup_group_translations']);
+    if (usage.length > 0) {
+      const usageText = usage
+        .map((u) => `${u.table} (${u.count})`)
+        .join(', ');
+      return res.status(409).json({
+        error: `No se puede eliminar el grupo porque esta en uso en: ${usageText}`,
+      });
+    }
+
+    const { error: deleteTranslationsErr } = await Postgres
+      .from('lookup_group_translations')
+      .delete()
+      .eq('lookup_group_id', id);
+
+    if (deleteTranslationsErr) {
+      return res.status(500).json({ error: deleteTranslationsErr.message });
+    }
+
+    const { error: deleteErr } = await Postgres
+      .from('lookup_groups')
+      .delete()
+      .eq('id', id);
+
+    if (deleteErr) return res.status(500).json({ error: deleteErr.message });
+
+    return res.status(200).json({
+      success: true,
+      message: `Grupo ${existingGroup.lookup_group_key} eliminado exitosamente`,
+    });
+  } catch (err) {
+    console.error('[LOOKUP-GROUPS] Error en DELETE /:id:', err);
     return res.status(500).json({ error: 'Error interno del servidor' });
   }
 });

@@ -44,7 +44,7 @@ const EMPTY_FORM = {
 
 const BADGE = {
   active: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800',
-  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500',
+  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700',
 };
 
 export function ScreensManagement() {
@@ -513,7 +513,7 @@ export function ScreensManagement() {
                               </div>
                             </div>
                             <button onClick={() => toggleScreenActionStatus(sa)}
-                              className="p-1.5 rounded-lg text-amber-700 bg-amber-100 border border-amber-300 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 transition-all duration-150"
+                              className="p-1.5 rounded-lg text-[#8B5E34] bg-[#F6ECDD] border border-[#D8BC9B] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150"
                               title={sa.is_active ? 'Desactivar' : 'Activar'}>
                               {sa.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                             </button>

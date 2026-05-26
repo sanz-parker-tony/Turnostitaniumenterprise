@@ -708,7 +708,7 @@ export function AttendanceEventsManagement() {
                           Activo
                         </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700">
+                        <span className="inline-flex items-center rounded-full px-2 py-1 text-xs font-medium bg-red-100 text-red-700">
                           Inactivo
                         </span>
                       )}
@@ -724,7 +724,7 @@ export function AttendanceEventsManagement() {
                         </button>
                         <button
                           onClick={() => handleToggleStatus(event)}
-                          className="inline-flex items-center justify-center rounded-md border border-amber-300 bg-amber-100 text-amber-700 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 h-8 w-8"
+                          className="inline-flex items-center justify-center rounded-md border border-[#D8BC9B] bg-[#F6ECDD] text-[#8B5E34] text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 h-8 w-8"
                           title={event.is_active ? 'Desactivar' : 'Activar'}
                         >
                           {event.is_active ? (

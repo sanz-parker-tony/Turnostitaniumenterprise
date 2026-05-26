@@ -1,10 +1,14 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Edit, Plus, RefreshCw, Save, Search, Tablet, Trash2, X } from 'lucide-react';
+import { Edit, Plus, Power, PowerOff, Save, Search, Tablet, Trash2, X } from 'lucide-react';
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMapEvents, useMap } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import GridActionIconButton from '../../shared/GridActionIconButton';
 
 interface CompanyRow {
   id: string;
@@ -379,6 +383,33 @@ export function DeviceManagement() {
     }
   };
 
+  const toggleDeviceStatus = async (row: DeviceRow) => {
+    setError(null);
+    setSuccess(null);
+    try {
+      await request(`/time-clock-devices/${row.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          company_id: row.company_id,
+          device_serial_number: row.device_serial_number || null,
+          device_name: row.device_name || row.device_serial_number || 'DISPOSITIVO',
+          device_ip: row.device_ip || null,
+          device_location: row.device_location || null,
+          device_model: row.device_model || null,
+          device_type_id: row.device_type_id || null,
+          work_location_id: row.work_location_id || null,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          is_active: !row.is_active,
+        }),
+      });
+      setSuccess(`Dispositivo ${row.is_active ? 'desactivado' : 'activado'} correctamente.`);
+      await loadData();
+    } catch (err: any) {
+      setError(err?.message || 'Error actualizando estado del dispositivo');
+    }
+  };
+
   const saveDevice = async () => {
     const payload = {
       company_id: form.company_id,
@@ -458,31 +489,46 @@ export function DeviceManagement() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Gestión de Dispositivos</h1>
-          <p className="text-muted-foreground mt-1">Administra los dispositivos de marcación (tablets, kioscos)</p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0]"
-        >
-          <Plus className="size-4" />
-          Registrar Dispositivo
-        </button>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={Tablet}
+        title="Gestión de Dispositivos"
+        subtitle="Administra los dispositivos de marcación (tablets, kioscos)"
+        rightSlot={(
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Información',
+                  text: 'Gestiona los dispositivos de marcación, su conectividad y su asignación a localidades.',
+                  variant: 'info',
+                },
+                {
+                  title: 'Warning',
+                  text: 'Antes de eliminar un dispositivo, verifica que no esté siendo usado en operación activa.',
+                  variant: 'warning',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={() => void loadData()} label="Actualizar" />
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
+            >
+              <Plus className="size-4" />
+              Registrar Dispositivo
+            </button>
+          </>
+        )}
+      />
 
       {error && <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
       <div className="rounded-lg border bg-white p-5">
-        <h2 className="mb-1 text-2xl font-semibold">Criterios de Búsqueda</h2>
-        <p className="text-muted-foreground mb-4">Filtrar dispositivos por descripción y estado</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div>
-            <label className="text-sm font-medium">Descripción</label>
-            <div className="relative mt-1">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
               <input
                 className="w-full rounded-md border py-2 pl-9 pr-3 text-sm"
@@ -497,30 +543,20 @@ export function DeviceManagement() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Estado</label>
             <select
-              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              className="w-full rounded-md border px-3 py-2 text-sm"
               value={statusFilter}
               onChange={(event) => {
                 setStatusFilter(event.target.value as 'all' | 'active' | 'inactive');
                 setPage(1);
               }}
             >
-              <option value="all">Todos</option>
+              <option value="all">Todos los estados</option>
               <option value="active">Activos</option>
               <option value="inactive">Inactivos</option>
             </select>
           </div>
 
-          <div className="flex items-end">
-            <button
-              onClick={() => void loadData()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm hover:bg-gray-50"
-            >
-              <RefreshCw className="size-4" />
-              Recargar
-            </button>
-          </div>
         </div>
       </div>
 
@@ -540,7 +576,7 @@ export function DeviceManagement() {
                 <th className="py-2 pr-3 text-left">Lat / Lng</th>
                 <th className="py-2 pr-3 text-left">Modelo</th>
                 <th className="py-2 pr-3 text-left">Estado</th>
-                <th className="py-2 text-left">Acciones</th>
+                <th className="w-[110px] py-2 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -571,27 +607,35 @@ export function DeviceManagement() {
                       {row.latitude !== null && row.longitude !== null ? `${row.latitude}, ${row.longitude}` : '-'}
                     </td>
                     <td className="py-3 pr-3">{row.device_model || '-'}</td>
-                    <td className="py-3 pr-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.is_active ? 'bg-green-600' : 'bg-gray-500'}`}>
+                    <td className="py-3 pr-3 whitespace-nowrap">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          row.is_active ? 'border-green-300 bg-green-50 text-green-700' : 'border-red-300 bg-red-50 text-red-700'
+                        }`}
+                      >
                         {row.is_active ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="py-3">
-                      <div className="flex items-center gap-2">
-                        <button
+                    <td className="py-3 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <GridActionIconButton
                           onClick={() => openEdit(row)}
-                          className="inline-flex items-center justify-center rounded border p-1.5 hover:bg-gray-100"
-                          title="Editar"
-                        >
-                          <Edit className="size-4" />
-                        </button>
-                        <button
+                          icon={<Edit className="size-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={() => void toggleDeviceStatus(row)}
+                          icon={row.is_active ? <PowerOff className="size-4" /> : <Power className="size-4" />}
+                          label={row.is_active ? 'Desactivar' : 'Activar'}
+                          tone={row.is_active ? 'red' : 'green'}
+                        />
+                        <GridActionIconButton
                           onClick={() => void removeDevice(row)}
-                          className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-700 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
+                          icon={<Trash2 className="size-4" />}
+                          label="Eliminar"
+                          tone="red"
+                        />
                       </div>
                     </td>
                   </tr>
@@ -654,7 +698,7 @@ export function DeviceManagement() {
                       longitude: '',
                     }))
                   }
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                 >
                   <option value="">Seleccione</option>
                   {companies.map((item) => (
@@ -674,7 +718,7 @@ export function DeviceManagement() {
                       longitude: '',
                     }))
                   }
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                 >
                   <option value="">Seleccione</option>
                   {workLocations
@@ -691,7 +735,7 @@ export function DeviceManagement() {
                 <select
                   value={form.device_type_id}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_type_id: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                 >
                   <option value="">Seleccione</option>
                   {deviceTypes.map((item) => (
@@ -706,7 +750,7 @@ export function DeviceManagement() {
                 <input
                   value={form.device_name}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_name: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                 />
               </div>
               <div>
@@ -714,7 +758,7 @@ export function DeviceManagement() {
                 <input
                   value={form.device_serial_number}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_serial_number: toUpperAlphanumeric(event.target.value) }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                   placeholder="ABC123"
                 />
                 <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>
@@ -724,7 +768,7 @@ export function DeviceManagement() {
                 <input
                   value={form.device_ip}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_ip: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                   placeholder="192.168.1.10"
                 />
                 <div className="mt-1 text-xs text-gray-500">Formato: x.x.x.x (cada valor 0-255)</div>
@@ -736,7 +780,7 @@ export function DeviceManagement() {
                 <input
                   value={form.device_location}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_location: event.target.value }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                 />
               </div>
               <div>
@@ -744,7 +788,7 @@ export function DeviceManagement() {
                 <input
                   value={form.device_model}
                   onChange={(event) => setForm((prev) => ({ ...prev, device_model: toUpperAlphanumeric(event.target.value) }))}
-                  className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+                  className="w-full rounded-md border px-3 py-2 text-sm"
                   placeholder="TABLET"
                 />
                 <div className="mt-1 text-xs text-gray-500">Permitido: A-Z, 0-9, "-" y "/"</div>

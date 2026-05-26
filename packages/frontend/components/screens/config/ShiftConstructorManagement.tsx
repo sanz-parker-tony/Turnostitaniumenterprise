@@ -9,7 +9,7 @@ import {
   ChevronDown,
   Clock3,
   Coffee,
-  Edit,
+  Edit2,
   Flame,
   Moon,
   Plus,
@@ -17,6 +17,8 @@ import {
   Save,
   Search,
   Shield,
+  Power,
+  PowerOff,
   Siren,
   Trash2,
   Truck,
@@ -26,6 +28,10 @@ import {
   X,
 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 type ShiftBlockType = 'ORDINARIA' | 'NOCTURNA' | 'EXTRA_50' | 'EXTRA_100' | 'LUNCH' | 'BREAK';
 
@@ -535,6 +541,21 @@ export function ShiftConstructorManagement() {
     }
   };
 
+  const toggleShiftStatus = async (shift: ShiftCatalogItem) => {
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      await request(`/organization/shifts/${shift.id}/status`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active: !shift.is_active }),
+      });
+      setSuccessMessage(`Turno ${shift.is_active ? 'desactivado' : 'activado'} correctamente.`);
+      await loadCatalogs();
+    } catch (err: any) {
+      setError(err?.message || 'Error actualizando estado del turno');
+    }
+  };
+
   const openNewBlockModal = (type?: ShiftBlockType) => {
     const nextSort = sortedBlocks.length > 0 ? sortedBlocks[sortedBlocks.length - 1].sort_order + 10 : 10;
     setBlockForm(makeNewBlockFormState(nextSort, type || 'ORDINARIA'));
@@ -887,20 +908,38 @@ export function ShiftConstructorManagement() {
   }, [sortedBlocks]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Constructor de Turnos</h1>
-          <p className="text-muted-foreground mt-1">Gestión de horarios y turnos laborales</p>
-        </div>
-        <button
-          onClick={() => void loadCatalogs()}
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
-        >
-          <RefreshCw className="size-4" />
-          Recargar
-        </button>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={Clock3}
+        title="Constructor de Turnos"
+        subtitle="Gestión de horarios y turnos laborales"
+        rightSlot={(
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Seguridad',
+                  text: 'Solo usuarios con permisos de configuración pueden crear o modificar turnos.',
+                  variant: 'security',
+                },
+                {
+                  title: 'Tip de configuración',
+                  text: 'Define turnos por bloques horarios y luego asigna esos turnos a patrones y calendarios.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={() => void loadCatalogs()} />
+            <button
+              onClick={openCreateShiftBuilder}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
+            >
+              <Plus className="size-4" />
+              Nuevo Turno
+            </button>
+          </>
+        )}
+      />
 
       {error && !builderOpen && !showBlockModal && (
         <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">{error}</div>
@@ -910,12 +949,9 @@ export function ShiftConstructorManagement() {
       )}
 
       <div className="rounded-lg border bg-white p-5">
-        <h2 className="text-2xl font-semibold mb-1">Criterios de Búsqueda</h2>
-        <p className="text-muted-foreground mb-4">Filtrar turnos por descripción y estado</p>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
-            <label className="text-sm font-medium">Descripción</label>
-            <div className="relative mt-1">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
               <input
                 className="w-full border rounded-md pl-9 pr-3 py-2 text-sm"
@@ -930,58 +966,45 @@ export function ShiftConstructorManagement() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Estado</label>
             <select
-              className="w-full border rounded-md px-3 py-2 text-sm mt-1"
+              className="w-full border rounded-md px-3 py-2 text-sm"
               value={statusFilter}
               onChange={(event) => {
                 setStatusFilter(event.target.value as 'all' | 'active' | 'inactive');
                 setPage(1);
               }}
             >
-              <option value="all">Todos</option>
+              <option value="all">Todos los estados</option>
               <option value="active">Activos</option>
               <option value="inactive">Inactivos</option>
             </select>
           </div>
 
           <div>
-            <label className="text-sm font-medium">Exportar</label>
-            <button className="w-full border rounded-md px-3 py-2 text-sm mt-1 text-gray-500 bg-gray-50" disabled>
+            <button className="w-full border rounded-md px-3 py-2 text-sm text-gray-500 bg-gray-50" disabled>
               Exportar
             </button>
           </div>
         </div>
+        <div className="mt-3 text-sm text-gray-600">
+          Mostrando {pagedShifts.length} de {filteredShifts.length} turnos
+        </div>
       </div>
 
       <div className="rounded-lg border bg-white p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-2xl font-semibold mb-1">Turnos de Trabajo</h2>
-            <p className="text-muted-foreground">Configuración de horarios y turnos laborales</p>
-          </div>
-          <button
-            onClick={openCreateShiftBuilder}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#0074D9] text-white text-sm hover:bg-[#0066C0]"
-          >
-            <Plus className="size-4" />
-            Crear Turno
-          </button>
-        </div>
-
         <div className="overflow-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b">
-                <th className="text-left py-2 pr-3">ID</th>
-                <th className="text-left py-2 pr-3">Nombre</th>
-                <th className="text-left py-2 pr-3">Código</th>
-                <th className="text-left py-2 pr-3">Ícono</th>
-                <th className="text-left py-2 pr-3">Color fondo</th>
-                <th className="text-left py-2 pr-3">Horas Totales</th>
-                <th className="text-left py-2 pr-3">Horas Lunch</th>
-                <th className="text-left py-2 pr-3">Estado</th>
-                <th className="text-left py-2">Acciones</th>
+                <th className="text-center py-2 px-2">ID</th>
+                <th className="text-center py-2 px-2">Nombre</th>
+                <th className="text-center py-2 px-2">Código</th>
+                <th className="text-center py-2 px-2">Ícono</th>
+                <th className="text-center py-2 px-2">Color fondo</th>
+                <th className="text-center py-2 px-2">Horas Totales</th>
+                <th className="text-center py-2 px-2">Horas Lunch</th>
+                <th className="text-center py-2 px-2">Estado</th>
+                <th className="text-center py-2 px-2">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -1000,12 +1023,12 @@ export function ShiftConstructorManagement() {
                     className="border-b hover:bg-gray-50 cursor-pointer"
                     onClick={() => void openEditShiftBuilder(shift)}
                   >
-                    <td className="py-3 pr-3 text-gray-600">{(page - 1) * PAGE_SIZE + index + 1}</td>
-                    <td className="py-3 pr-3">{shift.shift_name}</td>
-                    <td className="py-3 pr-3">
+                    <td className="py-3 px-2 text-center text-gray-600">{(page - 1) * PAGE_SIZE + index + 1}</td>
+                    <td className="py-3 px-2 text-center">{shift.shift_name}</td>
+                    <td className="py-3 px-2 text-center">
                       <span className="px-2 py-0.5 rounded-full border text-xs">{shift.shift_short_name}</span>
                     </td>
-                    <td className="py-3 pr-3">
+                    <td className="py-3 px-2 text-center">
                       {(() => {
                         const iconMeta = SHIFT_ICON_MAP[shift.shift_icon_key || ''] || SHIFT_ICON_MAP.Sun;
                         const IconPreview = iconMeta.Icon;
@@ -1017,7 +1040,7 @@ export function ShiftConstructorManagement() {
                         );
                       })()}
                     </td>
-                    <td className="py-0 pr-3">
+                    <td className="py-0 px-2 text-center">
                       {(() => {
                         const bgColor = shift.shift_bg_color || SHIFT_ICON_MAP[shift.shift_icon_key || '']?.bg || '#F1F5F9';
                         const textColor = getReadableTextColor(bgColor);
@@ -1032,35 +1055,46 @@ export function ShiftConstructorManagement() {
                         );
                       })()}
                     </td>
-                    <td className="py-3 pr-3">{(shift.work_minutes / 60).toFixed(shift.work_minutes % 60 === 0 ? 0 : 1)}h</td>
-                    <td className="py-3 pr-3">{(shift.lunch_minutes / 60).toFixed(shift.lunch_minutes % 60 === 0 ? 0 : 1)}h</td>
-                    <td className="py-3 pr-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs text-white ${shift.is_active ? 'bg-green-600' : 'bg-gray-500'}`}>
+                    <td className="py-3 px-2 text-center">{(shift.work_minutes / 60).toFixed(shift.work_minutes % 60 === 0 ? 0 : 1)}h</td>
+                    <td className="py-3 px-2 text-center">{(shift.lunch_minutes / 60).toFixed(shift.lunch_minutes % 60 === 0 ? 0 : 1)}h</td>
+                    <td className="py-3 px-2 text-center">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          shift.is_active ? 'border-green-300 bg-green-50 text-green-700' : 'border-red-300 bg-red-50 text-red-700'
+                        }`}
+                      >
                         {shift.is_active ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="py-3">
-                      <div className="flex items-center gap-2">
-                        <button
+                    <td className="py-3 px-2">
+                      <div className="flex items-center justify-center gap-2">
+                        <GridActionIconButton
                           onClick={(event) => {
                             event.stopPropagation();
                             void openEditShiftBuilder(shift);
                           }}
-                          className="inline-flex items-center justify-center p-1.5 rounded border hover:bg-gray-100"
-                          title="Editar"
-                        >
-                          <Edit className="size-4" />
-                        </button>
-                        <button
+                          icon={<Edit2 className="size-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void toggleShiftStatus(shift);
+                          }}
+                          icon={shift.is_active ? <PowerOff className="size-4" /> : <Power className="size-4" />}
+                          label={shift.is_active ? 'Desactivar' : 'Activar'}
+                          tone={shift.is_active ? 'red' : 'green'}
+                        />
+                        <GridActionIconButton
                           onClick={(event) => {
                             event.stopPropagation();
                             void removeShift(shift);
                           }}
-                          className="inline-flex items-center justify-center p-1.5 rounded border text-red-700 border-red-200 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
+                          icon={<Trash2 className="size-4" />}
+                          label="Eliminar"
+                          tone="red"
+                        />
                       </div>
                     </td>
                   </tr>
@@ -1412,7 +1446,7 @@ export function ShiftConstructorManagement() {
                                     className="inline-flex items-center justify-center p-1.5 rounded border text-xs hover:bg-gray-100"
                                     title="Editar bloque"
                                   >
-                                    <Edit className="size-3" />
+                                    <Edit2 className="size-3" />
                                   </button>
                                   <button
                                     onClick={(event) => {

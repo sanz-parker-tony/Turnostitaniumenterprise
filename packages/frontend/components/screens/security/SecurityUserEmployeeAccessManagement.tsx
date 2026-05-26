@@ -1,12 +1,12 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { UsersRound } from 'lucide-react';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 
 type TargetRoleKey = 'SUPERVISOR' | 'RRHH_ADMIN' | 'RHADMIN';
 
@@ -69,6 +69,16 @@ const SCOPE_FILTER_CONFIG: Array<{ key: ScopeFilterKey; label: string }> = [
   { key: 'employee_profile_id', label: 'Perfil' },
 ];
 
+const SCOPE_FILTER_DEFAULT_LABELS: Record<ScopeFilterKey, string> = {
+  company_id: 'Todas las empresas',
+  work_location_id: 'Todas las localizaciones',
+  department_id: 'Todos los departamentos',
+  area_id: 'Todas las áreas',
+  cost_center_id: 'Todos los centros de costo',
+  work_group_id: 'Todos los grupos de trabajo',
+  employee_profile_id: 'Todos los perfiles',
+};
+
 function employeeLabel(e: EmployeeRow): string {
   const full = `${e.employee_lastname || ''} ${e.employee_name || ''}`.trim();
   return `${full}${e.employee_code ? ` (${e.employee_code})` : ''}`;
@@ -78,7 +88,6 @@ export default function SecurityUserEmployeeAccessManagement() {
   const { session } = useAuth();
   const [targets, setTargets] = useState<Target[]>([]);
   const [selectedUserRoleId, setSelectedUserRoleId] = useState('');
-  const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [capabilities, setCapabilities] = useState<EmployeeAccessCapabilities>({
@@ -115,8 +124,6 @@ export default function SecurityUserEmployeeAccessManagement() {
 
   const token = session?.access_token || '';
 
-  const selectedTarget = useMemo(() => targets.find((t) => t.user_role_id === selectedUserRoleId) || null, [targets, selectedUserRoleId]);
-
   useEffect(() => {
     void loadTargets();
   }, [token]);
@@ -132,7 +139,7 @@ export default function SecurityUserEmployeeAccessManagement() {
       void loadEmployeeLists(selectedUserRoleId);
     }, 300);
     return () => clearTimeout(h);
-  }, [search, activeFilters, selectedUserRoleId]);
+  }, [activeFilters, selectedUserRoleId]);
 
   async function authorizedFetch(path: string, init?: RequestInit): Promise<Response> {
     if (!token) throw new Error('Sesión no disponible');
@@ -209,7 +216,6 @@ export default function SecurityUserEmployeeAccessManagement() {
 
   async function loadEmployeeLists(userRoleId: string) {
     const query = new URLSearchParams();
-    if (search.trim()) query.set('search', search.trim());
     for (const cfg of SCOPE_FILTER_CONFIG) {
       const value = activeFilters[cfg.key];
       if (value) query.set(cfg.key, value);
@@ -288,74 +294,67 @@ export default function SecurityUserEmployeeAccessManagement() {
     return next;
   }
 
-  function clearScopeFilters() {
-    setActiveFilters({
-      company_id: '',
-      work_location_id: '',
-      department_id: '',
-      area_id: '',
-      cost_center_id: '',
-      work_group_id: '',
-      employee_profile_id: '',
-    });
-  }
-
   return (
-    <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+    <div className="p-6 max-w-full flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
       <SystemAdminPageHeader
         icon={UsersRound}
-        title="Acceso de Empleados"
+        title="Autorización Empleados por Usuario"
         subtitle="Autoriza o revoca acceso explicito de empleados por supervisor o rol"
+        rightSlot={
+          <HeaderInfoTips
+            items={[
+              {
+                title: 'Información',
+                text: 'El usuario objetivo corresponde únicamente a supervisores y administradores de RRHH.',
+                variant: 'info',
+              },
+              {
+                title: 'Tip',
+                text: 'Los filtros muestran únicamente valores disponibles en los alcances guardados del usuario seleccionado.',
+                variant: 'tip',
+              },
+              {
+                title: 'Advertencia',
+                text: 'Esta pantalla administra asignación explícita de empleados por supervisor/rol, independiente de la estructura de alcances.',
+                variant: 'warning',
+              },
+            ]}
+          />
+        }
       />
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-slate-600">Usuario objetivo</label>
-          <select
-            className="w-full rounded-md border border-slate-300 p-2 text-sm"
-            value={selectedUserRoleId}
-            onChange={(e) => setSelectedUserRoleId(e.target.value)}
-            disabled={isLoading || isSaving}
-          >
-            {targets.length === 0 ? <option value="">Sin usuarios objetivo</option> : null}
-            {targets.map((target) => (
-              <option key={target.user_role_id} value={target.user_role_id}>
-                {(target.display_name?.trim() || target.username)} ({target.role_key})
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs font-medium text-slate-600">Buscar empleado</label>
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nombre o código" />
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="grid grid-cols-1 gap-3">
+          <div>
+            <select
+              className="w-full rounded-md border border-slate-300 p-2 text-sm"
+              value={selectedUserRoleId}
+              onChange={(e) => setSelectedUserRoleId(e.target.value)}
+              disabled={isLoading || isSaving}
+            >
+              {targets.length === 0 ? <option value="">Sin usuarios objetivo</option> : null}
+              {targets.map((target) => (
+                <option key={target.user_role_id} value={target.user_role_id}>
+                  {(target.display_name?.trim() || target.username)} ({target.role_key})
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
-      {selectedTarget ? (
-        <div className="text-xs text-slate-500">
-          Gestionando acceso para: <span className="font-medium text-slate-700">{selectedTarget.role_name}</span> · {selectedTarget.username}
-        </div>
-      ) : null}
-
       <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="text-sm font-semibold text-slate-800">Filtros por alcance guardado</div>
-          <Button variant="outline" size="sm" onClick={clearScopeFilters} disabled={isLoading || isSaving}>
-            Limpiar filtros
-          </Button>
-        </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           {SCOPE_FILTER_CONFIG.map((cfg) => {
             const options = scopeFilterOptions[cfg.key];
             return (
               <div key={cfg.key}>
-                <label className="mb-1 block text-xs font-medium text-slate-600">{cfg.label}</label>
                 <select
                   className="w-full rounded-md border border-slate-300 p-2 text-sm"
                   value={activeFilters[cfg.key]}
                   onChange={(e) => setActiveFilters((prev) => ({ ...prev, [cfg.key]: e.target.value }))}
                   disabled={isLoading || isSaving || options.length === 0}
                 >
-                  <option value="">Todos</option>
+                  <option value="">{SCOPE_FILTER_DEFAULT_LABELS[cfg.key]}</option>
                   {options.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.name}
@@ -365,9 +364,6 @@ export default function SecurityUserEmployeeAccessManagement() {
               </div>
             );
           })}
-        </div>
-        <div className="mt-2 text-xs text-slate-500">
-          Los filtros muestran solo valores previamente guardados en el alcance del usuario seleccionado.
         </div>
       </div>
 
@@ -446,9 +442,6 @@ export default function SecurityUserEmployeeAccessManagement() {
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-10 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-        Nota: esta pantalla administra asignacion explicita de empleados por supervisor/rol, independiente de la estructura de alcances.
-      </div>
     </div>
   );
 }

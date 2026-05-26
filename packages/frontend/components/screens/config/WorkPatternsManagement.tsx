@@ -1,9 +1,13 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, CircleDot, Edit, Minus, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, CircleDot, Clock3, Edit, Minus, Plus, Power, PowerOff, Save, Search, Trash2, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
+import GridActionIconButton from '../../shared/GridActionIconButton';
 
 interface WorkPatternShiftRow {
   id?: string;
@@ -277,6 +281,47 @@ export function WorkPatternsManagement() {
     }
   };
 
+  const togglePatternStatus = async (row: WorkPatternRow) => {
+    setError(null);
+    setSuccess(null);
+    const nextIsActive = !row.is_active;
+    try {
+      await request(`/work-patterns/${row.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          pattern_name: row.pattern_name,
+          pattern_short_name: row.pattern_short_name,
+          cycle_length_days: row.cycle_length_days,
+          work_days_per_cycle: row.work_days_per_cycle,
+          rest_days_per_cycle: row.rest_days_per_cycle,
+          daily_work_minutes: row.daily_work_minutes,
+          weekly_work_minutes_target: row.weekly_work_minutes_target,
+          is_flexible: row.is_flexible,
+          is_active: nextIsActive,
+          pattern_shifts: (row.pattern_shifts || []).map((item, index) => ({
+            shift_id: item.shift_id,
+            sequence_number: item.sequence_number || index + 1,
+            cycle_day_number: item.cycle_day_number || index + 1,
+            is_active: item.is_active !== false,
+          })),
+        }),
+      });
+      setPatterns((prev) =>
+        prev.map((pattern) =>
+          pattern.id === row.id
+            ? {
+                ...pattern,
+                is_active: nextIsActive,
+              }
+            : pattern
+        )
+      );
+      setSuccess(`Patrón ${row.is_active ? 'desactivado' : 'activado'} correctamente.`);
+    } catch (err: any) {
+      setError(err?.message || 'Error actualizando estado del patrón');
+    }
+  };
+
   const savePattern = async () => {
     const cycleLength = toInt(form.cycle_length_days);
     const workDays = toInt(form.work_days_per_cycle);
@@ -357,31 +402,46 @@ export function WorkPatternsManagement() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Patrones de Trabajo</h1>
-          <p className="text-muted-foreground mt-1">Administración de ciclos de trabajo y descanso</p>
-        </div>
-        <button
-          onClick={() => void loadPatterns()}
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
-        >
-          <RefreshCw className="size-4" />
-          Recargar
-        </button>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={Clock3}
+        title="Patrones de Trabajo"
+        subtitle="Administración de ciclos de trabajo y descanso"
+        rightSlot={(
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Seguridad',
+                  text: 'Solo usuarios autorizados pueden crear, modificar o eliminar patrones de trabajo.',
+                  variant: 'security',
+                },
+                {
+                  title: 'Tip',
+                  text: 'Define patrones consistentes para facilitar asignaciones, calendarios y cálculo de jornadas.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={() => void loadPatterns()} />
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
+            >
+              <Plus className="size-4" />
+              Nuevo Patrón
+            </button>
+          </>
+        )}
+      />
 
       {error && <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
       <div className="rounded-lg border bg-white p-5">
-        <h2 className="mb-1 text-2xl font-semibold">Criterios de Búsqueda</h2>
-        <p className="text-muted-foreground mb-4">Filtrar patrones por nombre, código y estado</p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div>
-            <label className="text-sm font-medium">Descripción</label>
-            <div className="relative mt-1">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
               <input
                 className="w-full rounded-md border py-2 pl-9 pr-3 text-sm"
@@ -396,49 +456,44 @@ export function WorkPatternsManagement() {
           </div>
 
           <div>
-            <label className="text-sm font-medium">Estado</label>
             <select
-              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              className="w-full rounded-md border px-3 py-2 text-sm"
               value={statusFilter}
               onChange={(event) => {
                 setStatusFilter(event.target.value as 'all' | 'active' | 'inactive');
                 setPage(1);
               }}
             >
-              <option value="all">Todos</option>
+              <option value="all">Todos los estados</option>
               <option value="active">Activos</option>
               <option value="inactive">Inactivos</option>
             </select>
           </div>
 
-          <div className="flex items-end">
-            <button
-              onClick={openCreate}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0]"
-            >
-              <Plus className="size-4" />
-              Nuevo Patrón
+          <div>
+            <button className="w-full border rounded-md px-3 py-2 text-sm text-gray-500 bg-gray-50" disabled>
+              Exportar
             </button>
           </div>
         </div>
+        <div className="mt-3 text-sm text-gray-600">Mostrando {paged.length} de {filtered.length} patrones</div>
       </div>
 
       <div className="rounded-lg border bg-white p-5">
-        <h2 className="mb-4 text-2xl font-semibold">Listado de Patrones</h2>
         <div className="overflow-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b">
-                <th className="py-2 pr-3 text-left">Nombre</th>
-                <th className="py-2 pr-3 text-left">Código</th>
-                <th className="py-2 pr-3 text-left">Ciclo</th>
-                <th className="py-2 pr-3 text-left">Trabajo/Descanso</th>
-                <th className="py-2 pr-3 text-left">Secuencia</th>
-                <th className="py-2 pr-3 text-left">Min Día</th>
-                <th className="py-2 pr-3 text-left">Meta Semanal</th>
-                <th className="py-2 pr-3 text-left">Flexible</th>
-                <th className="py-2 pr-3 text-left">Estado</th>
-                <th className="py-2 text-left">Acciones</th>
+                <th className="py-2 px-2 text-center">Nombre</th>
+                <th className="py-2 px-2 text-center">Código</th>
+                <th className="py-2 px-2 text-center">Ciclo</th>
+                <th className="py-2 px-2 text-center">Trabajo/Descanso</th>
+                <th className="py-2 px-2 text-center">Secuencia</th>
+                <th className="py-2 px-2 text-center">Min Día</th>
+                <th className="py-2 px-2 text-center">Meta Semanal</th>
+                <th className="py-2 px-2 text-center">Flexible</th>
+                <th className="py-2 px-2 text-center">Estado</th>
+                <th className="py-2 px-2 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -453,35 +508,43 @@ export function WorkPatternsManagement() {
               ) : (
                 paged.map((row) => (
                   <tr key={row.id} className="border-b hover:bg-gray-50">
-                    <td className="py-3 pr-3">{row.pattern_name}</td>
-                    <td className="py-3 pr-3"><span className="rounded-full border px-2 py-0.5 text-xs">{row.pattern_short_name}</span></td>
-                    <td className="py-3 pr-3">{row.cycle_length_days} días</td>
-                    <td className="py-3 pr-3">{row.work_days_per_cycle}/{row.rest_days_per_cycle}</td>
-                    <td className="py-3 pr-3">{row.pattern_shifts?.length || 0} turnos</td>
-                    <td className="py-3 pr-3">{row.daily_work_minutes}</td>
-                    <td className="py-3 pr-3">{row.weekly_work_minutes_target}</td>
-                    <td className="py-3 pr-3">{row.is_flexible ? 'Sí' : 'No'}</td>
-                    <td className="py-3 pr-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs text-white ${row.is_active ? 'bg-green-600' : 'bg-gray-500'}`}>
+                    <td className="py-3 px-2 text-center">{row.pattern_name}</td>
+                    <td className="py-3 px-2 text-center"><span className="rounded-full border px-2 py-0.5 text-xs">{row.pattern_short_name}</span></td>
+                    <td className="py-3 px-2 text-center">{row.cycle_length_days} días</td>
+                    <td className="py-3 px-2 text-center">{row.work_days_per_cycle}/{row.rest_days_per_cycle}</td>
+                    <td className="py-3 px-2 text-center">{row.pattern_shifts?.length || 0} turnos</td>
+                    <td className="py-3 px-2 text-center">{row.daily_work_minutes}</td>
+                    <td className="py-3 px-2 text-center">{row.weekly_work_minutes_target}</td>
+                    <td className="py-3 px-2 text-center">{row.is_flexible ? 'Sí' : 'No'}</td>
+                    <td className="py-3 px-2 text-center">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          row.is_active ? 'border-green-300 bg-green-50 text-green-700' : 'border-red-300 bg-red-50 text-red-700'
+                        }`}
+                      >
                         {row.is_active ? 'Activo' : 'Inactivo'}
                       </span>
                     </td>
-                    <td className="py-3">
-                      <div className="flex items-center gap-2">
-                        <button
+                    <td className="py-3 px-2">
+                      <div className="flex items-center justify-center gap-2">
+                        <GridActionIconButton
                           onClick={() => openEdit(row)}
-                          className="inline-flex items-center justify-center rounded border p-1.5 hover:bg-gray-100"
-                          title="Editar"
-                        >
-                          <Edit className="size-4" />
-                        </button>
-                        <button
+                          icon={<Edit className="size-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={() => void togglePatternStatus(row)}
+                          icon={row.is_active ? <PowerOff className="size-4" /> : <Power className="size-4" />}
+                          label={row.is_active ? 'Desactivar' : 'Activar'}
+                          tone={row.is_active ? 'red' : 'green'}
+                        />
+                        <GridActionIconButton
                           onClick={() => void removePattern(row)}
-                          className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-700 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="size-4" />
-                        </button>
+                          icon={<Trash2 className="size-4" />}
+                          label="Eliminar"
+                          tone="red"
+                        />
                       </div>
                     </td>
                   </tr>

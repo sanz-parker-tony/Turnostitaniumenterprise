@@ -2,17 +2,20 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
   MapPin,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
   Trash2,
   X,
 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
 
 interface OptionItem {
   id: string;
@@ -512,36 +515,31 @@ export function CalendarManagement() {
   while (calendarCells.length % 7 !== 0) calendarCells.push(null);
 
   return (
-    <div className="space-y-6 w-full">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Gestion de Calendarios</h1>
-          <p className="text-muted-foreground mt-1">
-            Clic en un feriado para editarlo o en un espacio libre del dia para agregar uno nuevo
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-700">
-            <span className="font-semibold">Alcance:</span>
-            <span className="inline-flex items-center rounded border border-blue-300 bg-blue-100 px-2 py-0.5 text-blue-900">
-              Nacional
-            </span>
-            <span className="inline-flex items-center rounded border border-green-300 bg-green-100 px-2 py-0.5 text-green-900">
-              Provincia/Estado
-            </span>
-            <span className="inline-flex items-center rounded border border-yellow-300 bg-yellow-100 px-2 py-0.5 text-yellow-900">
-              Ciudad
-            </span>
-          </div>
-          <button
-            onClick={() => void loadMonth()}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
-          >
-            <RefreshCw className="size-4" />
-            Recargar
-          </button>
-        </div>
-      </div>
+    <div className="p-6 max-w-full space-y-6 w-full">
+      <SystemAdminPageHeader
+        icon={CalendarDays}
+        title="Gestión de Calendarios"
+        subtitle="Clic en un feriado para editarlo o en un espacio libre del día para agregar uno nuevo"
+        rightSlot={
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  variant: 'info',
+                  title: 'Alcances de calendario',
+                  text: 'Nacional aplica a todo el país, Provincial/Estado restringe por provincia, y Ciudad aplica únicamente a la ciudad seleccionada.',
+                },
+                {
+                  variant: 'tip',
+                  title: 'Tip de uso',
+                  text: 'Haz clic en un día vacío para crear un calendario y sobre un registro existente para editarlo.',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={() => void loadMonth()} loading={loading} />
+          </>
+        }
+      />
 
       {error && (
         <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">
@@ -552,16 +550,15 @@ export function CalendarManagement() {
       <div className="rounded-lg border bg-white p-4 space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
           <div>
-            <label className="text-xs font-medium text-gray-700">Empresa</label>
             <select
               value={selectedCompanyId}
               onChange={(event) => {
                 setSelectedCompanyId(event.target.value);
                 setSelectedWorkLocationId('');
               }}
-              className="w-full border rounded px-2 py-1.5 text-sm"
+              className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">-- Todas --</option>
+              <option value="">Todas las empresas</option>
               {companies.map((company) => (
                 <option key={company.id} value={company.id}>
                   {optionLabel(company)}
@@ -571,13 +568,12 @@ export function CalendarManagement() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-700">Localizacion</label>
             <select
               value={selectedWorkLocationId}
               onChange={(event) => setSelectedWorkLocationId(event.target.value)}
-              className="w-full border rounded px-2 py-1.5 text-sm"
+              className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">-- Todas --</option>
+              <option value="">Todas las localizaciones</option>
               {locationFilteredWorkLocations.map((location) => (
                 <option key={location.id} value={location.id}>
                   {optionLabel(location)}
@@ -587,7 +583,6 @@ export function CalendarManagement() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-700">Pais</label>
             <select
               value={selectedCountryId}
               onChange={(event) => {
@@ -597,9 +592,9 @@ export function CalendarManagement() {
                 setSelectedCityId('');
                 void loadLocationCatalogs(nextCountry, '');
               }}
-              className="w-full border rounded px-2 py-1.5 text-sm"
+              className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">-- Todos --</option>
+              <option value="">Todos los países</option>
               {countries.map((country) => (
                 <option key={country.id} value={country.id}>
                   {optionLabel(country)}
@@ -609,7 +604,6 @@ export function CalendarManagement() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-700">Provincia/Estado</label>
             <select
               value={selectedStateId}
               onChange={(event) => {
@@ -618,9 +612,9 @@ export function CalendarManagement() {
                 setSelectedCityId('');
                 void loadLocationCatalogs(selectedCountryId, nextState);
               }}
-              className="w-full border rounded px-2 py-1.5 text-sm"
+              className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">-- Todas --</option>
+              <option value="">Todas las provincias</option>
               {states.map((state) => (
                 <option key={state.id} value={state.id}>
                   {optionLabel(state)}
@@ -630,13 +624,12 @@ export function CalendarManagement() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-700">Ciudad</label>
             <select
               value={selectedCityId}
               onChange={(event) => setSelectedCityId(event.target.value)}
-              className="w-full border rounded px-2 py-1.5 text-sm"
+              className="w-full border rounded px-3 py-2 text-sm"
             >
-              <option value="">-- Todas --</option>
+              <option value="">Todas las ciudades</option>
               {cities.map((city) => (
                 <option key={city.id} value={city.id}>
                   {optionLabel(city)}
@@ -666,7 +659,7 @@ export function CalendarManagement() {
           </button>
         </div>
 
-        <div className="grid grid-cols-7 gap-2 mb-2">
+        <div className="grid grid-cols-7 gap-2 mb-2 shrink-0">
           {WEEK_DAYS.map((day) => (
             <div key={day} className="text-center text-xs font-semibold text-gray-600 py-1">
               {day}
@@ -676,13 +669,13 @@ export function CalendarManagement() {
         {loading ? (
           <div className="py-10 text-center text-gray-500">Cargando calendario...</div>
         ) : (
-          <div className="grid grid-cols-7 gap-2">
+          <div className="grid grid-cols-7 gap-2 auto-rows-[minmax(10.5rem,auto)]">
             {calendarCells.map((day, index) => {
               if (!day) {
                 return (
                   <div
                     key={`empty-${index}`}
-                    className="h-24 rounded-md border border-transparent bg-transparent"
+                    className="min-h-[10.5rem] rounded-md border border-transparent bg-transparent"
                   />
                 );
               }
@@ -702,7 +695,7 @@ export function CalendarManagement() {
                 <div
                   key={dateKey}
                   onClick={() => openAddModalForDay(day)}
-                  className={`h-32 rounded-md border p-2 text-left transition ${
+                  className={`min-h-[10.5rem] rounded-md border p-2 text-left transition flex flex-col ${
                     hasHoliday
                       ? 'border-blue-400 bg-blue-50 hover:bg-blue-100'
                       : 'border-gray-200 bg-white hover:bg-gray-50'
@@ -731,7 +724,7 @@ export function CalendarManagement() {
                     )}
                   </div>
 
-                  <div className="mt-1 space-y-1 overflow-y-auto max-h-20 pr-0.5">
+                  <div className="mt-1 space-y-1 overflow-y-auto min-h-0 flex-1 pr-0.5">
                     {dayItems.map((item) => {
                       const holidayText =
                         String(item.holiday_name || '').trim() || '(Sin nombre)';
@@ -783,7 +776,7 @@ export function CalendarManagement() {
                   setModalOpen(false);
                   setModalError(null);
                 }}
-                className="p-1.5 rounded hover:bg-gray-200"
+                className="inline-flex h-9 w-9 items-center justify-center rounded border border-transparent hover:bg-gray-200"
                 title="Cerrar"
               >
                 <X className="size-4" />
@@ -801,7 +794,7 @@ export function CalendarManagement() {
                   <div className="text-xs font-semibold text-gray-700">Registros del dia</div>
                   <button
                     onClick={() => resetFormForDate(selectedDate)}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded border text-xs hover:bg-gray-100"
+                    className="inline-flex h-9 items-center gap-1 px-3 rounded-md border border-blue-600 bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 hover:border-blue-700 hover:shadow-sm transition-all duration-150"
                   >
                     <Plus className="size-3" />
                     Nuevo en esta fecha
@@ -832,7 +825,7 @@ export function CalendarManagement() {
                         </div>
                         <button
                           onClick={() => fillFormFromHoliday(row)}
-                          className="inline-flex items-center justify-center p-1.5 rounded border hover:bg-gray-100"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded border hover:bg-gray-100"
                           title="Editar registro"
                         >
                           <Pencil className="size-3" />
@@ -1049,7 +1042,7 @@ export function CalendarManagement() {
                   <button
                     onClick={handleDelete}
                     disabled={saving}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-red-300 text-red-700 text-sm hover:bg-red-50 disabled:opacity-50"
+                    className="inline-flex h-9 items-center gap-2 px-3 rounded-md border border-red-300 bg-red-100 text-red-700 text-sm font-medium hover:bg-red-200 hover:border-red-400 hover:text-red-800 hover:shadow-sm transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="size-4" />
                     Eliminar
@@ -1062,7 +1055,7 @@ export function CalendarManagement() {
                     setModalOpen(false);
                     setModalError(null);
                   }}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-100"
+                  className="inline-flex h-9 items-center gap-2 px-3 rounded-md border border-gray-300 bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 hover:text-gray-900 hover:border-gray-400 hover:shadow-sm transition-all duration-150"
                 >
                   <X className="size-4" />
                   Cancelar
@@ -1070,7 +1063,7 @@ export function CalendarManagement() {
                 <button
                   onClick={handleSave}
                   disabled={saving}
-                  className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+                  className="inline-flex h-9 items-center gap-2 px-3 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
                 >
                   <Save className="size-4" />
                   {saving ? 'Guardando...' : 'Guardar'}

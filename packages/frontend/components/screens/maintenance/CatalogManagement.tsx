@@ -9,7 +9,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
-  Edit, 
+  Edit2, 
   Trash2, 
   Search, 
   AlertCircle, 
@@ -22,6 +22,8 @@ import {
 import { projectId, publicApiToken } from '../../../utils/backend/info';
 import { useAuth } from '../../../contexts/AuthContext';
 import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import GridActionIconButton from '../../shared/GridActionIconButton';
 
 // ============================================================================
 // INTERFACES
@@ -414,6 +416,76 @@ export function CatalogManagement() {
     }
   };
 
+  const removeGroup = async (group: LookupGroup) => {
+    try {
+      if (!canEditGroup(group)) {
+        alert('No autorizado para eliminar este grupo');
+        return;
+      }
+
+      // Validacion de negocio: un grupo con valores asociados no se puede eliminar.
+      const valuesRes = await fetch(
+        `http://localhost:3001/lookup-values?group_id=${group.id}`,
+        { headers: authHeaders() }
+      );
+      if (!valuesRes.ok) {
+        const payload = await valuesRes.json().catch(() => null);
+        throw new Error(payload?.error || 'No se pudo validar si el grupo tiene valores asociados');
+      }
+      const valuesPayload = await valuesRes.json().catch(() => ({}));
+      const relatedValues = Array.isArray(valuesPayload?.values) ? valuesPayload.values.length : 0;
+      if (relatedValues > 0) {
+        alert(
+          `No se puede eliminar el grupo "${group.lookup_group_key}" porque tiene ${relatedValues} valor(es) asociado(s). ` +
+          'Primero elimina o reasigna esos valores.'
+        );
+        return;
+      }
+
+      const ok = window.confirm(`¿Eliminar el grupo ${group.lookup_group_key}?`);
+      if (!ok) return;
+
+      const res = await fetch(`http://localhost:3001/lookup-groups/${group.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Error eliminando grupo');
+
+      if (selectedGroup?.id === group.id) {
+        setSelectedGroup(null);
+        setValues([]);
+      }
+      await loadGroups();
+    } catch (err: any) {
+      console.error('[CATALOG] Error eliminando grupo:', err);
+      alert(err?.message || 'Error eliminando grupo');
+    }
+  };
+
+  const removeValue = async (value: LookupValue) => {
+    try {
+      if (!canEditValue(value, selectedGroup)) {
+        alert('No autorizado para eliminar este valor');
+        return;
+      }
+      const ok = window.confirm(`¿Eliminar el valor ${value.lookup_key}?`);
+      if (!ok) return;
+
+      const res = await fetch(`http://localhost:3001/lookup-values/${value.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Error eliminando valor');
+
+      if (selectedGroup) await loadValues(selectedGroup.id);
+    } catch (err: any) {
+      console.error('[CATALOG] Error eliminando valor:', err);
+      alert(err?.message || 'Error eliminando valor');
+    }
+  };
+
   // ============================================================================
   // HANDLERS
   // ============================================================================
@@ -599,14 +671,25 @@ export function CatalogManagement() {
         title="Gestion de Catalogos"
         subtitle="Administra los grupos de catalogo y sus valores"
         rightSlot={(
-          <button
-            onClick={() => openGroupModal()}
-            disabled={!canManageCatalogs}
-            className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-[#0074D9] text-white hover:bg-[#0074D9]/90 h-10 px-4 py-2 gap-2"
-          >
-            <Plus className="size-4" />
-            Nuevo Grupo
-          </button>
+          <HeaderInfoTips
+            items={[
+              {
+                title: 'Catálogos del tenant',
+                text: 'TENANT_ADMIN puede crear y administrar grupos/valores propios del tenant.',
+                variant: 'security',
+              },
+              {
+                title: 'Tip',
+                text: 'Solo grupos con "Permite items de tenant" aceptan nuevos valores desde TENANT_ADMIN.',
+                variant: 'tip',
+              },
+              {
+                title: 'Validación de eliminación',
+                text: 'Un grupo solo puede eliminarse cuando no tiene valores asociados.',
+                variant: 'warning',
+              },
+            ]}
+          />
         )}
       />
 
@@ -631,8 +714,16 @@ export function CatalogManagement() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Panel izquierdo: Grupos */}
         <div className="rounded-lg border bg-card">
-          <div className="border-b p-4">
+          <div className="border-b p-4 flex items-center justify-between gap-3">
             <h2 className="font-semibold">Grupos de Catalogo</h2>
+            <button
+              onClick={() => openGroupModal()}
+              disabled={!canManageCatalogs}
+              className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-[#0074D9] text-white hover:bg-[#0074D9]/90 h-9 px-3 gap-2"
+            >
+              <Plus className="size-4" />
+              Nuevo Grupo
+            </button>
           </div>
           <div className="divide-y max-h-[600px] overflow-y-auto">
             {filteredGroups.length === 0 ? (
@@ -690,15 +781,23 @@ export function CatalogManagement() {
                       </div>
                     </div>
                     {canEditGroup(group) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openGroupModal(group);
-                        }}
-                        className="p-2 hover:bg-accent rounded-md transition-colors"
+                      <div
+                        className="flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Edit className="size-4 text-muted-foreground" />
-                      </button>
+                        <GridActionIconButton
+                          onClick={() => openGroupModal(group)}
+                          icon={<Edit2 className="size-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={() => void removeGroup(group)}
+                          icon={<Trash2 className="size-4" />}
+                          label="Eliminar"
+                          tone="red"
+                        />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -717,7 +816,7 @@ export function CatalogManagement() {
               canCreateValueInGroup(selectedGroup) ? (
                 <button
                   onClick={() => openValueModal()}
-                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3 gap-2"
+                  className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 bg-[#0074D9] text-white hover:bg-[#0074D9]/90 h-9 px-3 gap-2"
                 >
                   <Plus className="size-4" />
                   Nuevo Valor
@@ -770,24 +869,30 @@ export function CatalogManagement() {
                             className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
                               value.is_active
                                 ? 'bg-green-100 text-green-700'
-                                : 'bg-gray-100 text-gray-700'
+                                : 'bg-red-100 text-red-700'
                             }`}
                           >
                             {value.is_active ? 'Activo' : 'Inactivo'}
                           </button>
-                          <button
+                          <GridActionIconButton
                             onClick={() => openValueModal(value)}
-                            className="p-2 hover:bg-accent rounded-md transition-colors"
-                          >
-                            <Edit className="size-4 text-muted-foreground" />
-                          </button>
+                            icon={<Edit2 className="size-4" />}
+                            label="Editar"
+                            tone="blue"
+                          />
+                          <GridActionIconButton
+                            onClick={() => void removeValue(value)}
+                            icon={<Trash2 className="size-4" />}
+                            label="Eliminar"
+                            tone="red"
+                          />
                         </>
                       ) : (
                         <span
                           className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${
                             value.is_active
                               ? 'bg-green-100 text-green-700'
-                              : 'bg-gray-100 text-gray-700'
+                              : 'bg-red-100 text-red-700'
                           }`}
                         >
                           {value.is_active ? 'Activo' : 'Inactivo'}

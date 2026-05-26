@@ -12,21 +12,28 @@ import { useState } from 'react';
 import { User, Building2, Shield } from 'lucide-react';
 import { OrgMaintenance } from './OrgMaintenance';
 import { EmployeeSystemUserManagement } from './EmployeeSystemUserManagement';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
 
 type EmployeeTab = 'employee-personal' | 'employee-system-user' | 'employee-company';
 
 const TABS: Array<{ key: EmployeeTab; label: string; icon: any }> = [
   { key: 'employee-personal', label: 'Datos Personales', icon: User },
-  { key: 'employee-system-user', label: 'Usuario del Sistema', icon: Shield },
   { key: 'employee-company', label: 'Empleado por Empresa', icon: Building2 },
+  { key: 'employee-system-user', label: 'Usuario del Sistema', icon: Shield },
 ];
 
 export function EmployeeCompaniesManagement() {
   const [activeTab, setActiveTab] = useState<EmployeeTab>('employee-personal');
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
+    <div className="p-6 max-w-full space-y-2">
+      <SystemAdminPageHeader
+        icon={Building2}
+        title="Empleado por Empresas"
+        subtitle="Gestión integral de datos personales, usuario del sistema y asignación laboral"
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
         {TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Config > Devices
  * Gestión de dispositivos de marcación
  */
@@ -19,4 +19,5 @@ export default function ConfigDevicesPage() {
     </ScreenPageShell>
   );
 }
+
 

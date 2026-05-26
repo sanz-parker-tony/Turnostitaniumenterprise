@@ -41,7 +41,7 @@ const EMPTY_FORM = {
 
 const BADGE = {
   active: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800',
-  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500',
+  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700',
 };
 
 function getToken() {
@@ -315,12 +315,15 @@ export default function MessageKeysManagement() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-1">
-                          <GridActionIconButton
+                          <button
+                            type="button"
                             onClick={() => openEdit(row)}
-                            icon={<Edit2 className="w-4 h-4" />}
-                            label="Editar"
-                            tone="blue"
-                          />
+                            className="inline-flex items-center justify-center rounded-md p-2 text-blue-600 transition-colors hover:bg-blue-50 hover:text-blue-800"
+                            title="Editar"
+                            aria-label="Editar"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
                           <GridActionIconButton
                             onClick={() => toggleStatus(row)}
                             icon={row.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}

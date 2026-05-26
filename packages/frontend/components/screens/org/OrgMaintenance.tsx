@@ -1,10 +1,14 @@
 ﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Building2, RefreshCw, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
+import { Building2, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
+import GridActionIconButton from '../../shared/GridActionIconButton';
 
 type EntityKey =
   | 'companies'
@@ -620,6 +624,7 @@ export function OrgMaintenance({
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [photoRules, setPhotoRules] = useState<EmployeePhotoValidationRules>(FALLBACK_EMPLOYEE_PHOTO_RULES);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
@@ -1033,6 +1038,7 @@ export function OrgMaintenance({
     setEditingId(null);
     setFormData({});
     setSearchTerm('');
+    setStatusFilter('all');
     setSelectedPhotoFile(null);
     clearPhotoPreview();
     if (entity === 'employees') {
@@ -1048,14 +1054,62 @@ export function OrgMaintenance({
 
   const filteredItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return items;
+    return items.filter((item) => {
+      const searchOk =
+        !q ||
+        config.tableColumns.some((column) =>
+          String(item[column] ?? '').toLowerCase().includes(q)
+        );
 
-    return items.filter((item) =>
-      config.tableColumns.some((column) =>
-        String(item[column] ?? '').toLowerCase().includes(q)
-      )
-    );
-  }, [items, config.tableColumns, searchTerm]);
+      const statusOk =
+        !('is_active' in item) ||
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && item.is_active === true) ||
+        (statusFilter === 'inactive' && item.is_active === false);
+
+      return searchOk && statusOk;
+    });
+  }, [items, config.tableColumns, searchTerm, statusFilter]);
+
+  const getColumnHeaderLabel = (column: string) => {
+    if (column === 'is_active') return 'Estado';
+    const field = getFieldByKey(column);
+    if (field?.label) return field.label;
+    return column
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  };
+
+  const getCreateButtonLabel = () => {
+    const labelsByEntity: Partial<Record<EntityKey, string>> = {
+      companies: 'Nueva Empresa',
+      'work-locations': 'Nueva Localización',
+      departments: 'Nuevo Departamento',
+      areas: 'Nueva Área',
+      'work-groups': 'Nuevo Grupo de Trabajo',
+      'payroll-groups': 'Nuevo Grupo de Nómina',
+      'job-titles': 'Nuevo Cargo',
+      'cost-centers': 'Nuevo Centro de Costo',
+      'employee-profiles': 'Nuevo Perfil',
+    };
+    return labelsByEntity[entity] || 'Nuevo';
+  };
+
+  const shouldSplitSearchAndDataModules = (
+    entity === 'companies' ||
+    entity === 'work-locations' ||
+    entity === 'departments' ||
+    entity === 'areas' ||
+    entity === 'work-groups' ||
+    entity === 'payroll-groups' ||
+    entity === 'job-titles' ||
+    entity === 'cost-centers' ||
+    entity === 'employee-profiles'
+  );
+
+  const layoutClassName = hideTopHeader
+    ? 'w-full max-w-full space-y-2'
+    : 'p-6 max-w-full space-y-6';
 
   const openCreate = () => {
     const initial: Record<string, any> = {};
@@ -1193,12 +1247,24 @@ export function OrgMaintenance({
 
   const handleToggleStatus = async (item: any) => {
     setError(null);
+    const nextIsActive = !item.is_active;
     try {
-      await request(`/organization/${entity}/${item.id}/status`, {
+      const payload = await request(`/organization/${entity}/${item.id}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ is_active: !item.is_active }),
+        body: JSON.stringify({ is_active: nextIsActive }),
       });
-      await loadItems();
+      const updatedItem = payload?.item;
+      setItems((prev) =>
+        prev.map((row) =>
+          row.id === item.id
+            ? {
+                ...row,
+                ...(updatedItem || {}),
+                is_active: typeof updatedItem?.is_active === 'boolean' ? updatedItem.is_active : nextIsActive,
+              }
+            : row
+        )
+      );
     } catch (err: any) {
       setError(err.message || 'Error actualizando estado');
     }
@@ -1332,8 +1398,21 @@ export function OrgMaintenance({
       return String(rawValue ?? '');
     }
 
+    if (column === 'is_active') {
+      const isActive = rawValue === true;
+      return (
+        <span
+          className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+            isActive ? 'border-green-300 bg-green-50 text-green-700' : 'border-red-300 bg-red-50 text-red-700'
+          }`}
+        >
+          {isActive ? 'Activo' : 'Inactivo'}
+        </span>
+      );
+    }
+
     if (field.type === 'boolean') {
-      return rawValue === true ? 'Activo' : 'Inactivo';
+      return rawValue === true ? 'Sí' : 'No';
     }
 
     if (field.type === 'select') {
@@ -1351,23 +1430,44 @@ export function OrgMaintenance({
   };
 
   return (
-    <div className="space-y-6">
+    <div className={layoutClassName}>
       {!hideTopHeader && (
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">{pageTitle || config.title}</h1>
-            <p className="text-muted-foreground mt-1">
-              {pageDescription || config.description}
-            </p>
-          </div>
-          <button
-            onClick={loadItems}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
-          >
-            <RefreshCw className="size-4" />
-            Recargar
-          </button>
-        </div>
+        <SystemAdminPageHeader
+          icon={Building2}
+          title={pageTitle || config.title}
+          subtitle={pageDescription || config.description}
+          rightSlot={(
+            <>
+              <HeaderInfoTips
+                items={[
+                  {
+                    title: 'Información',
+                    text: 'Administra empresas del tenant y su estado operativo.',
+                    variant: 'info',
+                  },
+                  {
+                    title: 'Warning',
+                    text: 'Antes de desactivar o eliminar, valida impactos en localizaciones y empleados relacionados.',
+                    variant: 'warning',
+                  },
+                  {
+                    title: 'Tip',
+                    text: 'Usa búsqueda y estado para filtrar rápidamente registros de empresa.',
+                    variant: 'tip',
+                  },
+                ]}
+              />
+              <HeaderRefreshButton onClick={() => void loadItems()} loading={loading} label="Recargar" />
+              <button
+                onClick={openCreate}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
+              >
+                <Plus className="size-4" />
+                {getCreateButtonLabel()}
+              </button>
+            </>
+          )}
+        />
       )}
 
       {!hideEntityTabs && (
@@ -1388,56 +1488,41 @@ export function OrgMaintenance({
         </div>
       )}
 
-      <div className="rounded-lg border bg-white p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold">{config.title}</h2>
-            <p className="text-sm text-gray-500">{config.description}</p>
-          </div>
-          <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-[#0074D9] text-white text-sm hover:bg-[#0066C0]"
-          >
-            <Plus className="size-4" />
-            Nuevo
-          </button>
+      {error && (
+        <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">
+          {error}
         </div>
+      )}
 
-        {error && (
-          <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">
-            {error}
-          </div>
-        )}
-
-        {showForm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div
-              className="absolute inset-0 bg-black/40"
-              onClick={() => {
-                setShowForm(false);
-                setEditingId(null);
-                clearPhotoPreview();
-              }}
-            />
-            <div className="relative w-full max-w-7xl max-h-[94vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
-              <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-                <h3 className="text-base font-semibold text-gray-900">
-                  {editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`}
-                </h3>
-                <button
-                  onClick={() => {
-                    setShowForm(false);
-                    setEditingId(null);
-                    clearPhotoPreview();
-                  }}
-                  className="p-1.5 rounded hover:bg-gray-200"
-                  title="Cerrar"
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => {
+              setShowForm(false);
+              setEditingId(null);
+              clearPhotoPreview();
+            }}
+          />
+          <div className="relative w-full max-w-7xl max-h-[94vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+              <h3 className="text-base font-semibold text-gray-900">
+                {editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingId(null);
+                  clearPhotoPreview();
+                }}
+                className="p-1.5 rounded hover:bg-gray-200"
+                title="Cerrar"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {config.fields.map((field) => (
                 <div
                   key={field.key}
@@ -1620,93 +1705,200 @@ export function OrgMaintenance({
                 Cancelar
               </button>
             </div>
+            </div>
           </div>
-          </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between gap-3">
-          <div className="relative w-full max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar..."
-              className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <span className="text-sm text-gray-500">
-            {filteredItems.length} de {items.length}
-          </span>
         </div>
+      )}
 
-        <div className="overflow-auto border rounded-md">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                {config.tableColumns.map((column) => (
-                  <th key={column} className="text-left px-3 py-2 border-b font-semibold text-gray-700">
-                    {column}
-                  </th>
-                ))}
-                <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
-                    Cargando...
-                  </td>
-                </tr>
-              ) : filteredItems.length === 0 ? (
-                <tr>
-                  <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
-                    {searchTerm ? 'No hay resultados' : 'Sin registros'}
-                  </td>
-                </tr>
-              ) : (
-                filteredItems.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50">
+      {shouldSplitSearchAndDataModules ? (
+        <>
+          <div className="rounded-lg border bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="grid w-full max-w-3xl grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+                  <input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Buscar..."
+                    className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <select
+                  className="w-full rounded-md border px-3 py-2 text-sm"
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as 'all' | 'active' | 'inactive')}
+                >
+                  <option value="all">Todos los estados</option>
+                  <option value="active">Activos</option>
+                  <option value="inactive">Inactivos</option>
+                </select>
+              </div>
+              <span className="text-sm text-gray-500">
+                {filteredItems.length} de {items.length}
+              </span>
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-white p-4">
+            <div className="overflow-auto border rounded-md">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
                     {config.tableColumns.map((column) => (
-                      <td key={column} className="px-3 py-2 border-b text-gray-700">
-                        {formatCellValue(column, item[column])}
-                      </td>
+                      <th key={column} className="text-left px-3 py-2 border-b font-semibold text-gray-700">
+                        {getColumnHeaderLabel(column)}
+                      </th>
                     ))}
-                    <td className="px-3 py-2 border-b">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => openEdit(item)}
-                          className="inline-flex items-center justify-center p-1.5 rounded border text-xs hover:bg-gray-100"
-                          title="Editar"
-                        >
-                          <Pencil className="size-3" />
-                        </button>
-                        {'is_active' in item && (
-                          <button
-                            onClick={() => handleToggleStatus(item)}
-                            className="inline-flex items-center justify-center p-1.5 rounded border text-xs text-amber-700 bg-amber-100 border-amber-300 hover:text-white hover:bg-amber-600 hover:border-amber-700 hover:shadow-amber-300 hover:shadow-md hover:scale-110 transition-all duration-150"
-                            title={item.is_active ? 'Desactivar' : 'Activar'}
-                          >
-                            <Power className="size-3" />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDelete(item)}
-                          className="inline-flex items-center justify-center p-1.5 rounded border text-xs text-red-700 border-red-200 hover:bg-red-50"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="size-3" />
-                        </button>
-                      </div>
+                    <th className="w-[120px] text-center px-3 py-2 border-b font-semibold text-gray-700">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
+                        Cargando...
+                      </td>
+                    </tr>
+                  ) : filteredItems.length === 0 ? (
+                    <tr>
+                      <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
+                        {searchTerm ? 'No hay resultados' : 'Sin registros'}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredItems.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50">
+                        {config.tableColumns.map((column) => (
+                          <td key={column} className="px-3 py-2 border-b text-gray-700">
+                            {formatCellValue(column, item[column])}
+                          </td>
+                        ))}
+                        <td className="px-3 py-2 border-b">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <GridActionIconButton
+                              onClick={() => openEdit(item)}
+                              icon={<Pencil className="size-3" />}
+                              label="Editar"
+                              tone="blue"
+                            />
+                            {config.tableColumns.includes('is_active') && 'is_active' in item && (
+                              <GridActionIconButton
+                                onClick={() => handleToggleStatus(item)}
+                                icon={<Power className="size-3" />}
+                                label={item.is_active ? 'Desactivar' : 'Activar'}
+                                tone={item.is_active ? 'red' : 'green'}
+                              />
+                            )}
+                            <GridActionIconButton
+                              onClick={() => handleDelete(item)}
+                              icon={<Trash2 className="size-3" />}
+                              label="Eliminar"
+                              tone="red"
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-lg border bg-white p-4 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="grid w-full max-w-3xl grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Buscar..."
+                  className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <select
+                className="w-full rounded-md border px-3 py-2 text-sm"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as 'all' | 'active' | 'inactive')}
+              >
+                <option value="all">Todos los estados</option>
+                <option value="active">Activos</option>
+                <option value="inactive">Inactivos</option>
+              </select>
+            </div>
+            <span className="text-sm text-gray-500">
+              {filteredItems.length} de {items.length}
+            </span>
+          </div>
+
+          <div className="overflow-auto border rounded-md">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  {config.tableColumns.map((column) => (
+                    <th key={column} className="text-left px-3 py-2 border-b font-semibold text-gray-700">
+                      {getColumnHeaderLabel(column)}
+                    </th>
+                  ))}
+                  <th className="w-[120px] text-center px-3 py-2 border-b font-semibold text-gray-700">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
+                      Cargando...
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : filteredItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={config.tableColumns.length + 1} className="px-3 py-6 text-center text-gray-500">
+                      {searchTerm ? 'No hay resultados' : 'Sin registros'}
+                    </td>
+                  </tr>
+                ) : (
+                  filteredItems.map((item) => (
+                    <tr key={item.id} className="hover:bg-gray-50">
+                      {config.tableColumns.map((column) => (
+                        <td key={column} className="px-3 py-2 border-b text-gray-700">
+                          {formatCellValue(column, item[column])}
+                        </td>
+                      ))}
+                      <td className="px-3 py-2 border-b">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <GridActionIconButton
+                            onClick={() => openEdit(item)}
+                            icon={<Pencil className="size-3" />}
+                            label="Editar"
+                            tone="blue"
+                          />
+                          {config.tableColumns.includes('is_active') && 'is_active' in item && (
+                            <GridActionIconButton
+                              onClick={() => handleToggleStatus(item)}
+                              icon={<Power className="size-3" />}
+                              label={item.is_active ? 'Desactivar' : 'Activar'}
+                              tone={item.is_active ? 'red' : 'green'}
+                            />
+                          )}
+                          <GridActionIconButton
+                            onClick={() => handleDelete(item)}
+                            icon={<Trash2 className="size-3" />}
+                            label="Eliminar"
+                            tone="red"
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
