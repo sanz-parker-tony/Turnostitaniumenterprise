@@ -17,7 +17,7 @@
     "rootDir": "./src",
     "baseUrl": ".",
     "types": ["node"],
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "5.0"
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
