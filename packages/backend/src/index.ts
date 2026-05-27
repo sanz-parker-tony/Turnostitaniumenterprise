@@ -16,7 +16,7 @@ import {
   getSystemLanguages,
   bootstrapStep1Tenant,
   bootstrapStep2Admin,
-} from './bootstrap';
+} from './bootstrap.js';
 
 // Importar funciones de tenant
 import {
