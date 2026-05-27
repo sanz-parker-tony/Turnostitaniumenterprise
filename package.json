@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
     "dev:backend": "tsx watch packages/backend/src/server.ts",
-    "start:backend": "node dist/backend/server.js",
+    "start:backend": "node packages/backend/dist/server.js",
     "build:backend": "tsc -p packages/backend/tsconfig.json",
     "dev:frontend": "vite --config packages/frontend/vite.config.ts --host 127.0.0.1 --port 3000 --strictPort",
     "build:frontend": "vite build --config packages/frontend/vite.config.ts",
