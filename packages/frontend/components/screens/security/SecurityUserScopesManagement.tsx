@@ -1,9 +1,12 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 
 type TargetRoleKey = 'SUPERVISOR' | 'RRHH_ADMIN' | 'RHADMIN';
 
@@ -88,11 +91,6 @@ export default function SecurityUserScopesManagement() {
   });
 
   const token = session?.access_token || '';
-
-  const selectedTarget = useMemo(
-    () => targets.find((t) => t.user_role_id === selectedUserRoleId) || null,
-    [targets, selectedUserRoleId]
-  );
 
   useEffect(() => {
     void loadTargets();
@@ -271,31 +269,63 @@ export default function SecurityUserScopesManagement() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+    <div className="p-6 max-w-full flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+      <SystemAdminPageHeader
+        icon={ShieldCheck}
+        title="Alcances por Usuario"
+        subtitle="Configura alcances organizacionales para usuarios objetivo"
+        rightSlot={
+          <HeaderInfoTips
+            items={[
+              {
+                title: 'Usuario objetivo',
+                text: 'Solo se listan usuarios con rol Supervisor o Administrador de RRHH.',
+                variant: 'info',
+              },
+            ]}
+          />
+        }
+      />
       <div className="rounded-lg border border-slate-200 bg-white p-4">
-        <div className="mb-2 text-sm font-medium text-slate-700">Usuario objetivo (SUPERVISOR / RRHH_ADMIN)</div>
-        <select
-          className="w-full rounded-md border border-slate-300 p-2 text-sm"
-          value={selectedUserRoleId}
-          onChange={(e) => setSelectedUserRoleId(e.target.value)}
-          disabled={isLoadingTargets || targets.length === 0}
-        >
-          {targets.length === 0 ? <option value="">Sin usuarios objetivo</option> : null}
-          {targets.map((target) => (
-            <option key={target.user_role_id} value={target.user_role_id}>
-              {labelTarget(target)}
-            </option>
-          ))}
-        </select>
-        {selectedTarget ? (
-          <div className="mt-2 text-xs text-slate-500">
-            Rol: <span className="font-medium text-slate-700">{selectedTarget.role_name}</span> · Usuario: {selectedTarget.username}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
+          <select
+            className="w-full rounded-md border border-slate-300 p-2 text-sm"
+            value={selectedUserRoleId}
+            onChange={(e) => setSelectedUserRoleId(e.target.value)}
+            disabled={isLoadingTargets || targets.length === 0}
+          >
+            {targets.length === 0 ? <option value="">Sin usuarios objetivo</option> : null}
+            {targets.map((target) => (
+              <option key={target.user_role_id} value={target.user_role_id}>
+                {labelTarget(target)}
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-2 lg:shrink-0">
+            <Button
+              variant="outline"
+              className="border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800"
+              onClick={() => selectedUserRoleId && void loadScopes(selectedUserRoleId)}
+              disabled={!selectedUserRoleId || isLoadingTree || isSaving}
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Actualizar
+            </Button>
+            <Button
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              onClick={() => void saveScopes()}
+              disabled={!selectedUserRoleId || isLoadingTree || isSaving}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              {isSaving ? 'Guardando...' : 'Guardar Alcance'}
+            </Button>
           </div>
-        ) : null}
+        </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 xl:grid-cols-[1.35fr_1fr]">
-        <div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+        <div className="grid min-h-full grid-cols-1 items-stretch gap-4 xl:grid-cols-[1.35fr_1fr]">
+          <div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-3 text-sm font-semibold text-slate-800">Arbol organizacional de alcances</div>
           <div className="mb-3 text-xs text-slate-500">
             Estructura: Empresa {'>'} Localizacion {'>'} Departamento {'>'} Area. Selecciona nodos segun el alcance requerido.
@@ -415,10 +445,10 @@ export default function SecurityUserScopesManagement() {
               )}
             </div>
           </div>
-        </div>
+          </div>
 
-        <div className="space-y-4">
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <div className="space-y-4">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 text-sm font-semibold text-slate-800">Contexto seleccionado</div>
             {!selectedArea ? (
               <div className="text-xs text-slate-500">Selecciona un Area del arbol para gestionar centros de costo y grupos de trabajo.</div>
@@ -430,9 +460,9 @@ export default function SecurityUserScopesManagement() {
                 <div>Area: <span className="font-medium text-slate-800">{selectedArea.area_name}</span></div>
               </div>
             )}
-          </div>
+            </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Centros de costo</div>
               <div className="flex gap-2">
@@ -474,9 +504,9 @@ export default function SecurityUserScopesManagement() {
                 ))
               )}
             </div>
-          </div>
+            </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Grupos de trabajo</div>
               <div className="flex gap-2">
@@ -518,9 +548,9 @@ export default function SecurityUserScopesManagement() {
                 ))
               )}
             </div>
-          </div>
+            </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Perfiles</div>
               <div className="flex gap-2">
@@ -562,18 +592,8 @@ export default function SecurityUserScopesManagement() {
                 ))
               )}
             </div>
+            </div>
           </div>
-        </div>
-      </div>
-
-      <div className="sticky bottom-0 z-20 -mx-1 mt-auto border-t border-slate-200 bg-slate-50/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-slate-50/80">
-        <div className="flex items-center justify-end gap-3">
-          <Button variant="outline" onClick={() => selectedUserRoleId && void loadScopes(selectedUserRoleId)} disabled={!selectedUserRoleId || isLoadingTree || isSaving}>
-            Restaurar
-          </Button>
-          <Button onClick={() => void saveScopes()} disabled={!selectedUserRoleId || isLoadingTree || isSaving}>
-            {isSaving ? 'Guardando...' : 'Guardar alcances'}
-          </Button>
         </div>
       </div>
 
@@ -581,3 +601,4 @@ export default function SecurityUserScopesManagement() {
     </div>
   );
 }
+

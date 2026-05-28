@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Dashboard } from './Dashboard';
+import { Construction, Wrench, ArrowLeft } from 'lucide-react';
 
 // Importar todas las pantallas
 import { CatalogManagement } from './screens/maintenance/CatalogManagement';
@@ -34,6 +35,7 @@ import { EmployeeShiftPlanningManagement } from './screens/employees/EmployeeShi
 import { TimePunchesManagement } from './screens/attendance/TimePunchesManagement';
 import ShiftChangeApprovalsManagement from './screens/attendance/ShiftChangeApprovalsManagement';
 import TenantsManagement from './security/TenantsManagement';
+import SystemLanguagesAdmin from './admin/SystemLanguagesAdmin';
 import SecurityAuthorizationCatalog from './screens/security/SecurityAuthorizationCatalog';
 import { ScreenActionsManagement } from './screens/security/ScreenActionsManagement';
 import { RoleScreenActionsManagement } from './screens/security/RoleScreenActionsManagement';
@@ -41,6 +43,9 @@ import SubscriptionPlansManagement from './screens/security/SubscriptionPlansMan
 import SecurityUserScopesManagement from './screens/security/SecurityUserScopesManagement';
 import SecurityUserEmployeeAccessManagement from './screens/security/SecurityUserEmployeeAccessManagement';
 import SecurityRolePermissionsManagement from './screens/security/SecurityRolePermissionsManagement';
+import MessageKeysManagement from './screens/security/MessageKeysManagement';
+import TranslationsManagement from './screens/security/TranslationsManagement';
+import SystemReportsManagement from './screens/security/SystemReportsManagement';
 import KioskPunch from './kiosk/KioskPunch';
 import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
@@ -50,21 +55,27 @@ import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsM
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 
 export function Router() {
-  const { menuScreens, isLoading, getFirstAvailableScreen } = usePermissions();
+  const { menuScreens, isLoading } = usePermissions();
   const { profile } = useAuth();
   const [currentPath, setCurrentPath] = useState('');
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
   const isApprovalRole = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
+  const normalizePath = (path: string) => {
+    if (!path) return '';
+    if (path.length > 1 && path.endsWith('/')) return path.slice(0, -1);
+    return path;
+  };
+
   // Detectar cambios de ruta
   useEffect(() => {
     if (typeof window !== 'undefined') {
       // Ruta inicial
-      setCurrentPath(window.location.pathname);
+      setCurrentPath(normalizePath(window.location.pathname));
       
       // Escuchar cambios de ruta
       const handleRouteChange = () => {
-        setCurrentPath(window.location.pathname);
+        setCurrentPath(normalizePath(window.location.pathname));
       };
       
       window.addEventListener('popstate', handleRouteChange);
@@ -171,6 +182,7 @@ export function Router() {
 
     // ── Seguridad ──────────────────────────────────────────────────────────────
     '/dashboard/security/tenants':              <TenantsManagement />,
+    '/dashboard/security/languages':            <SystemLanguagesAdmin />,
     '/dashboard/security/roles':               <RolesManagement />,
     '/dashboard/security/scopes':              <ScopeTypesManagement />,
     '/dashboard/security/tenant-members':      <UsersManagement />,
@@ -183,12 +195,69 @@ export function Router() {
     '/dashboard/security/subscription-plans':  <SubscriptionPlansManagement />,
     '/dashboard/security/user-role-scopes':    <SecurityUserScopesManagement />,
     '/dashboard/security/user-employee-access': <SecurityUserEmployeeAccessManagement />,
+    '/dashboard/security/message-keys':        <MessageKeysManagement />,
+    '/dashboard/security/messages':            <MessageKeysManagement />,
+    '/dashboard/security/translations':        <TranslationsManagement />,
+    '/dashboard/security/system-reports':      <SystemReportsManagement />,
   };
 
   // Si la ruta existe en el mapa, renderizarla
   if (routeMap[currentPath]) {
     console.log('✅ Renderizando componente para:', currentPath);
     return routeMap[currentPath];
+  }
+
+  // Si la ruta existe en permisos pero no tiene componente implementado
+  const menuScreen = menuScreens.find((screen) => normalizePath(screen.route_path) === currentPath);
+  if (menuScreen) {
+    return (
+      <div className="min-h-[520px] w-full flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-8">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
+              <Construction className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Pantalla en construcción</h1>
+              <p className="text-sm text-gray-500">Esta opción de menú está habilitada, pero su vista aún no está implementada.</p>
+            </div>
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Nombre</p>
+              <p className="text-sm font-semibold text-gray-900">{menuScreen.screen_name}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Clave</p>
+              <p className="text-sm font-mono text-gray-900">{menuScreen.screen_key}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 md:col-span-2">
+              <p className="text-xs uppercase tracking-wide text-gray-500">Ruta</p>
+              <p className="text-sm font-mono text-gray-900">{menuScreen.route_path}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-2 text-sm text-gray-600">
+            <Wrench className="w-4 h-4 text-amber-600" />
+            Solicita al equipo técnico implementar el componente de esta pantalla en el router.
+          </div>
+
+          <div className="mt-6">
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/dashboard');
+                setCurrentPath('/dashboard');
+              }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Volver al Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   // Si no encuentra la ruta, mostrar dashboard por defecto

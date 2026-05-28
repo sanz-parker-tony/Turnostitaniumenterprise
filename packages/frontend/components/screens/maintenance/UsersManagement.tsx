@@ -1,4 +1,4 @@
-﻿/**
+/**
  * UsersManagement.tsx - Gestión de Usuarios
  * Turnos Titanium Enterprise
  *
@@ -15,12 +15,14 @@
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
-  Users, RefreshCw, User, Shield,
+  Users, User, Shield,
   Key, Clock, ChevronRight, Trash2,
   Mail, Phone, Globe, Building,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 
 // ============================================================================
 // TIPOS
@@ -742,63 +744,53 @@ export function UsersManagement() {
   // ============================================================================
 
   return (
-    <div className="flex h-full min-h-screen bg-gray-50">
+    <div className="p-6 max-w-full flex flex-col h-full min-h-screen bg-gray-50 gap-4">
+      <SystemAdminPageHeader
+        icon={Users}
+        title="Gestion de Usuarios"
+        subtitle="Mantenimiento de usuarios, roles y alcances del sistema"
+        rightSlot={
+          <div className="flex gap-2">
+            <HeaderRefreshButton onClick={loadAll} />
+            <button
+              onClick={openCreateUser}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo Usuario
+            </button>
+          </div>
+        }
+      />
+      <div className="flex flex-1 min-h-0 bg-gray-50">
       {/* Panel izquierdo: lista de usuarios */}
       <div className={`${selectedUser ? 'w-1/2' : 'w-full'} flex flex-col transition-all duration-300`}>
-        {/* Header */}
-        <div className="p-6 bg-white border-b border-gray-200">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-[#0074D9]/10 rounded-lg">
-                <Users className="w-6 h-6 text-[#0074D9]" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900" style={{ fontFamily: 'Inter, sans-serif' }}>
-                  Gestión de Usuarios
-                </h1>
-                <p className="text-xs text-gray-500">
-                  {filteredUsers.length} de {users.length} usuarios
-                </p>
-              </div>
-            </div>
+        <div className="px-3 pb-3">
+          <div className="rounded-lg border bg-white p-4">
             <div className="flex gap-2">
-              <button
-                onClick={loadAll}
-                className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Buscar usuario..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
+                />
+              </div>
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value as any)}
+                className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
               >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-              <button
-                onClick={openCreateUser}
-                className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
-              >
-                <Plus className="w-4 h-4" />
-                Nuevo Usuario
-              </button>
+                <option value="all">Todos los estados</option>
+                <option value="active">Activos</option>
+                <option value="inactive">Inactivos</option>
+              </select>
             </div>
-          </div>
-
-          {/* Filtros */}
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar usuario..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
-              />
-            </div>
-            <select
-              value={statusFilter}
-              onChange={e => setStatusFilter(e.target.value as any)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-            >
-              <option value="all">Todos</option>
-              <option value="active">Activos</option>
-              <option value="inactive">Inactivos</option>
-            </select>
+            <p className="mt-3 text-sm text-gray-600">
+              Mostrando {filteredUsers.length} de {users.length} usuarios
+            </p>
           </div>
         </div>
 
@@ -907,7 +899,7 @@ export function UsersManagement() {
               <button
                 onClick={() => handleToggleUserStatus(selectedUser)}
                 disabled={togglingId === selectedUser.id}
-                className="p-1.5 rounded-lg text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 disabled:opacity-50"
+                className="p-1.5 rounded-lg border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                 title={selectedUser.is_active ? 'Desactivar' : 'Activar'}
               >
                 {selectedUser.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
@@ -1050,10 +1042,10 @@ export function UsersManagement() {
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleToggleUserRoleStatus(ur); }}
                                 disabled={togglingId === ur.id}
-                                className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                className="p-1 rounded border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                                 title={ur.is_active ? 'Desactivar' : 'Activar'}
                               >
-                                {ur.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                {ur.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                               </button>
                               <button
                                 onClick={(e) => {
@@ -1124,10 +1116,10 @@ export function UsersManagement() {
                                         <button
                                           onClick={() => handleToggleScopeStatus(scope)}
                                           disabled={togglingId === scope.id}
-                                          className="p-1 rounded text-gray-400 hover:text-yellow-600 hover:bg-yellow-50 disabled:opacity-50"
+                                          className="p-1 rounded border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
                                           title={scope.is_active ? 'Desactivar' : 'Activar'}
                                         >
-                                          {scope.is_active ? <PowerOff className="w-3.5 h-3.5" /> : <Power className="w-3.5 h-3.5" />}
+                                          {scope.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                                         </button>
                                       </div>
                                     </div>
@@ -1146,6 +1138,7 @@ export function UsersManagement() {
           </div>
         </div>
       )}
+      </div>
 
       {/* ================================================================ */}
       {/* MODAL: Crear/Editar Usuario */}
@@ -1435,5 +1428,6 @@ function InfoField({ icon: Icon, label, value, mono }: { icon: any; label: strin
     </div>
   );
 }
+
 
 

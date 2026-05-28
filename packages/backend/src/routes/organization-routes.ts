@@ -1867,7 +1867,7 @@ router.get('/:entity', async (req: Request, res: Response) => {
       query = query.eq('is_active', true);
     }
 
-    query = query.order(config.defaultSort, { ascending: true });
+    query = query.order(config.defaultSort, { ascending: true }).order('id', { ascending: true });
 
     const { data, error } = await query;
     if (error) {

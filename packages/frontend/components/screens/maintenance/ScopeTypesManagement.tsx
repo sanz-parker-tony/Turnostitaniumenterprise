@@ -1,9 +1,9 @@
 /**
- * ScopeTypesManagement.tsx - Gestión de Tipos de Alcance
+ * ScopeTypesManagement.tsx - GestiÃ³n de Tipos de Alcance
  * Turnos Titanium Enterprise
  *
  * Pantalla de mantenimiento para la tabla scope_types
- * Ubicación: Mantenimiento → Alcances
+ * UbicaciÃ³n: Mantenimiento â†’ Alcances
  */
 
 'use client';
@@ -11,10 +11,14 @@
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
-  Layers, RefreshCw, ChevronDown, ChevronUp,
+  Layers, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 
 // ============================================================================
 // TIPOS
@@ -153,7 +157,7 @@ export function ScopeTypesManagement() {
     if (!formData.scope_type_key.trim()) {
       errors.scope_type_key = 'La clave es obligatoria';
     } else if (formData.scope_type_key.length > 80) {
-      errors.scope_type_key = 'Máximo 80 caracteres';
+      errors.scope_type_key = 'MÃ¡ximo 80 caracteres';
     }
     if (!formData.scope_type_name.trim()) errors.scope_type_name = 'El nombre es obligatorio';
     setFormErrors(errors);
@@ -205,39 +209,32 @@ export function ScopeTypesManagement() {
   // ============================================================================
 
   return (
-    <div className="p-6 max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-[#2ECC71]/10 rounded-lg">
-            <Layers className="w-6 h-6 text-[#2ECC71]" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'Inter, sans-serif' }}>
-              Tipos de Alcance
-            </h1>
-            <p className="text-sm text-gray-500">
-              {filtered.length} de {scopeTypes.length} tipos de alcance · Define la estructura organizacional del sistema
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={loadScopeTypes}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Actualizar
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5] transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Nuevo Tipo
-          </button>
-        </div>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={Layers}
+        title="Tipos de Alcance"
+        subtitle={`${filtered.length} de ${scopeTypes.length} tipos de alcance · Define la estructura organizacional del sistema`}
+        rightSlot={
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: '¿Qué son los Tipos de Alcance?',
+                  text: 'Definen las dimensiones organizacionales para restringir permisos: empresa, sucursal, departamento, etc.',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={loadScopeTypes} />
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5] transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo Tipo
+            </button>
+          </>
+        }
+      />
 
       {/* Error global */}
       {error && (
@@ -248,36 +245,32 @@ export function ScopeTypesManagement() {
         </div>
       )}
 
-      {/* Info box */}
-      <div className="p-4 mb-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <p className="text-sm text-blue-700">
-          <strong>¿Qué son los Tipos de Alcance?</strong> Definen las dimensiones organizacionales
-          a las que se pueden restringir los roles de usuario. Por ejemplo: por empresa, por sucursal,
-          por departamento, etc. Cada tipo de alcance se asocia a una entidad del sistema.
-        </p>
-      </div>
-
       {/* Filtros */}
-      <div className="flex flex-wrap gap-3 mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Buscar por clave o nombre..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
-          />
+      <div className="rounded-lg border bg-white p-4">
+        <div className="flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por clave o nombre..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value as any)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="active">Activos</option>
+            <option value="inactive">Inactivos</option>
+          </select>
         </div>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as any)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-        >
-          <option value="all">Todos los estados</option>
-          <option value="active">Activos</option>
-          <option value="inactive">Inactivos</option>
-        </select>
+        <div className="mt-3 text-sm text-gray-600">
+          Mostrando {filtered.length} de {scopeTypes.length} tipos de alcance
+        </div>
       </div>
 
       {/* Tabla */}
@@ -346,21 +339,19 @@ export function ScopeTypesManagement() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1">
-                      <button
+                      <GridActionIconButton
                         onClick={() => openEdit(st)}
-                        className="p-1.5 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 transition-colors"
-                        title="Editar"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
+                        icon={<Edit2 className="w-4 h-4" />}
+                        label="Editar"
+                        tone="blue"
+                      />
+                      <GridActionIconButton
                         onClick={() => handleToggleStatus(st)}
                         disabled={togglingId === st.id}
-                        className="p-1.5 rounded-lg text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 disabled:opacity-50 transition-colors"
-                        title={st.is_active ? 'Desactivar' : 'Activar'}
-                      >
-                        {st.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                      </button>
+                        icon={st.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                        label={st.is_active ? 'Desactivar' : 'Activar'}
+                        tone='amber'
+                      />
                     </div>
                   </td>
                 </tr>
@@ -405,7 +396,7 @@ export function ScopeTypesManagement() {
                   }`}
                 />
                 {formErrors.scope_type_key && <p className="text-xs text-red-500 mt-1">{formErrors.scope_type_key}</p>}
-                <p className="text-xs text-gray-400 mt-1">Identificador único, máximo 80 caracteres.</p>
+                <p className="text-xs text-gray-400 mt-1">Identificador Ãºnico, mÃ¡ximo 80 caracteres.</p>
               </div>
 
               <div>
@@ -461,4 +452,6 @@ export function ScopeTypesManagement() {
     </div>
   );
 }
+
+
 

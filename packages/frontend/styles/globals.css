@@ -223,3 +223,17 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Estándar global de botones: misma tipografía y tamaño base */
+@layer base {
+  button,
+  input[type='button'],
+  input[type='submit'],
+  input[type='reset'],
+  a[role='button'] {
+    font-family: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+  }
+}

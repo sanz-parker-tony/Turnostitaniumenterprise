@@ -1,8 +1,12 @@
 ﻿'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Save } from 'lucide-react';
+import { CalendarCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import HeaderInfoTips from '../../shared/HeaderInfoTips';
+import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
+import GridActionIconButton from '../../shared/GridActionIconButton';
 
 interface ProfileRow {
   id: string;
@@ -44,8 +48,6 @@ export function ProfileAttendanceEventsManagement() {
   const [rows, setRows] = useState<ProfileEventRow[]>([]);
 
   const [newEventId, setNewEventId] = useState('');
-  const [newRequiresApproval, setNewRequiresApproval] = useState(true);
-  const [newExportToPayroll, setNewExportToPayroll] = useState(true);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(`http://localhost:3001${path}`, {
@@ -141,8 +143,8 @@ export function ProfileAttendanceEventsManagement() {
         attendance_event_id: event.id,
         event_name: event.event_name,
         event_short_name: event.event_short_name,
-        requires_approval: newRequiresApproval,
-        export_to_payroll: newExportToPayroll,
+        requires_approval: false,
+        export_to_payroll: false,
         is_active: true,
       },
     ]);
@@ -199,61 +201,59 @@ export function ProfileAttendanceEventsManagement() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Novedades por Perfil</h1>
-          <p className="text-muted-foreground mt-1">
-            Asigne eventos de asistencia al perfil con reglas de aprobación y exportación a nómina.
-          </p>
-        </div>
-        <button
-          onClick={() => {
-            void loadCatalogs();
-            if (selectedProfileId) void loadProfileRows(selectedProfileId);
-          }}
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-gray-50"
-        >
-          <RefreshCw className="size-4" />
-          Recargar
-        </button>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={CalendarCheck}
+        title="Novedades por Perfil"
+        subtitle="Asigne eventos de asistencia al perfil con reglas de aprobación y exportación a nómina."
+        rightSlot={(
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Tip',
+                  text: 'Agregue la novedad al perfil y marque en la grilla si requiere aprobación o exportación a nómina.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton
+              onClick={() => {
+                void loadCatalogs();
+                if (selectedProfileId) void loadProfileRows(selectedProfileId);
+              }}
+            />
+          </>
+        )}
+      />
 
       {error && <div className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
       {success && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
       <div className="rounded-lg border bg-white p-5">
-        <label className="text-sm font-medium">Perfil de Empleado</label>
-        <select
-          className="mt-1 w-full rounded-md border px-3 py-2 text-sm md:max-w-xl"
-          value={selectedProfileId}
-          onChange={(event) => {
-            setSelectedProfileId(event.target.value);
-            setSuccess(null);
-          }}
-        >
-          <option value="">Seleccione un perfil...</option>
-          {profiles.map((profile) => (
-            <option key={profile.id} value={profile.id}>
-              {profile.profile_name} ({profile.profile_short_name || profile.employee_profile_code})
-            </option>
-          ))}
-        </select>
-      </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[2fr_2fr_auto]">
+          <select
+            className="w-full rounded-md border px-3 py-2 text-sm"
+            value={selectedProfileId}
+            onChange={(event) => {
+              setSelectedProfileId(event.target.value);
+              setSuccess(null);
+            }}
+          >
+            <option value="">Seleccione un perfil...</option>
+            {profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.profile_name} ({profile.profile_short_name || profile.employee_profile_code})
+              </option>
+            ))}
+          </select>
 
-      <div className="rounded-lg border bg-white p-5 space-y-4">
-        <div>
-          <h2 className="text-xl font-semibold">Novedades del Perfil</h2>
-          <p className="text-sm text-gray-600">Agregue o quite novedades con los botones de acción.</p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-[2fr_auto_auto_auto] md:items-end">
-          <div>
-            <label className="text-sm font-medium">Novedad (attendance_events)</label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
             <select
               value={newEventId}
               onChange={(event) => setNewEventId(event.target.value)}
-              className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
+              className="w-full rounded-md border py-2 pl-9 pr-3 text-sm"
               disabled={availableEvents.length === 0}
             >
               <option value="">Seleccione novedad...</option>
@@ -265,43 +265,29 @@ export function ProfileAttendanceEventsManagement() {
             </select>
           </div>
 
-          <label className="inline-flex items-center gap-2 text-sm md:mb-2">
-            <input
-              type="checkbox"
-              checked={newRequiresApproval}
-              onChange={(event) => setNewRequiresApproval(event.target.checked)}
-            />
-            Requiere aprobación
-          </label>
-
-          <label className="inline-flex items-center gap-2 text-sm md:mb-2">
-            <input
-              type="checkbox"
-              checked={newExportToPayroll}
-              onChange={(event) => setNewExportToPayroll(event.target.checked)}
-            />
-            Se Exporta a Nómina?
-          </label>
-
           <button
             type="button"
             onClick={addEventRow}
             disabled={!newEventId}
-            className="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-200 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-[#0074D9] px-3 py-2 text-sm font-medium text-white hover:bg-[#0066C0] disabled:cursor-not-allowed disabled:opacity-50"
             title="Agregar novedad"
           >
+            <Plus className="size-4" />
             Agregar
           </button>
         </div>
+        <div className="mt-3 text-sm text-gray-600">Mostrando {rows.length} de {rows.length} novedades</div>
+      </div>
 
+      <div className="rounded-lg border bg-white p-5 space-y-4">
         <div className="overflow-auto rounded-md border">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
               <tr className="border-b">
                 <th className="px-3 py-2 text-left">Novedad</th>
-                <th className="px-3 py-2 text-left">Requiere aprobación</th>
-                <th className="px-3 py-2 text-left">Se Exporta a Nómina?</th>
-                <th className="px-3 py-2 text-left">Acción</th>
+                <th className="px-3 py-2 text-center">Requiere aprobación</th>
+                <th className="px-3 py-2 text-center">Se exporta a nómina</th>
+                <th className="px-3 py-2 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -322,35 +308,35 @@ export function ProfileAttendanceEventsManagement() {
                         <div className="font-medium">{event?.event_name || row.event_name || row.attendance_event_id}</div>
                         <div className="text-xs text-gray-500">{event?.event_short_name || row.event_short_name || '-'}</div>
                       </td>
-                      <td className="px-3 py-2">
-                        <label className="inline-flex items-center gap-2">
+                      <td className="px-3 py-2 text-center">
+                        <label className="inline-flex items-center justify-center gap-2">
                           <input
                             type="checkbox"
                             checked={row.requires_approval}
                             onChange={(event) => toggleRequiresApproval(index, event.target.checked)}
                           />
-                          <span>{row.requires_approval ? 'Sí' : 'No'}</span>
                         </label>
                       </td>
-                      <td className="px-3 py-2">
-                        <label className="inline-flex items-center gap-2">
+                      <td className="px-3 py-2 text-center">
+                        <label className="inline-flex items-center justify-center gap-2">
                           <input
                             type="checkbox"
                             checked={row.export_to_payroll}
                             onChange={(event) => toggleExportToPayroll(index, event.target.checked)}
                           />
-                          <span>{row.export_to_payroll ? 'Sí' : 'No'}</span>
                         </label>
                       </td>
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => removeEventRow(index)}
-                          className="inline-flex items-center justify-center gap-1 rounded border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50"
-                          title="Quitar novedad"
-                        >
-                          Quitar
-                        </button>
+                        <div className="flex items-center justify-center">
+                          <GridActionIconButton
+                            type="button"
+                            onClick={() => removeEventRow(index)}
+                            icon={<Trash2 className="size-4" />}
+                            label="Eliminar"
+                            title="Eliminar novedad"
+                            tone="red"
+                          />
+                        </div>
                       </td>
                     </tr>
                   );
@@ -364,7 +350,7 @@ export function ProfileAttendanceEventsManagement() {
           <button
             onClick={() => void saveChanges()}
             disabled={saving || !selectedProfileId}
-            className="inline-flex items-center gap-2 rounded-md bg-[#0074D9] px-4 py-2 text-sm text-white hover:bg-[#0066C0] disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-[#2ECC71] px-4 py-2 text-sm font-medium text-white hover:bg-[#29B765] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Save className="size-4" />
             {saving ? 'Guardando...' : 'Guardar cambios'}
@@ -374,3 +360,4 @@ export function ProfileAttendanceEventsManagement() {
     </div>
   );
 }
+

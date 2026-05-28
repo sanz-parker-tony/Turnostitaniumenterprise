@@ -136,7 +136,11 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
 
   // Obtener pantalla por ruta
   const getScreenByPath = (path: string): MenuScreen | null => {
-    return menuScreens.find(screen => screen.route_path === path) || null;
+    const target = normalizePath(path);
+    return (
+      menuScreens.find((screen) => normalizePath(screen.route_path) === target) ||
+      null
+    );
   };
 
   // Función de reload manual (se usa raramente)
@@ -167,3 +171,12 @@ export function usePermissions() {
   }
   return context;
 }
+  const normalizePath = (path: string): string => {
+    const raw = String(path || '').trim();
+    if (!raw) return '';
+    const noHash = raw.split('#')[0];
+    const noQuery = noHash.split('?')[0];
+    const decoded = decodeURIComponent(noQuery);
+    if (decoded.length > 1 && decoded.endsWith('/')) return decoded.slice(0, -1);
+    return decoded;
+  };

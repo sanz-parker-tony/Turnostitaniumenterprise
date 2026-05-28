@@ -48,10 +48,10 @@ function isPendingStatus(statusKey: string | null | undefined): boolean {
 
 function statusBadgeClass(statusKey: string | null | undefined): string {
   const key = normalizeStatus(statusKey);
-  if (['APPROVED', 'APROBADO'].includes(key)) return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-  if (['REJECTED', 'RECHAZADO', 'DENEGADO'].includes(key)) return 'bg-rose-100 text-rose-700 border-rose-200';
+  if (['APPROVED', 'APROBADO', 'APROBADA'].includes(key)) return 'bg-green-100 text-green-800 border-green-200';
+  if (['REJECTED', 'RECHAZADO', 'RECHAZADA', 'DENEGADO', 'DENEGADA'].includes(key)) return 'bg-red-100 text-red-800 border-red-200';
   if (['CANCELLED', 'CANCELED', 'CANCELADO'].includes(key)) return 'bg-slate-200 text-slate-700 border-slate-300';
-  return 'bg-amber-100 text-amber-700 border-amber-200';
+  return 'bg-yellow-100 text-yellow-900 border-yellow-300';
 }
 
 function formatDateTime(value: string | null | undefined): string {

@@ -1,7 +1,7 @@
 'use client';
 /**
- * MenuGroupsManagement - Gestión de Grupos de Menú
- * Turnos Titanium Enterprise — Seguridad → Grupos de Menú
+ * MenuGroupsManagement - GestiÃ³n de Grupos de MenÃº
+ * Turnos Titanium Enterprise â€” Seguridad â†’ Grupos de MenÃº
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -9,7 +9,11 @@ import {
   LayoutList, Plus, Edit2, Power, PowerOff, Search, X,
   RefreshCw, ChevronUp, ChevronDown, Languages, Save, AlertCircle, Monitor,
 } from 'lucide-react';
-import { projectId, publicApiToken } from '../../../utils/backend/info';
+import { publicApiToken } from '../../../utils/backend/info';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 const API = `http://localhost:3001/menu-groups-management`;
 
@@ -61,7 +65,7 @@ const EMPTY_FORM = {
 
 const BADGE = {
   active: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800',
-  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600',
+  inactive: 'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700',
 };
 
 export function MenuGroupsManagement() {
@@ -254,28 +258,29 @@ export function MenuGroupsManagement() {
 
   return (
     <div className="flex flex-col h-full gap-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[#0074D9] flex items-center justify-center">
-            <LayoutList className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Grupos de Menú</h1>
-            <p className="text-sm text-gray-500">Gestión de grupos de navegación del sistema</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button onClick={load} className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-          <button onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
-            <Plus className="w-4 h-4" /> Nuevo Grupo
-          </button>
-        </div>
-      </div>
-
+      <SystemAdminPageHeader
+        icon={LayoutList}
+        title="Gestión de Grupos de Menú"
+        subtitle="Gestión de grupos de navegación del sistema"
+        rightSlot={
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Tip de navegación',
+                  text: 'Los grupos de menú organizan pantallas y determinan su visibilidad por contexto de seguridad.',
+                  variant: 'tip',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={load} />
+            <button onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+              <Plus className="w-4 h-4" /> Nuevo Grupo
+            </button>
+          </>
+        }
+      />
       {/* Filtros */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
@@ -286,7 +291,7 @@ export function MenuGroupsManagement() {
         </div>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)}
           className="text-sm border rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option value="all">Todos</option>
+          <option value="all">Todos los estados</option>
           <option value="active">Activos</option>
           <option value="inactive">Inactivos</option>
         </select>
@@ -321,7 +326,7 @@ export function MenuGroupsManagement() {
                     </th>
                   ))}
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Abrev.</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Ícono</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Ãcono</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600 cursor-pointer hover:text-gray-900"
                     onClick={() => sortBy('sort_order')}>
                     Orden<SortIcon field="sort_order" />
@@ -335,7 +340,7 @@ export function MenuGroupsManagement() {
                 {filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-12 text-gray-400">
-                      {search ? 'No hay resultados para esta búsqueda' : 'No hay grupos de menú registrados'}
+                      {search ? 'No hay resultados para esta bÃºsqueda' : 'No hay grupos de menÃº registrados'}
                     </td>
                   </tr>
                 ) : filtered.map(g => (
@@ -344,27 +349,30 @@ export function MenuGroupsManagement() {
                       <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">{g.menu_group_key}</span>
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900">{g.menu_group_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{g.menu_group_short_name || '—'}</td>
-                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{g.icon_key || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{g.menu_group_short_name || 'â€”'}</td>
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{g.icon_key || 'â€”'}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{g.sort_order}</td>
                     <td className="px-4 py-3">
                       {g.permission_level
                         ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{g.permission_level}</span>
-                        : <span className="text-gray-400">—</span>}
+                        : <span className="text-gray-400">â€”</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={g.is_active ? BADGE.active : BADGE.inactive}>
-                        {g.is_active ? 'Activo' : 'Inactivo'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-1">
-                        <button onClick={() => openEdit(g)}
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Editar">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
+                        <GridActionIconButton
+                          onClick={() => openEdit(g)}
+                          icon={<Edit2 className="w-4 h-4" />}
+                          label="Editar"
+                          tone="blue"
+                        />
+                        <GridActionIconButton
+                          onClick={() => toggleStatus(g)}
+                          icon={g.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                          label={g.is_active ? 'Desactivar' : 'Activar'}
+                          tone='amber'
+                        />
                         <button onClick={() => toggleStatus(g)}
-                          className={`p-1.5 rounded-lg ${g.is_active ? 'text-gray-500 hover:text-orange-600 hover:bg-orange-50' : 'text-gray-500 hover:text-green-600 hover:bg-green-50'}`}
+                          className="p-1.5 rounded-lg text-[#8B5E34] bg-[#F6ECDD] border border-[#D8BC9B] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150"
                           title={g.is_active ? 'Desactivar' : 'Activar'}>
                           {g.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                         </button>
@@ -387,7 +395,7 @@ export function MenuGroupsManagement() {
             <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
               <div className="flex items-center gap-2">
                 <LayoutList className="w-5 h-5 text-blue-600" />
-                <h2 className="font-semibold text-gray-900">{editing ? 'Editar Grupo de Menú' : 'Nuevo Grupo de Menú'}</h2>
+                <h2 className="font-semibold text-gray-900">{editing ? 'Editar Grupo de MenÃº' : 'Nuevo Grupo de MenÃº'}</h2>
               </div>
               <button onClick={() => setPanelOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded">
                 <X className="w-5 h-5" />
@@ -426,7 +434,7 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Datos ── */}
+              {/* â”€â”€ Tab: Datos â”€â”€ */}
               {activeTab === 'main' && (
                 <div className="space-y-4">
                   <div>
@@ -436,7 +444,7 @@ export function MenuGroupsManagement() {
                       disabled={!!editing}
                       placeholder="Ej: MAINT, SECURITY, CONFIG"
                       className="w-full px-3 py-2 border rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400" />
-                    <p className="text-xs text-gray-400 mt-1">Solo mayúsculas, números y guión bajo. No modificable una vez creado.</p>
+                    <p className="text-xs text-gray-400 mt-1">Solo mayÃºsculas, nÃºmeros y guiÃ³n bajo. No modificable una vez creado.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Nombre <span className="text-red-500">*</span></label>
@@ -454,7 +462,7 @@ export function MenuGroupsManagement() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ícono (Lucide)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ãcono (Lucide)</label>
                       <input value={form.icon_key}
                         onChange={e => setForm({ ...form, icon_key: e.target.value })}
                         placeholder="Ej: Settings, Shield"
@@ -472,7 +480,7 @@ export function MenuGroupsManagement() {
                     <select value={form.permission_level}
                       onChange={e => setForm({ ...form, permission_level: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">— Sin restricción —</option>
+                      <option value="">â€” Sin restricciÃ³n â€”</option>
                       <option value="SYSTEM">SYSTEM</option>
                       <option value="TENANT">TENANT</option>
                       <option value="PUBLIC">PUBLIC</option>
@@ -487,7 +495,7 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Traducciones ── */}
+              {/* â”€â”€ Tab: Traducciones â”€â”€ */}
               {activeTab === 'translations' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">Configure el nombre del grupo en cada idioma disponible.</p>
@@ -521,10 +529,10 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* ── Tab: Pantallas del Grupo ── */}
+              {/* â”€â”€ Tab: Pantallas del Grupo â”€â”€ */}
               {activeTab === 'screens' && (
                 <div className="space-y-3">
-                  <p className="text-sm text-gray-500">Pantallas asignadas a este grupo de menú.</p>
+                  <p className="text-sm text-gray-500">Pantallas asignadas a este grupo de menÃº.</p>
                   {!editing ? (
                     <p className="text-sm text-gray-400">Guarda el grupo primero para ver sus pantallas.</p>
                   ) : loadingScreens ? (
@@ -535,7 +543,7 @@ export function MenuGroupsManagement() {
                     <div className="text-center py-8 text-gray-400">
                       <Monitor className="w-8 h-8 mx-auto mb-2 opacity-40" />
                       <p className="text-sm">Sin pantallas asignadas a este grupo</p>
-                      <p className="text-xs mt-1">Crea pantallas en <strong>Seguridad → Pantallas</strong> y asígnalas a este grupo.</p>
+                      <p className="text-xs mt-1">Crea pantallas en <strong>Seguridad â†’ Pantallas</strong> y asÃ­gnalas a este grupo.</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -547,7 +555,7 @@ export function MenuGroupsManagement() {
                               <p className="text-sm font-medium text-gray-900">{sc.screen_name}</p>
                               <div className="flex items-center gap-2 mt-0.5">
                                 <span className="font-mono text-xs text-gray-400">{sc.screen_key}</span>
-                                {sc.route_path && <span className="text-xs text-gray-400">· {sc.route_path}</span>}
+                                {sc.route_path && <span className="text-xs text-gray-400">Â· {sc.route_path}</span>}
                               </div>
                             </div>
                           </div>
@@ -588,4 +596,5 @@ export function MenuGroupsManagement() {
 }
 
 export default MenuGroupsManagement;
+
 

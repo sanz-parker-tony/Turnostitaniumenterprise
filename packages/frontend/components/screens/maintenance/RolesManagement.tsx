@@ -1,9 +1,9 @@
 /**
- * RolesManagement.tsx - Gestión de Roles
+ * RolesManagement.tsx - GestiÃ³n de Roles
  * Turnos Titanium Enterprise
  *
  * Pantalla de mantenimiento para la tabla roles
- * Ubicación: Mantenimiento → Roles
+ * UbicaciÃ³n: Mantenimiento â†’ Roles
  */
 
 'use client';
@@ -16,6 +16,10 @@ import {
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
+import GridActionIconButton from '@/components/shared/GridActionIconButton';
+import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
+import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
 // ============================================================================
 // TIPOS
@@ -98,7 +102,7 @@ function getToken(): string {
 
 const API_BASE = `http://localhost:3001/roles-management`;
 
-// ── Tipos para permisos ──────────────────────────────────────────────────────
+// â”€â”€ Tipos para permisos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface ScreenActionCatalog {
   id: string; screen_key: string; screen_name: string;
   action_key: string; action_name: string; ui_element_key: string | null; label: string;
@@ -133,7 +137,7 @@ export function RolesManagement() {
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // ── Permisos (role_screen_actions) ──────────────────────────────────────────
+  // â”€â”€ Permisos (role_screen_actions) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [screenActionsCatalog, setScreenActionsCatalog] = useState<ScreenActionCatalog[]>([]);
   const [localPerms, setLocalPerms] = useState<Record<string, boolean>>({});
   const [permsLoading, setPermsLoading] = useState(false);
@@ -151,6 +155,11 @@ export function RolesManagement() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (!isModalOpen || modalTab !== 'permissions' || !editingRole) return;
+    void loadPermissions(editingRole);
+  }, [isModalOpen, modalTab, editingRole?.id]);
 
   const loadData = async () => {
     setLoading(true);
@@ -260,7 +269,7 @@ export function RolesManagement() {
     setPermsDirty(false);
   };
 
-  // Cargar catálogo de screen_actions + permisos actuales del rol
+  // Cargar catÃ¡logo de screen_actions + permisos actuales del rol
   const loadPermissions = async (role: Role) => {
     setPermsLoading(true); setPermsError(null);
     try {
@@ -294,7 +303,7 @@ export function RolesManagement() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error guardando permisos');
-      setPermsMsg(`✅ ${data.updated} actualizados, ${data.created} nuevos`);
+      setPermsMsg(`âœ… ${data.updated} actualizados, ${data.created} nuevos`);
       setPermsDirty(false);
       setTimeout(() => setPermsMsg(null), 4000);
       await loadPermissions(editingRole);
@@ -374,39 +383,33 @@ export function RolesManagement() {
   // ============================================================================
 
   return (
-    <div className="p-6 max-w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-[#0074D9]/10 rounded-lg">
-            <Shield className="w-6 h-6 text-[#0074D9]" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900" style={{ fontFamily: 'Inter, sans-serif' }}>
-              Gestión de Roles
-            </h1>
-            <p className="text-sm text-gray-500">
-              {filteredRoles.length} de {roles.length} roles · Los roles de sistema no se pueden eliminar
-            </p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={loadData}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50"
-          >
-            <RefreshCw className="w-4 h-4" />
-            Actualizar
-          </button>
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5] transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            Nuevo Rol
-          </button>
-        </div>
-      </div>
+    <div className="p-6 max-w-full space-y-6">
+      <SystemAdminPageHeader
+        icon={Shield}
+        title="Gestión de Roles"
+        subtitle={`${filteredRoles.length} de ${roles.length} roles · Los roles de sistema no se pueden eliminar`}
+        rightSlot={
+          <>
+            <HeaderInfoTips
+              items={[
+                {
+                  title: 'Seguridad de roles',
+                  text: 'Los roles de sistema están bloqueados para evitar cambios críticos no controlados.',
+                  variant: 'security',
+                },
+              ]}
+            />
+            <HeaderRefreshButton onClick={loadData} />
+            <button
+              onClick={openCreate}
+              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5] transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Nuevo Rol
+            </button>
+          </>
+        }
+      />
 
       {/* Error global */}
       {error && (
@@ -418,36 +421,41 @@ export function RolesManagement() {
       )}
 
       {/* Filtros */}
-      <div className="flex flex-wrap gap-3 mb-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-        <div className="relative flex-1 min-w-48">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Buscar por clave, nombre o tenant..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
-          />
+      <div className="rounded-lg border bg-white p-4">
+        <div className="flex flex-wrap gap-3">
+          <div className="relative flex-1 min-w-48">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por clave, nombre o tenant..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value as any)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="active">Activos</option>
+            <option value="inactive">Inactivos</option>
+          </select>
+          <select
+            value={scopeFilter}
+            onChange={e => setScopeFilter(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+          >
+            <option value="all">Todos los alcances</option>
+            {Object.entries(SCOPE_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>{v}</option>
+            ))}
+          </select>
         </div>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value as any)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-        >
-          <option value="all">Todos los estados</option>
-          <option value="active">Activos</option>
-          <option value="inactive">Inactivos</option>
-        </select>
-        <select
-          value={scopeFilter}
-          onChange={e => setScopeFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
-        >
-          <option value="all">Todos los alcances</option>
-          {Object.entries(SCOPE_LABELS).map(([k, v]) => (
-            <option key={k} value={k}>{v}</option>
-          ))}
-        </select>
+        <div className="mt-3 text-sm text-gray-600">
+          Mostrando {filteredRoles.length} de {roles.length} roles
+        </div>
       </div>
 
       {/* Tabla */}
@@ -537,22 +545,20 @@ export function RolesManagement() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1">
-                      <button
+                      <GridActionIconButton
                         onClick={() => openEdit(role)}
                         disabled={role.is_locked}
-                        title={role.is_locked ? 'Rol bloqueado' : 'Editar'}
-                        className="p-1.5 rounded-lg text-gray-500 hover:bg-blue-50 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
+                        label={role.is_locked ? 'Rol bloqueado' : 'Editar'}
+                        icon={<Edit2 className="w-4 h-4" />}
+                        tone="blue"
+                      />
+                      <GridActionIconButton
                         onClick={() => handleToggleStatus(role)}
                         disabled={role.is_locked || togglingId === role.id}
-                        title={role.is_active ? 'Desactivar' : 'Activar'}
-                        className="p-1.5 rounded-lg text-gray-500 hover:bg-yellow-50 hover:text-yellow-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {role.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
-                      </button>
+                        label={role.is_active ? 'Desactivar' : 'Activar'}
+                        icon={role.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                        tone='amber'
+                      />
                     </div>
                   </td>
                 </tr>
@@ -583,7 +589,7 @@ export function RolesManagement() {
                 <Shield className="w-4 h-4 inline mr-1.5" />Datos del Rol
               </button>
               {editingRole && (
-                <button onClick={() => { setModalTab('permissions'); if (screenActionsCatalog.length === 0 && !permsLoading) loadPermissions(editingRole); }}
+                <button onClick={() => { setModalTab('permissions'); }}
                   className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${modalTab === 'permissions' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
                   <ShieldCheck className="w-4 h-4 inline mr-1.5" />Permisos
                   {permsDirty && <span className="ml-1.5 w-2 h-2 bg-amber-500 rounded-full inline-block" />}
@@ -594,7 +600,7 @@ export function RolesManagement() {
             {/* Modal Body */}
             <div className="px-6 py-5 overflow-y-auto flex-1">
 
-              {/* ── TAB: Datos ── */}
+              {/* â”€â”€ TAB: Datos â”€â”€ */}
               {modalTab === 'data' && (
                 <div className="space-y-4">
                   {formErrors.general && (
@@ -642,7 +648,7 @@ export function RolesManagement() {
                     {formErrors.role_key ? (
                       <p className="text-xs text-red-500 mt-1">{formErrors.role_key}</p>
                     ) : (
-                      <p className="text-xs text-gray-400 mt-1">Solo A-Z, 0-9 y guión bajo. Mínimo 2 caracteres.</p>
+                      <p className="text-xs text-gray-400 mt-1">Solo A-Z, 0-9 y guion bajo. Mínimo 2 caracteres.</p>
                     )}
                   </div>
 
@@ -746,7 +752,7 @@ export function RolesManagement() {
                 </div>
               )}
 
-              {/* ── TAB: Permisos ── */}
+              {/* â”€â”€ TAB: Permisos â”€â”€ */}
               {modalTab === 'permissions' && editingRole && (
                 <div className="space-y-3">
                   {permsError && (
@@ -764,9 +770,9 @@ export function RolesManagement() {
                     </p>
                     <div className="flex gap-2">
                       <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = true; }); setLocalPerms(u); setPermsDirty(true); }}
-                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Todo ✓</button>
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Seleccionar todo</button>
                       <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = false; }); setLocalPerms(u); setPermsDirty(true); }}
-                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Todo ✗</button>
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Quitar todo</button>
                     </div>
                   </div>
 
@@ -842,3 +848,5 @@ export function RolesManagement() {
     </div>
   );
 }
+
+

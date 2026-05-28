@@ -1,6 +1,6 @@
 -- ============================================================================
 -- 018_ADD_WORK_PATTERN_SHIFTS
--- Detalle de secuencia de turnos por patr�n de trabajo (padre-hijo)
+-- Detalle de secuencia de turnos por patron de trabajo (padre-hijo)
 -- ============================================================================
 
 SET search_path TO public;

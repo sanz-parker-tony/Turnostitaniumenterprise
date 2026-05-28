@@ -10,6 +10,21 @@ import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+} from 'recharts';
+import {
   Users,
   Building2,
   Clock,
@@ -47,6 +62,7 @@ import {
   CircleDot,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
+import SystemAdminPageHeader from './shared/SystemAdminPageHeader';
 
 const RoleInfo = ({ roleKey }: { roleKey: string | undefined }) => {
   const roleInfo: Record<string, { title: string; description: string; icon: any; color: string }> = {
@@ -362,7 +378,13 @@ function EmployeeHome({ payload }: { payload: any }) {
     : holidays.flatMap((row: any) => {
       const date = toDateKey(row?.holiday_date);
       if (!date) return [];
-      return [{ date, icon_key: 'CalendarDays', bg_color: '#DCFCE7', text_color: '#166534', title: row?.holiday_name || 'Feriado' }];
+      return [{
+        date,
+        icon_key: row?.holiday_type_icon_key || 'CalendarDays',
+        bg_color: '#DCFCE7',
+        text_color: row?.holiday_type_icon_color || '#166534',
+        title: row?.holiday_name || 'Feriado',
+      }];
     });
   const resolveProfileIcon = (name: string, fallback: any) => (LucideIcons as Record<string, any>)[name] || fallback;
 
@@ -541,15 +563,237 @@ function EmployeeHome({ payload }: { payload: any }) {
   );
 }
 
+const SYSTEM_ADMIN_CHART_COLORS = [
+  '#2563eb',
+  '#059669',
+  '#f59e0b',
+  '#dc2626',
+  '#7c3aed',
+  '#0891b2',
+  '#ea580c',
+  '#4f46e5',
+  '#16a34a',
+  '#be123c',
+  '#0f766e',
+  '#6d28d9',
+];
+
+function formatMetric(value: unknown): string {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return '0';
+  return num.toLocaleString('es-EC');
+}
+
+function SystemAdminInsights({
+  payload,
+  selectedYear,
+  weekStep,
+}: {
+  payload: any;
+  selectedYear: number;
+  weekStep: number;
+}) {
+  const metrics = payload?.metrics || {};
+  const employeesSeries = Array.isArray(payload?.weekly_employees) ? payload.weekly_employees : [];
+  const punchesSeries = Array.isArray(payload?.weekly_punches) ? payload.weekly_punches : [];
+  const deviceDistribution = Array.isArray(payload?.device_distribution_90d) ? payload.device_distribution_90d : [];
+  const topTenants = Array.isArray(payload?.top_tenants_30d) ? payload.top_tenants_30d : [];
+
+  const kpiCards = [
+    {
+      title: 'Tenants Activos',
+      value: formatMetric(metrics.active_tenants),
+      detail: `Con actividad 30d: ${formatMetric(metrics.active_tenants_with_activity_30d)} (${metrics.tenant_activity_rate_30d || 0}%)`,
+    },
+    {
+      title: 'Empleados Activos',
+      value: formatMetric(metrics.active_employees),
+      detail: `Usuarios activos: ${formatMetric(metrics.active_users)}`,
+    },
+    {
+      title: 'Marcaciones',
+      value: formatMetric(metrics.total_punches_year),
+      detail: `Hoy: ${formatMetric(metrics.total_punches_today)} | 30d: ${formatMetric(metrics.total_punches_30d)}`,
+    },
+    {
+      title: 'Capacidad Operativa',
+      value: formatMetric(metrics.active_devices),
+      detail: `Disp. activos | Prom. 30d por empl: ${formatMetric(metrics.avg_punches_per_employee_30d)}`,
+    },
+    {
+      title: 'Ausencias Pendientes',
+      value: formatMetric(metrics.pending_absence_requests),
+      detail: 'Solicitudes globales pendientes',
+    },
+    {
+      title: 'Cambios de Turno Pendientes',
+      value: formatMetric(metrics.pending_shift_change_requests),
+      detail: 'Solicitudes globales pendientes',
+    },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <Card>
+        <CardHeader className="p-4 pb-2">
+          <CardTitle className="text-sm">KPIs Operativos</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pt-0 pb-4">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+            {kpiCards.map((kpi) => (
+              <div key={kpi.title} className="rounded-lg border bg-card p-2">
+                <p className="text-xs text-muted-foreground">{kpi.title}</p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight">{kpi.value}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground leading-tight">{kpi.detail}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="h-[340px] flex flex-col">
+          <CardHeader className="pb-3">
+            <CardTitle className="whitespace-nowrap">Marcaciones por Dispositivo (90 dias)</CardTitle>
+            <CardDescription>Participacion porcentual por origen de dispositivo.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex-1">
+            {deviceDistribution.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin marcaciones registradas para el periodo.</p>
+            ) : (
+              <div className="h-full rounded-xl border bg-gradient-to-br from-slate-50 to-white p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={deviceDistribution}
+                      dataKey="punches"
+                      nameKey="device_name"
+                      cx="50%"
+                      cy="47%"
+                      innerRadius={48}
+                      outerRadius={76}
+                      paddingAngle={2}
+                      strokeWidth={0}
+                    >
+                      {deviceDistribution.map((_: any, idx: number) => (
+                        <Cell key={`device-cell-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Legend verticalAlign="bottom" height={28} />
+                    <RechartsTooltip formatter={(value: any, _: any, row: any) => [`${formatMetric(value)} marcaciones`, row?.payload?.device_name]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="h-[340px] flex flex-col">
+          <CardHeader>
+            <CardTitle>Top Tenants por Marcaciones (30 dias)</CardTitle>
+            <CardDescription>Volumen de uso por tenant en el ultimo mes.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex-1">
+            {topTenants.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin actividad de tenants para el periodo.</p>
+            ) : (
+              <div className="h-full rounded-xl border bg-white p-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topTenants.slice(0, 8)} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="tenant_name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={58} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <RechartsTooltip formatter={(value: any) => [`${formatMetric(value)} marcaciones`, 'Volumen']} />
+                    <Bar dataKey="punches_30d" name="Marcaciones 30d" radius={[6, 6, 0, 0]}>
+                      {topTenants.slice(0, 8).map((_: any, idx: number) => (
+                        <Cell key={`tenant-bar-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="h-[340px] flex flex-col">
+          <CardHeader>
+            <CardTitle>Incremento de Empleados por Semana ({selectedYear})</CardTitle>
+            <CardDescription>Nuevos registros semanales de empleados activos.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={employeesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <RechartsTooltip />
+                <Legend />
+                <Line type="monotone" dataKey="new_employees" name="Nuevos" stroke="#2563eb" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Incremento de Marcaciones por Semana ({selectedYear})</CardTitle>
+            <CardDescription>Volumen semanal global de marcaciones.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={punchesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <RechartsTooltip />
+                <Legend />
+                <Line type="monotone" dataKey="punches" name="Semanal" stroke="#f59e0b" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Nuevos Empleados por Semana ({selectedYear})</CardTitle>
+            <CardDescription>Vista en barras para variacion semanal.</CardDescription>
+          </CardHeader>
+          <CardContent className="h-[320px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={employeesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <RechartsTooltip />
+                <Legend />
+                <Bar dataKey="new_employees" name="Nuevos" fill="#2563eb" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { profile, session } = useAuth();
   const { menuScreens } = usePermissions();
 
   const isEmployee = profile?.role_key === 'EMPLOYEE';
+  const isSystemAdmin = profile?.role_key === 'SYSTEM_ADMIN';
 
   const [employeeLoading, setEmployeeLoading] = useState(false);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [employeePayload, setEmployeePayload] = useState<any>(null);
+  const [systemAdminLoading, setSystemAdminLoading] = useState(false);
+  const [systemAdminError, setSystemAdminError] = useState<string | null>(null);
+  const [systemAdminPayload, setSystemAdminPayload] = useState<any>(null);
+  const [systemAdminYear, setSystemAdminYear] = useState(new Date().getFullYear());
+  const [systemAdminWeekStep, setSystemAdminWeekStep] = useState(1);
 
   useEffect(() => {
     let mounted = true;
@@ -581,7 +825,40 @@ export function Dashboard() {
     };
   }, [isEmployee, session?.access_token]);
 
-  const stats = [
+  useEffect(() => {
+    let mounted = true;
+
+    const loadSystemAdmin = async () => {
+      if (!isSystemAdmin) return;
+      if (!session?.access_token) return;
+      try {
+        if (mounted) {
+          setSystemAdminLoading(true);
+          setSystemAdminError(null);
+        }
+        const resp = await fetch(
+          `http://localhost:3001/dashboard/system-admin-summary?year=${systemAdminYear}&week_step=${systemAdminWeekStep}`,
+          {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          }
+        );
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'No se pudo cargar la analitica global');
+        if (mounted) setSystemAdminPayload(data);
+      } catch (e: any) {
+        if (mounted) setSystemAdminError(e?.message || 'Error cargando dashboard de SYSTEM_ADMIN');
+      } finally {
+        if (mounted) setSystemAdminLoading(false);
+      }
+    };
+
+    void loadSystemAdmin();
+    return () => {
+      mounted = false;
+    };
+  }, [isSystemAdmin, session?.access_token, systemAdminYear, systemAdminWeekStep]);
+
+  const defaultStats = [
     {
       title: 'Empleados Activos',
       value: '0',
@@ -615,6 +892,42 @@ export function Dashboard() {
       bgColor: 'bg-orange-100',
     },
   ];
+  const metrics = systemAdminPayload?.metrics || {};
+  const systemAdminStats = [
+    {
+      title: 'Tenants Activos',
+      value: formatMetric(metrics.active_tenants),
+      icon: Building2,
+      description: `Con actividad 30d: ${formatMetric(metrics.active_tenants_with_activity_30d)}`,
+      color: 'text-blue-600',
+      bgColor: 'bg-blue-100',
+    },
+    {
+      title: 'Empleados Activos',
+      value: formatMetric(metrics.active_employees),
+      icon: Users,
+      description: `Usuarios activos: ${formatMetric(metrics.active_users)}`,
+      color: 'text-green-600',
+      bgColor: 'bg-green-100',
+    },
+    {
+      title: 'Marcaciones Año',
+      value: formatMetric(metrics.total_punches_year),
+      icon: Fingerprint,
+      description: `Hoy: ${formatMetric(metrics.total_punches_today)}`,
+      color: 'text-purple-600',
+      bgColor: 'bg-purple-100',
+    },
+    {
+      title: 'Dispositivos Activos',
+      value: formatMetric(metrics.active_devices),
+      icon: Network,
+      description: `Promedio 30d: ${formatMetric(metrics.avg_punches_per_employee_30d)}`,
+      color: 'text-orange-600',
+      bgColor: 'bg-orange-100',
+    },
+  ];
+  const stats = isSystemAdmin ? systemAdminStats : defaultStats;
 
   const getMenuGroupsByRole = (roleKey: string | undefined) => {
     const menuMap: Record<string, string[]> = {
@@ -628,15 +941,48 @@ export function Dashboard() {
   };
 
   const expectedGroups = getMenuGroupsByRole(profile?.role_key);
+  const systemAdminYearOptions = [systemAdminYear - 2, systemAdminYear - 1, systemAdminYear, systemAdminYear + 1]
+    .filter((v, i, arr) => arr.indexOf(v) === i);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Bienvenido, {profile?.display_name}</h1>
-        <p className="text-gray-600">Sistema Enterprise de Control de Asistencias y Turnos de Trabajo</p>
-      </div>
+    <div className="p-5 max-w-full space-y-4">
+      <SystemAdminPageHeader
+        icon={BarChart3}
+        title={`Bienvenido, ${profile?.display_name || 'Usuario'}`}
+        subtitle={isSystemAdmin
+          ? 'Analitica global de adopcion, crecimiento y uso operativo del sistema'
+          : 'Sistema Enterprise de Control de Asistencias y Turnos de Trabajo'}
+        rightSlot={isSystemAdmin ? (
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground flex items-center gap-2">
+              Anio
+              <select
+                value={systemAdminYear}
+                onChange={(e) => setSystemAdminYear(Number(e.target.value))}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {systemAdminYearOptions.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs text-muted-foreground flex items-center gap-2">
+              Salto semanas
+              <select
+                value={systemAdminWeekStep}
+                onChange={(e) => setSystemAdminWeekStep(Number(e.target.value))}
+                className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+              >
+                {[1, 2, 4, 8].map((step) => (
+                  <option key={step} value={step}>Cada {step}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : undefined}
+      />
 
-      <RoleInfo roleKey={profile?.role_key} />
+      {!isSystemAdmin ? <RoleInfo roleKey={profile?.role_key} /> : null}
 
       {isEmployee ? (
         employeeLoading ? (
@@ -648,48 +994,66 @@ export function Dashboard() {
         )
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {stats.map((stat, index) => {
-              const Icon = stat.icon;
-              return (
-                <Card key={index}>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-                    <div className={`${stat.bgColor} p-2 rounded-lg`}>
-                      <Icon className={`h-4 w-4 ${stat.color}`} />
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{stat.value}</div>
-                    <p className="text-xs text-muted-foreground">{stat.description}</p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+          {!isSystemAdmin ? (
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+              {stats.map((stat, index) => {
+                const Icon = stat.icon;
+                return (
+                  <Card key={index}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                      <div className={`${stat.bgColor} p-2 rounded-lg`}>
+                        <Icon className={`h-4 w-4 ${stat.color}`} />
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold">{stat.value}</div>
+                      <p className="text-xs text-muted-foreground">{stat.description}</p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : null}
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Acceso Rapido a Pantallas</CardTitle>
-              <CardDescription>Tienes acceso a {menuScreens.length} pantallas del sistema</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                {menuScreens.slice(0, 8).map((screen) => (
-                  <button
-                    key={screen.screen_key}
-                    onClick={() => { window.location.href = screen.route_path; }}
-                    className="flex items-center gap-3 p-3 rounded-lg border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{screen.screen_name}</p>
-                      <p className="text-xs text-muted-foreground truncate">{screen.menu_group_name}</p>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          {isSystemAdmin ? (
+            systemAdminLoading ? (
+              <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">Cargando analitica global...</p></CardContent></Card>
+            ) : systemAdminError ? (
+              <Card><CardContent className="pt-6"><p className="text-sm text-red-600">{systemAdminError}</p></CardContent></Card>
+            ) : (
+              <SystemAdminInsights
+                payload={systemAdminPayload}
+                selectedYear={systemAdminYear}
+                weekStep={systemAdminWeekStep}
+              />
+            )
+          ) : null}
+
+          {!isSystemAdmin && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Acceso Rapido a Pantallas</CardTitle>
+                <CardDescription>Tienes acceso a {menuScreens.length} pantallas del sistema</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                  {menuScreens.slice(0, 8).map((screen) => (
+                    <button
+                      key={screen.screen_key}
+                      onClick={() => { window.location.href = screen.route_path; }}
+                      className="flex items-center gap-3 p-3 rounded-lg border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{screen.screen_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">{screen.menu_group_name}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 

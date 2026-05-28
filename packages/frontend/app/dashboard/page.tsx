@@ -1,6 +1,6 @@
 /**
  * Dashboard Principal - Home para TODOS los roles
- * Contenido dinÃ¡mico segÃºn rol del usuario
+ * Contenido dinamico segun rol del usuario
  */
 
 'use client';
@@ -124,9 +124,9 @@ export default function DashboardPage() {
           </h1>
           <p className="text-gray-600 mt-2">
             {dashboardType === 'EMPLOYEE' && 'Panel de autoservicio - Gestiona tus asistencias y solicitudes'}
-            {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - GestiÃ³n de personal y aprobaciones'}
-            {dashboardType === 'SYSTEM_ADMIN' && 'Panel de AdministraciÃ³n - ConfiguraciÃ³n del sistema'}
-            {dashboardType === 'TENANT_ADMIN' && 'Panel de AdministraciÃ³n - GestiÃ³n del tenant'}
+            {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - Gestion de personal y aprobaciones'}
+            {dashboardType === 'SYSTEM_ADMIN' && 'Panel de Administracion - Configuracion del sistema'}
+            {dashboardType === 'TENANT_ADMIN' && 'Panel de Administracion - Gestion del tenant'}
             {dashboardType === 'DEFAULT' && 'Panel principal'}
           </p>
         </div>
@@ -284,7 +284,13 @@ function EmployeeDashboard() {
     : holidays.flatMap((row: any) => {
       const date = toDateKey(row?.holiday_date);
       if (!date) return [];
-      return [{ date, icon_key: 'CalendarDays', bg_color: '#DCFCE7', text_color: '#166534', title: row?.holiday_name || 'Feriado' }];
+      return [{
+        date,
+        icon_key: row?.holiday_type_icon_key || 'CalendarDays',
+        bg_color: '#DCFCE7',
+        text_color: row?.holiday_type_icon_color || '#166534',
+        title: row?.holiday_name || 'Feriado',
+      }];
     });
 
   const fmtDate = (value: string | null | undefined) => {
@@ -637,9 +643,9 @@ function RRHHDashboard() {
         />
         <StatCard
           icon={<AlertTriangle className="w-6 h-6 text-red-600" />}
-          title="AnomalÃ­as"
+          title="Anomalias"
           value="8"
-          description="Requieren revisiÃ³n"
+          description="Requieren revision"
           color="red"
         />
         <StatCard
@@ -658,7 +664,7 @@ function RRHHDashboard() {
         />
       </div>
 
-      {/* Accesos RÃ¡pidos */}
+      {/* Accesos Rapidos */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <QuickAccessCard
           title="Aprobar Solicitudes"
@@ -666,7 +672,7 @@ function RRHHDashboard() {
           href="/dashboard/attendance/approvals"
         />
         <QuickAccessCard
-          title="Revisar AnomalÃ­as"
+          title="Revisar Anomalias"
           count={8}
           href="/dashboard/attendance/anomalies"
         />
@@ -711,7 +717,7 @@ function SystemAdminDashboard() {
         />
         <StatCard
           icon={<Shield className="w-6 h-6 text-amber-600" />}
-          title="Logs de AuditorÃ­a"
+          title="Logs de Auditoria"
           value="1,234"
           description="Eventos registrados"
           color="amber"
@@ -720,7 +726,7 @@ function SystemAdminDashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <QuickAccessCard
-          title="ConfiguraciÃ³n Tenant"
+          title="Configuracion Tenant"
           href="/dashboard/config/tenant-settings"
         />
         <QuickAccessCard
@@ -728,7 +734,7 @@ function SystemAdminDashboard() {
           href="/dashboard/config/devices"
         />
         <QuickAccessCard
-          title="AuditorÃ­a"
+          title="Auditoria"
           href="/dashboard/security/audit"
         />
       </div>
@@ -1188,7 +1194,7 @@ function DefaultDashboard() {
       <Settings className="w-16 h-16 text-gray-400 mx-auto mb-4" />
       <h2 className="text-2xl font-semibold text-gray-900 mb-2">Dashboard Principal</h2>
       <p className="text-gray-600">
-        Usa el menÃº lateral para acceder a las funcionalidades del sistema
+        Usa el menu lateral para acceder a las funcionalidades del sistema
       </p>
     </div>
   );
@@ -1269,7 +1275,7 @@ function QuickAccessCard({ title, count, href }: {
         )}
       </div>
       <div className="flex items-center text-[#0074D9] text-sm font-medium">
-        Ir a mÃ³dulo
+        Ir a modulo
         <ArrowRight className="w-4 h-4 ml-2" />
       </div>
     </Link>
