@@ -13,13 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 config({ path: path.resolve(__dirname, '../.env.local') });
 
-process.env.DATABASE_URL ||= 'postgresql://postgres:51mul4cr05.5n9r-2025@192.168.71.104:5432/tt_db';
-process.env.Postgres_URL ||= process.env.DATABASE_URL;
-process.env.Postgres_SERVICE_ROLE_KEY ||= 'local-postgres';
-process.env.Postgres_ANON_KEY ||= 'local-postgres';
-
 const app = express();
-const PORT = process.env.BACKEND_PORT || 3001;
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 3001;
 
 // ============================================================================
 // MIDDLEWARE
