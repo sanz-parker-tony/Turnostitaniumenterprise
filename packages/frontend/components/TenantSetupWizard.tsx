@@ -6,6 +6,7 @@
  * Paso 2: Usuario tenant.admin
  */
 
+import { buildApiUrl } from '../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Building2, User, CheckCircle2, ArrowRight, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
@@ -228,7 +229,7 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
       console.log('🔧 Tenant key sanitizado:', sanitizedTenantKey);
 
       const response = await fetch(
-        `http://localhost:3001/bootstrap/step1-tenant`,
+        buildApiUrl(`/bootstrap/step1-tenant`),
         {
           method: 'POST',
           headers: {
@@ -337,7 +338,7 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
       });
 
       const response = await fetch(
-        `http://localhost:3001/bootstrap/step2-admin`,
+        buildApiUrl(`/bootstrap/step2-admin`),
         {
           method: 'POST',
           headers: {

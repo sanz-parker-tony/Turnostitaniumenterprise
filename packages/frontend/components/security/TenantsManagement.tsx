@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useEffect, useState } from 'react';
 import { Building, Edit2, Save, X, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -72,7 +73,7 @@ export default function TenantsManagement() {
         return;
       }
 
-      const response = await fetch(`http://localhost:3001/tenants/${tenant.id}`, {
+      const response = await fetch(buildApiUrl(`/tenants/${tenant.id}`), {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,

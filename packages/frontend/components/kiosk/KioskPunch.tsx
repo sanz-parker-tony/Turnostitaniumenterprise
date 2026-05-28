@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -120,7 +121,7 @@ export default function KioskPunch() {
     if (!token) throw new Error('No hay sesion activa. Inicia sesion para marcar.');
 
     const doFetch = async (bearer: string) => {
-      const response = await fetch(`http://localhost:3001${path}`, {
+      const response = await fetch(buildApiUrl(`${path}`), {
         ...init,
         headers: {
           'Content-Type': 'application/json',

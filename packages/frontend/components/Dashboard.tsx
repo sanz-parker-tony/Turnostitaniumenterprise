@@ -5,6 +5,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../utils/api-config';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
@@ -806,7 +807,7 @@ export function Dashboard() {
           setEmployeeLoading(true);
           setEmployeeError(null);
         }
-        const resp = await fetch('http://localhost:3001/dashboard/employee-summary', {
+        const resp = await fetch(buildApiUrl('/dashboard/employee-summary'), {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const data = await resp.json().catch(() => ({}));
@@ -837,7 +838,7 @@ export function Dashboard() {
           setSystemAdminError(null);
         }
         const resp = await fetch(
-          `http://localhost:3001/dashboard/system-admin-summary?year=${systemAdminYear}&week_step=${systemAdminWeekStep}`,
+          buildApiUrl(`/dashboard/system-admin-summary?year=${systemAdminYear}&week_step=${systemAdminWeekStep}`),
           {
             headers: { Authorization: `Bearer ${session.access_token}` },
           }

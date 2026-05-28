@@ -3,6 +3,7 @@
  * Paso 4: Empleados (Carga Masiva)
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Users, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Download, Loader2 } from 'lucide-react';
 import { projectId, publicApiToken } from '../../utils/backend/info';
@@ -69,7 +70,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'boot
         
         try {
           const tokenResponse = await fetch(
-            `http://localhost:3001/bootstrap/token-direct`,
+            buildApiUrl(`/bootstrap/token-direct`),
             {
               headers: {
                 'Authorization': `Bearer ${publicApiToken}`
@@ -95,7 +96,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'boot
       // Llamada paralela a ambos endpoints
       const [catalogsResponse, tenantInfoResponse] = await Promise.all([
         fetch(
-          `http://localhost:3001/bootstrap/catalogs`,
+          buildApiUrl(`/bootstrap/catalogs`),
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -104,7 +105,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'boot
           }
         ),
         fetch(
-          `http://localhost:3001/bootstrap/tenant-info`,
+          buildApiUrl(`/bootstrap/tenant-info`),
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -271,7 +272,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'boot
       const bootstrapToken = localStorage.getItem('bootstrapToken') || '';
       
       const response = await fetch(
-        `http://localhost:3001/bootstrap/employees`,
+        buildApiUrl(`/bootstrap/employees`),
         {
           method: 'POST',
           headers: {
@@ -344,7 +345,7 @@ export default function WizardStepEmployees({ onComplete, onGoBack, mode = 'boot
 
       // ✅ ACTUALIZAR tenant_onboarding: Paso 4 completado
       const response = await fetch(
-        `http://localhost:3001/bootstrap/update-step`,
+        buildApiUrl(`/bootstrap/update-step`),
         {
           method: 'POST',
           headers: {

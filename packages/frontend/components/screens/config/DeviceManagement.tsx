@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { Edit, Plus, Power, PowerOff, Save, Search, Tablet, Trash2, X } from 'lucide-react';
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMapEvents, useMap } from 'react-leaflet';
@@ -270,7 +271,7 @@ export function DeviceManagement() {
   const [form, setForm] = useState<DeviceFormState>(makeEmptyForm());
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

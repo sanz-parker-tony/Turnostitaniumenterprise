@@ -1,18 +1,20 @@
-/**
- * API Configuration Helper
- * Centraliza las URLs del backend local y permite fácil cambio
- * 
- * Cuando uses el backend local, las llamadas irán a http://localhost:3001
- * En producción, se puede cambiar a URLs de ApiClient o cualquier otro servidor
- */
+const DEFAULT_DEV_API_URL = 'http://localhost:3001';
+const DEFAULT_PROD_API_URL = 'https://turnostitaniumenterprise-production.up.railway.app';
+
+function normalizeBaseUrl(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+function resolveApiBaseUrl(): string {
+  const envUrl = import.meta.env.VITE_API_URL?.trim();
+  if (envUrl) return normalizeBaseUrl(envUrl);
+  return import.meta.env.PROD ? DEFAULT_PROD_API_URL : DEFAULT_DEV_API_URL;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const API_CONFIG = {
-  // Backend local (desarrollo)
-  BASE_URL: 'http://localhost:3001',
-  
-  // O usa vite proxy: http://localhost:3001 redirige a http://localhost:3001
-  // BASE_URL: 'http://localhost:3001',
-  
+  BASE_URL: API_BASE_URL,
   endpoints: {
     auth: {
       createSystemAdmin: '/auth/create-system-admin',
@@ -58,18 +60,14 @@ export const API_CONFIG = {
   },
 } as const;
 
-/**
- * Construye una URL completa del endpoint
- * @param endpoint - Endpoint relativo (ej: '/auth/login')
- * @returns URL completa (ej: 'http://localhost:3001/auth/login')
- */
-export function buildURL(endpoint: string): string {
-  return `${API_CONFIG.BASE_URL}${endpoint}`;
+export function buildApiUrl(endpoint: string): string {
+  if (/^https?:\/\//i.test(endpoint)) return endpoint;
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  return `${API_BASE_URL}${normalizedEndpoint}`;
 }
 
-/**
- * Realiza un fetch con manejo de errores común
- */
+export const buildURL = buildApiUrl;
+
 export async function apiCall<T = any>(
   endpoint: string,
   options: RequestInit & {
@@ -79,16 +77,16 @@ export async function apiCall<T = any>(
   try {
     const { token, ...fetchOptions } = options;
     const headers = new Headers(fetchOptions.headers || {});
-    
+
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
-    
+
     if (!headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
 
-    const response = await fetch(buildURL(endpoint), {
+    const response = await fetch(buildApiUrl(endpoint), {
       ...fetchOptions,
       headers,
     });
@@ -105,9 +103,6 @@ export async function apiCall<T = any>(
   }
 }
 
-/**
- * Función específica para crear el Admin del Sistema
- */
 export async function createSystemAdmin(): Promise<{ data: any | null; error: Error | null }> {
   return apiCall(API_CONFIG.endpoints.auth.createSystemAdmin, {
     method: 'POST',
@@ -115,16 +110,10 @@ export async function createSystemAdmin(): Promise<{ data: any | null; error: Er
   });
 }
 
-/**
- * Función específica para obtener wizard state del bootstrap
- */
 export async function getWizardState(): Promise<{ data: any | null; error: Error | null }> {
   return apiCall(API_CONFIG.endpoints.bootstrap.getWizardState);
 }
 
-/**
- * Función específica para identificar en kiosk
- */
 export async function kioskIdentify(
   pin: string,
   anonKey?: string

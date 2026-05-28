@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -55,7 +56,7 @@ type AreaContext = {
   employee_profiles: TreeLeafNode[];
 };
 
-const API_BASE = 'http://localhost:3001/security-user-scopes';
+const API_BASE = buildApiUrl('/security-user-scopes');
 
 function labelTarget(t: Target): string {
   const name = t.display_name?.trim() || t.username;

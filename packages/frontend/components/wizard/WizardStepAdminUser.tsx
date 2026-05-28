@@ -4,6 +4,7 @@
  * Este usuario tendrá permisos completos para gestionar el sistema
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { UserCog, ChevronRight, ChevronLeft, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
 import { projectId, publicApiToken } from '../../utils/backend/info';
@@ -60,7 +61,7 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
       try {
         const bootstrapToken = localStorage.getItem('bootstrapToken') || '';
         const response = await fetch(
-          `http://localhost:3001/bootstrap/tenant-info`,
+          buildApiUrl(`/bootstrap/tenant-info`),
           {
             headers: {
               'Authorization': `Bearer ${publicApiToken}`,
@@ -156,7 +157,7 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
       // 3. ENVIAR REQUEST (formato v1.0)
       // ========================================
       const response = await fetch(
-        `http://localhost:3001/bootstrap/complete`,
+        buildApiUrl(`/bootstrap/complete`),
         {
           method: 'POST',
           headers: {

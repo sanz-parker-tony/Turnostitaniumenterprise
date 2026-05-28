@@ -4,6 +4,7 @@
  * Turnos Titanium Enterprise â€” Seguridad â†’ Pantallas
  */
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect, useMemo } from 'react';
 import {
   Monitor, Plus, Edit2, Power, PowerOff, Search, X,
@@ -15,8 +16,8 @@ import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
-const API = `http://localhost:3001/screens-management`;
-const SA_API = `http://localhost:3001/screen-actions-management`;
+const API = buildApiUrl(`/screens-management`);
+const SA_API = buildApiUrl(`/screen-actions-management`);
 
 function getToken() { return localStorage.getItem('tt-access-token') || publicApiToken; }
 

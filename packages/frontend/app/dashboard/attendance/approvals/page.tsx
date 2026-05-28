@@ -5,6 +5,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import ScreenPageShell from '@/components/ScreenPageShell';
 import { createClient } from '@/utils/backend/client';
@@ -75,7 +76,7 @@ export default function ApprovalsPage() {
     const token = session?.access_token || localStorage.getItem('tt-access-token');
     if (!token) throw new Error('No hay sesión activa');
 
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

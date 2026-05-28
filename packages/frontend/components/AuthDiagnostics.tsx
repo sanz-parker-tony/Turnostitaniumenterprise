@@ -3,6 +3,7 @@
  * Muestra información sobre la configuración y estado del sistema
  */
 
+import { buildApiUrl } from '../utils/api-config';
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { projectId, publicApiToken } from '../utils/backend/info';
@@ -21,7 +22,7 @@ export function AuthDiagnostics() {
     setError('');
 
     try {
-      const url = `http://localhost:3001/auth/diagnostics`;
+      const url = buildApiUrl(`/auth/diagnostics`);
       
       const response = await fetch(url, {
         headers: {

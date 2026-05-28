@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -21,7 +22,7 @@ import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
-const API = 'http://localhost:3001/actions-management';
+const API = buildApiUrl('/actions-management');
 function getToken() {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }

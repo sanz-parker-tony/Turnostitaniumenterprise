@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/utils/backend/client';
 import { Button } from '@/components/ui/button';
@@ -69,7 +70,7 @@ export default function RequestsApprovalsManagement() {
     const token = session?.access_token || localStorage.getItem('tt-access-token');
     if (!token) throw new Error('No hay sesion activa');
 
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -95,7 +96,7 @@ export default function RequestsApprovalsManagement() {
         localStorage.getItem('access_token');
       if (!token) throw new Error('No hay sesion activa');
 
-      const response = await fetch(`http://localhost:3001/kiosk/requests/${row.id}/support-document`, {
+      const response = await fetch(buildApiUrl(`/kiosk/requests/${row.id}/support-document`), {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,

@@ -3,6 +3,7 @@
  * Modal bloqueante para cambio obligatorio de contraseña
  */
 
+import { buildApiUrl } from '../utils/api-config';
 import { useState } from 'react';
 import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { projectId } from '../utils/backend/info';
@@ -48,7 +49,7 @@ export default function ChangePasswordModal({ isOpen, onClose, onPasswordChanged
 
       // Actualizar contraseña en ApiClient Auth
       const response = await fetch(
-        `http://localhost:3001/users/change-password`,
+        buildApiUrl(`/users/change-password`),
         {
           method: 'POST',
           headers: {

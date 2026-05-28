@@ -6,6 +6,7 @@
  * Sistema maestro-detalle con CRUD completo y traducciones
  */
 
+import { buildApiUrl } from '../../../utils/api-config';
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
@@ -188,7 +189,7 @@ export function CatalogManagement() {
       setError(null);
 
       const res = await fetch(
-        `http://localhost:3001/lookup-groups`,
+        buildApiUrl(`/lookup-groups`),
         {
           headers: authHeaders()
         }
@@ -211,7 +212,7 @@ export function CatalogManagement() {
   const loadValues = async (groupId: string) => {
     try {
       const res = await fetch(
-        `http://localhost:3001/lookup-values?group_id=${groupId}`,
+        buildApiUrl(`/lookup-values?group_id=${groupId}`),
         {
           headers: authHeaders()
         }
@@ -231,7 +232,7 @@ export function CatalogManagement() {
   };
 
   const loadGroupById = async (groupId: string): Promise<LookupGroup | null> => {
-    const res = await fetch(`http://localhost:3001/lookup-groups/${groupId}`, { headers: authHeaders() });
+    const res = await fetch(buildApiUrl(`/lookup-groups/${groupId}`), { headers: authHeaders() });
     if (!res.ok) {
       const payload = await res.json().catch(() => null);
       throw new Error(payload?.error || 'No se pudo cargar el grupo');
@@ -241,7 +242,7 @@ export function CatalogManagement() {
   };
 
   const loadValueById = async (valueId: string): Promise<LookupValue | null> => {
-    const res = await fetch(`http://localhost:3001/lookup-values/${valueId}`, { headers: authHeaders() });
+    const res = await fetch(buildApiUrl(`/lookup-values/${valueId}`), { headers: authHeaders() });
     if (!res.ok) {
       const payload = await res.json().catch(() => null);
       throw new Error(payload?.error || 'No se pudo cargar el valor');
@@ -283,8 +284,8 @@ export function CatalogManagement() {
       }
 
       const url = editingGroup
-        ? `http://localhost:3001/lookup-groups/${editingGroup.id}`
-        : `http://localhost:3001/lookup-groups`;
+        ? buildApiUrl(`/lookup-groups/${editingGroup.id}`)
+        : buildApiUrl(`/lookup-groups`);
 
       const method = editingGroup ? 'PUT' : 'POST';
 
@@ -349,8 +350,8 @@ export function CatalogManagement() {
       }
 
       const url = editingValue
-        ? `http://localhost:3001/lookup-values/${editingValue.id}`
-        : `http://localhost:3001/lookup-values`;
+        ? buildApiUrl(`/lookup-values/${editingValue.id}`)
+        : buildApiUrl(`/lookup-values`);
 
       const method = editingValue ? 'PUT' : 'POST';
 
@@ -388,7 +389,7 @@ export function CatalogManagement() {
       }
 
       const res = await fetch(
-        `http://localhost:3001/lookup-values/${value.id}`,
+        buildApiUrl(`/lookup-values/${value.id}`),
         {
           method: 'PUT',
           headers: authHeaders(),
@@ -425,7 +426,7 @@ export function CatalogManagement() {
 
       // Validacion de negocio: un grupo con valores asociados no se puede eliminar.
       const valuesRes = await fetch(
-        `http://localhost:3001/lookup-values?group_id=${group.id}`,
+        buildApiUrl(`/lookup-values?group_id=${group.id}`),
         { headers: authHeaders() }
       );
       if (!valuesRes.ok) {
@@ -445,7 +446,7 @@ export function CatalogManagement() {
       const ok = window.confirm(`¿Eliminar el grupo ${group.lookup_group_key}?`);
       if (!ok) return;
 
-      const res = await fetch(`http://localhost:3001/lookup-groups/${group.id}`, {
+      const res = await fetch(buildApiUrl(`/lookup-groups/${group.id}`), {
         method: 'DELETE',
         headers: authHeaders(),
       });
@@ -472,7 +473,7 @@ export function CatalogManagement() {
       const ok = window.confirm(`¿Eliminar el valor ${value.lookup_key}?`);
       if (!ok) return;
 
-      const res = await fetch(`http://localhost:3001/lookup-values/${value.id}`, {
+      const res = await fetch(buildApiUrl(`/lookup-values/${value.id}`), {
         method: 'DELETE',
         headers: authHeaders(),
       });

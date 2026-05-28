@@ -3,6 +3,7 @@
  * Paso 2: Empresa Principal
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Building2, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Input } from '../ui/input';
@@ -47,7 +48,7 @@ export default function WizardStepCompany({ onComplete, onGoBack, mode = 'bootst
     try {
       console.log('🔐 [Step2] Cargando bootstrap token...');
       
-      const urlDirect = `http://localhost:3001/bootstrap/token-direct`;
+      const urlDirect = buildApiUrl(`/bootstrap/token-direct`);
       
       let response = await fetch(urlDirect, {
         headers: {
@@ -57,7 +58,7 @@ export default function WizardStepCompany({ onComplete, onGoBack, mode = 'bootst
 
       if (!response.ok) {
         console.log('⚠️ [Step2] Endpoint directo falló, intentando con módulo bootstrap...');
-        const urlModule = `http://localhost:3001/bootstrap/token`;
+        const urlModule = buildApiUrl(`/bootstrap/token`);
         response = await fetch(urlModule, {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -109,7 +110,7 @@ export default function WizardStepCompany({ onComplete, onGoBack, mode = 'bootst
       });
 
       const response = await fetch(
-        `http://localhost:3001/bootstrap/step2-company`,
+        buildApiUrl(`/bootstrap/step2-company`),
         {
           method: 'POST',
           headers: {

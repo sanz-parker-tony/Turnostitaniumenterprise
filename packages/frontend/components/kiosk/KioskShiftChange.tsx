@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeftRight, CircleDot, FileText, Loader2, MessageSquareText, RefreshCw, Trash2 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -256,7 +257,7 @@ export default function KioskShiftChange() {
     if (!token) throw new Error('No hay sesión activa');
 
     const doFetch = async (bearer: string) => {
-      const response = await fetch(`http://localhost:3001${path}`, {
+      const response = await fetch(buildApiUrl(`${path}`), {
         ...init,
         headers: {
           'Content-Type': 'application/json',
@@ -292,7 +293,7 @@ export default function KioskShiftChange() {
       if (!token) throw new Error('No hay sesión activa');
 
       const doFetch = async (bearer: string) =>
-        fetch(`http://localhost:3001/kiosk/request-shift-change/${requestId}/support-document`, {
+        fetch(buildApiUrl(`/kiosk/request-shift-change/${requestId}/support-document`), {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${bearer}`,

@@ -1,3 +1,4 @@
+import { buildApiUrl } from '../utils/api-config';
 import { useState } from 'react';
 import { ApiClient } from '../lib/api-client';
 import { toast } from 'sonner';
@@ -47,7 +48,7 @@ export default function EmployeeUserManagement({
   const createUser = async () => {
     try {
       if (!employeeEmail) throw new Error('El empleado no tiene email corporativo');
-      const data = await runAction('http://localhost:3001/employees/create-user', {
+      const data = await runAction(buildApiUrl('/employees/create-user'), {
         employee_id: employeeId,
         email_work: employeeEmail,
       });
@@ -64,7 +65,7 @@ export default function EmployeeUserManagement({
 
   const resetPassword = async () => {
     try {
-      const data = await runAction('http://localhost:3001/employees/reset-password', {
+      const data = await runAction(buildApiUrl('/employees/reset-password'), {
         employee_id: employeeId,
       });
       setCredentials({
@@ -79,7 +80,7 @@ export default function EmployeeUserManagement({
 
   const activate = async (isActive: boolean) => {
     try {
-      await runAction('http://localhost:3001/employees/toggle-user-status', {
+      await runAction(buildApiUrl('/employees/toggle-user-status'), {
         employee_id: employeeId,
         is_active: isActive,
       });

@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { kioskIdentify, API_CONFIG } from '@/utilshttp://localhost:3001-config';
+import { kioskIdentify, API_CONFIG } from '@/utils/api-config';
 import { publicApiToken } from '@/utils/backend/info';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';

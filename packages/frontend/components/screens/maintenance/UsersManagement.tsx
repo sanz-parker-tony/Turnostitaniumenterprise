@@ -12,6 +12,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
@@ -103,7 +104,7 @@ function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-const API_BASE = `http://localhost:3001/users-management`;
+const API_BASE = buildApiUrl(`/users-management`);
 
 const SCOPE_COLORS: Record<string, string> = {
   SYSTEM: 'bg-purple-100 text-purple-700',

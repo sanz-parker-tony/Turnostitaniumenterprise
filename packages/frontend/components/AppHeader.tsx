@@ -4,6 +4,7 @@
 
 'use client';
 
+import { API_BASE_URL } from '../utils/api-config';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { useState, useEffect, useRef } from 'react';
@@ -38,7 +39,6 @@ type UserNotification = {
   created_at: string;
 };
 
-const API_BASE_URL = 'http://localhost:3001';
 
 function getReadableDateTime(value: string): string {
   const date = new Date(value);

@@ -9,6 +9,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Plus, Edit2, Check, Power, PowerOff, Search, Filter, X } from 'lucide-react';
 import { publicApiToken } from '@/utils/backend/info';
@@ -162,7 +163,7 @@ export function SystemSettingsManagement() {
   };
 
   const loadSettings = async () => {
-    const response = await fetch('http://localhost:3001/system-settings-management', {
+    const response = await fetch(buildApiUrl('/system-settings-management'), {
       headers: authHeaders(),
     });
 
@@ -179,7 +180,7 @@ export function SystemSettingsManagement() {
   const loadEffectiveSettings = async () => {
     if (!tenantId) throw new Error('No se pudo identificar el tenant del usuario');
 
-    const response = await fetch(`http://localhost:3001/settings/all-effective?tenant_id=${tenantId}`, {
+    const response = await fetch(buildApiUrl(`/settings/all-effective?tenant_id=${tenantId}`), {
       headers: authHeaders(),
     });
 
@@ -190,7 +191,7 @@ export function SystemSettingsManagement() {
 
   const loadValueTypes = async () => {
     const response = await fetch(
-      `http://localhost:3001/settings/lookup-values/setting-data-types?lookup_group_id=${DATA_TYPE_GROUP_ID}`,
+      buildApiUrl(`/settings/lookup-values/setting-data-types?lookup_group_id=${DATA_TYPE_GROUP_ID}`),
       { headers: authHeaders() }
     );
 
@@ -206,7 +207,7 @@ export function SystemSettingsManagement() {
 
   const loadLookupGroups = async () => {
     try {
-      const response = await fetch('http://localhost:3001/lookup-groups?active_only=true', {
+      const response = await fetch(buildApiUrl('/lookup-groups?active_only=true'), {
         headers: authHeaders(),
       });
       if (!response.ok) return;
@@ -263,8 +264,8 @@ export function SystemSettingsManagement() {
 
     try {
       const url = editingId
-        ? `http://localhost:3001/system-settings-management/${editingId}`
-        : 'http://localhost:3001/system-settings-management';
+        ? buildApiUrl(`/system-settings-management/${editingId}`)
+        : buildApiUrl('/system-settings-management');
       const method = editingId ? 'PUT' : 'POST';
 
       const response = await fetch(url, {
@@ -291,7 +292,7 @@ export function SystemSettingsManagement() {
     if (!confirm(`Confirma ${currentStatus ? 'desactivar' : 'activar'} este parametro?`)) return;
 
     try {
-      const response = await fetch(`http://localhost:3001/system-settings-management/${id}/status`, {
+      const response = await fetch(buildApiUrl(`/system-settings-management/${id}/status`), {
         method: 'PATCH',
         headers: authHeaders(),
         body: JSON.stringify({ is_active: !currentStatus }),
@@ -350,7 +351,7 @@ export function SystemSettingsManagement() {
   const loadInlineLookupOptions = async (groupId: string) => {
     setInlineLookupLoading(true);
     try {
-      const resp = await fetch(`http://localhost:3001/lookup-values?group_id=${groupId}`, { headers: authHeaders() });
+      const resp = await fetch(buildApiUrl(`/lookup-values?group_id=${groupId}`), { headers: authHeaders() });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || 'Error cargando opciones de catalogo');
       const values = Array.isArray(data.values) ? data.values : [];
@@ -400,7 +401,7 @@ export function SystemSettingsManagement() {
 
     setInlineSaving(true);
     try {
-      const response = await fetch(`http://localhost:3001/settings/tenants/${tenantId}/settings-overrides`, {
+      const response = await fetch(buildApiUrl(`/settings/tenants/${tenantId}/settings-overrides`), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -492,7 +493,7 @@ export function SystemSettingsManagement() {
       setLookupPreviewError(null);
       try {
         const resp = await fetch(
-          `http://localhost:3001/lookup-values?group_id=${formData.allowed_lookup_group_id}`,
+          buildApiUrl(`/lookup-values?group_id=${formData.allowed_lookup_group_id}`),
           { headers: authHeaders() }
         );
         const data = await resp.json();

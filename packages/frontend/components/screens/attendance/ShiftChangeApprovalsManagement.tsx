@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRightLeft, CalendarDays, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -102,7 +103,7 @@ export default function ShiftChangeApprovalsManagement() {
       localStorage.getItem('access_token');
     if (!token) throw new Error('No hay sesion activa');
 
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',
@@ -176,7 +177,7 @@ export default function ShiftChangeApprovalsManagement() {
         localStorage.getItem('access_token');
       if (!token) throw new Error('No hay sesion activa');
 
-      const response = await fetch(`http://localhost:3001/kiosk/request-shift-change/${row.id}/support-document`, {
+      const response = await fetch(buildApiUrl(`/kiosk/request-shift-change/${row.id}/support-document`), {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,

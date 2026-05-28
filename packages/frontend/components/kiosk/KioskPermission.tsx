@@ -9,6 +9,7 @@
  * - GET /kiosk/my-permissions
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -54,7 +55,7 @@ export default function KioskPermission() {
   const [endTime, setEndTime] = useState('10:00');
   const [reason, setReason] = useState('');
 
-  const BASE_URL = `http://localhost:3001/make-server-e19f2094`;
+  const BASE_URL = buildApiUrl(`/make-server-e19f2094`);
 
   const getAccessToken = async () => {
     const { data: { session } } = await ApiClient.auth.getSession();

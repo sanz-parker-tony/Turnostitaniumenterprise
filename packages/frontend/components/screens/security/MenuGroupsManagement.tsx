@@ -4,6 +4,7 @@
  * Turnos Titanium Enterprise â€” Seguridad â†’ Grupos de MenÃº
  */
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect, useMemo } from 'react';
 import {
   LayoutList, Plus, Edit2, Power, PowerOff, Search, X,
@@ -15,7 +16,7 @@ import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
-const API = `http://localhost:3001/menu-groups-management`;
+const API = buildApiUrl(`/menu-groups-management`);
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || publicApiToken;
@@ -172,7 +173,7 @@ export function MenuGroupsManagement() {
     setLoadingScreens(true);
     try {
       const res = await fetch(
-        `http://localhost:3001/screens-management`,
+        buildApiUrl(`/screens-management`),
         { headers: headers() }
       );
       const data = await res.json();

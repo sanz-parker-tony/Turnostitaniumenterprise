@@ -1,3 +1,4 @@
+import { buildApiUrl } from '../utils/api-config';
 import { useState } from 'react';
 import { ApiClient } from '../lib/api-client';
 
@@ -28,7 +29,7 @@ export function ForcePasswordChange() {
       const token = sessionData?.session?.access_token;
       if (!token) throw new Error('No hay sesión activa');
 
-      const updateResponse = await fetch('http://localhost:3001/users/change-password', {
+      const updateResponse = await fetch(buildApiUrl('/users/change-password'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -46,7 +47,7 @@ export function ForcePasswordChange() {
       const user = userData?.user;
 
       if (user?.id) {
-        await fetch('http://localhost:3001/users/update-password-flag', {
+        await fetch(buildApiUrl('/users/update-password-flag'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

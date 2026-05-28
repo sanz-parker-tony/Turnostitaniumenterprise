@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Eye, EyeOff, KeyRound, RefreshCw, Save, Search, Shield } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
@@ -80,10 +81,10 @@ export function EmployeeSystemUserManagement() {
     setError(null);
     try {
       const [rowsRes, catalogsRes] = await Promise.all([
-        fetch('http://localhost:3001/organization/employee-users', {
+        fetch(buildApiUrl('/organization/employee-users'), {
           headers: { Authorization: `Bearer ${getToken()}` },
         }),
-        fetch('http://localhost:3001/organization/employee-users/catalogs', {
+        fetch(buildApiUrl('/organization/employee-users/catalogs'), {
           headers: { Authorization: `Bearer ${getToken()}` },
         }),
       ]);
@@ -151,7 +152,7 @@ export function EmployeeSystemUserManagement() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`http://localhost:3001/organization/employee-users/${selectedRow.employee_id}`, {
+      const res = await fetch(buildApiUrl(`/organization/employee-users/${selectedRow.employee_id}`), {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${getToken()}`,

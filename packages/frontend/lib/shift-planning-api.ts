@@ -1,3 +1,4 @@
+import { buildApiUrl } from '../utils/api-config';
 import { publicApiToken } from '@/utils/backend/info';
 
 export type ShiftPlanningEmployeeFilter = {
@@ -110,7 +111,7 @@ export async function generateShiftPlanning(
     };
   }
 
-  const response = await fetch('http://localhost:3001/api/shift-planning/generate', {
+  const response = await fetch(buildApiUrl('/api/shift-planning/generate'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

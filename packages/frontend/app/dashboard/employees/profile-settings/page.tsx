@@ -5,6 +5,7 @@
 
 'use client';
 
+import { buildApiUrl, API_BASE_URL } from '../../../../utils/api-config';
 import { useState, useEffect, useCallback } from 'react';
 import ScreenPageShell from '@/components/ScreenPageShell';
 import { Users, Search, Pencil, RotateCcw, RefreshCw, AlertCircle, Info, ChevronDown } from 'lucide-react';
@@ -12,7 +13,7 @@ import { toast } from 'sonner';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { ApiClient } from '@/lib/api-client';
 
-const BASE_URL = `http://localhost:3001/make-server-e19f2094`;
+const BASE_URL = buildApiUrl(`/make-server-e19f2094`);
 
 interface EmployeeProfile {
   id: string;
@@ -154,7 +155,7 @@ function ProfileSettingsContent() {
 
   // Auth
   useEffect(() => {
-    const ApiClient = createClient(`http://localhost:3001`, publicApiToken);
+    const ApiClient = createClient(API_BASE_URL, publicApiToken);
     ApiClient.auth.getSession().then(({ data }) => {
       const t = data?.session?.access_token;
       if (t) setToken(t);
@@ -175,7 +176,7 @@ function ProfileSettingsContent() {
     }).catch(() => {});
 
     // Obtener perfiles de empleado via ApiClient directo
-    const ApiClient = createClient(`http://localhost:3001`, publicApiToken);
+    const ApiClient = createClient(API_BASE_URL, publicApiToken);
     ApiClient.from('employee_profiles').select('*').eq('is_active', true).order('profile_name')
       .then(({ data }) => { if (data) setProfiles(data); });
   }, [token]);

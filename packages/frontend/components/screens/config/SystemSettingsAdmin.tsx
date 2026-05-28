@@ -14,6 +14,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Settings, Plus, Pencil, Trash2, RotateCcw, Search,
@@ -82,7 +83,7 @@ interface EffectiveSetting {
 // HELPERS
 // ============================================================================
 
-const BASE_URL = `http://localhost:3001/make-server-e19f2094`;
+const BASE_URL = buildApiUrl(`/make-server-e19f2094`);
 
 function getAuthHeaders(token: string) {
   return {

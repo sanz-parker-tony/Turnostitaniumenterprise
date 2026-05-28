@@ -8,6 +8,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
@@ -100,7 +101,7 @@ function getToken(): string {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-const API_BASE = `http://localhost:3001/roles-management`;
+const API_BASE = buildApiUrl(`/roles-management`);
 
 // â”€â”€ Tipos para permisos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 interface ScreenActionCatalog {
@@ -146,7 +147,7 @@ export function RolesManagement() {
   const [permsMsg, setPermsMsg] = useState<string | null>(null);
   const [permsError, setPermsError] = useState<string | null>(null);
 
-  const RSA_API = `http://localhost:3001/role-screen-actions-management`;
+  const RSA_API = buildApiUrl(`/role-screen-actions-management`);
 
   // ============================================================================
   // CARGA DE DATOS

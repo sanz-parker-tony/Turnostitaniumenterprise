@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronRight, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -51,7 +52,7 @@ type GroupedScreen = {
   actions: ScreenActionRow[];
 };
 
-const API_BASE = 'http://localhost:3001/security-role-permissions';
+const API_BASE = buildApiUrl('/security-role-permissions');
 
 export default function SecurityRolePermissionsManagement() {
   const { session } = useAuth();

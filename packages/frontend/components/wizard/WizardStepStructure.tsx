@@ -3,6 +3,7 @@
  * Paso 3: Estructura Organizacional (Carga Masiva)
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect, type Dispatch, type SetStateAction } from 'react';
 import { Building2, Upload, FileSpreadsheet, CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, Download, MapPin, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -89,7 +90,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
     try {
       console.log('🔐 [Step3] Cargando bootstrap token...');
       
-      const urlDirect = `http://localhost:3001/bootstrap/token-direct`;
+      const urlDirect = buildApiUrl(`/bootstrap/token-direct`);
       
       let response = await fetch(urlDirect, {
         headers: {
@@ -99,7 +100,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
 
       if (!response.ok) {
         console.log('⚠️ [Step3] Endpoint directo falló, intentando con módulo bootstrap...');
-        const urlModule = `http://localhost:3001/bootstrap/token`;
+        const urlModule = buildApiUrl(`/bootstrap/token`);
         response = await fetch(urlModule, {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -187,7 +188,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
 
       // Obtener tenant_id (y company_id si es necesario)
       const response = await fetch(
-        `http://localhost:3001/bootstrap/tenant-info`,
+        buildApiUrl(`/bootstrap/tenant-info`),
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -359,7 +360,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
       
       // Enviar al servidor
       const response = await fetch(
-        `http://localhost:3001/${endpoint}`,
+        buildApiUrl(`/${endpoint}`),
         {
           method: 'POST',
           headers: {
@@ -503,7 +504,7 @@ export default function WizardStepStructure({ onComplete, onGoBack, mode = 'boot
       
       // Enviar al servidor
       const response = await fetch(
-        `http://localhost:3001/bootstrap/step3-structure/work-locations`,
+        buildApiUrl(`/bootstrap/step3-structure/work-locations`),
         {
           method: 'POST',
           headers: {

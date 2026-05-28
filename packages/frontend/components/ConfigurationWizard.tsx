@@ -10,6 +10,7 @@
  * - Controlado por tenant_onboarding.current_step
  */
 
+import { buildApiUrl } from '../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Lock } from 'lucide-react';
 import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
@@ -70,7 +71,7 @@ export default function ConfigurationWizard({ onComplete }: ConfigurationWizardP
       
       // ✅ SIMPLIFICADO: Solo intentar cargar el estado, sin auto-redirect
       const response = await fetch(
-        `http://localhost:3001/bootstrap/wizard-state`,
+        buildApiUrl(`/bootstrap/wizard-state`),
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`
@@ -198,7 +199,7 @@ export default function ConfigurationWizard({ onComplete }: ConfigurationWizardP
         try {
           console.log('📡 Marcando setup como completado en backend...');
           const response = await fetch(
-            `http://localhost:3001/setup/complete`,
+            buildApiUrl(`/setup/complete`),
             {
               method: 'POST',
               headers: {

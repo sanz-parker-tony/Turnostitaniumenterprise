@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -490,7 +491,7 @@ export function EmployeeShiftPlanningManagement() {
   }, [shifts, legendShiftIds, hasAppliedParameters]);
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

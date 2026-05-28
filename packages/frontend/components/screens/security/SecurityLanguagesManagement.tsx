@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { Globe, Info } from 'lucide-react';
 import { toast } from 'sonner';
@@ -97,7 +98,7 @@ export function SecurityLanguagesManagement() {
       throw new Error('Sesion expirada. Inicia sesion nuevamente.');
     }
 
-    const response = await fetch(`http://localhost:3001/tenants/${tenantId}/languages`, {
+    const response = await fetch(buildApiUrl(`/tenants/${tenantId}/languages`), {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
@@ -194,7 +195,7 @@ export function SecurityLanguagesManagement() {
         throw new Error('Sesion expirada. Inicia sesion nuevamente.');
       }
 
-      const response = await fetch(`http://localhost:3001/tenants/${tenant.id}/languages`, {
+      const response = await fetch(buildApiUrl(`/tenants/${tenant.id}/languages`), {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,

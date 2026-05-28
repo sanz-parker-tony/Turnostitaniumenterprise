@@ -4,6 +4,7 @@
  * Solo visible en pantalla de login
  */
 
+import { buildApiUrl } from '../utils/api-config';
 import { useState } from 'react';
 import { KeyRound, AlertCircle, CheckCircle2, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +21,7 @@ export default function AdminPasswordReset() {
       console.log('🔐 Reseteando contraseña del administrador...');
       
       const response = await fetch(
-        `http://localhost:3001/auth/reset-system-admin-password`,
+        buildApiUrl(`/auth/reset-system-admin-password`),
         {
           method: 'POST',
           headers: {

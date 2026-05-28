@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -22,7 +23,7 @@ import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 
-const API = 'http://localhost:3001/system-message-keys';
+const API = buildApiUrl('/system-message-keys');
 
 type MessageKey = {
   id: string;

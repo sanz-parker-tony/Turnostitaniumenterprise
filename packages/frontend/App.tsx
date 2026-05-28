@@ -3,6 +3,7 @@
  * Flujo: Login -> Wizard si esta pendiente -> Dashboard
  */
 
+import { buildApiUrl } from './utils/api-config';
 import { useEffect, useState } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PermissionsProvider } from './contexts/PermissionsContext';
@@ -41,7 +42,7 @@ function AppContent() {
 
     Promise.allSettled(
       endpoints.map((endpoint) =>
-        fetch(`http://localhost:3001/${endpoint}`, {
+        fetch(buildApiUrl(`/${endpoint}`), {
           method: 'POST',
           headers: authHeader,
         }).then((response) => response.json())

@@ -5,6 +5,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/contexts/PermissionsContext';
 import LayoutNew from '@/components/LayoutNewAppRouter';
@@ -174,7 +175,7 @@ function EmployeeDashboard() {
           setError(null);
         }
 
-        const resp = await fetch('http://localhost:3001/dashboard/employee-summary', {
+        const resp = await fetch(buildApiUrl('/dashboard/employee-summary'), {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const data = await resp.json().catch(() => ({}));
@@ -775,7 +776,7 @@ function TenantAdminDashboard({
         }
 
         const month = toMonthKey(monthCursor);
-        const resp = await fetch(`http://localhost:3001/dashboard/tenant-admin-summary?month=${encodeURIComponent(month)}`, {
+        const resp = await fetch(buildApiUrl(`/dashboard/tenant-admin-summary?month=${encodeURIComponent(month)}`), {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const payload = await resp.json().catch(() => ({}));

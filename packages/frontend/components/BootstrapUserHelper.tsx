@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react';
 import { AlertCircle, CheckCircle, Loader2, RefreshCw } from 'lucide-react';
-import { createSystemAdmin } from '../utilshttp://localhost:3001-config';
+import { createSystemAdmin, buildApiUrl } from '../utils/api-config';
 
 export default function BootstrapUserHelper() {
   const [isWorking, setIsWorking] = useState(true);
@@ -33,7 +33,7 @@ export default function BootstrapUserHelper() {
       // PASO 1: Verificar conectividad con endpoint /ping
       console.log('🏓 [BOOTSTRAP] PASO 1: Verificando conectividad...');
       
-      const pingUrl = `http://localhost:3001/bootstrap/ping`;
+      const pingUrl = buildApiUrl(`/bootstrap/ping`);
       console.log('🏓 [BOOTSTRAP] URL:', pingUrl);
       
       try {

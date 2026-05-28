@@ -10,6 +10,7 @@
  * - GET /kiosk/my-anomalies
  */
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -70,7 +71,7 @@ export default function KioskRegularization() {
   const [punchType, setPunchType] = useState('ENTRY');
   const [reason, setReason] = useState('');
 
-  const BASE_URL = `http://localhost:3001/make-server-e19f2094`;
+  const BASE_URL = buildApiUrl(`/make-server-e19f2094`);
 
   // Obtener token de autenticación
   const getAccessToken = async () => {

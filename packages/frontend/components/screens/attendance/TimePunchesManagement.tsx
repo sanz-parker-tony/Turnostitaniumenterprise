@@ -1,5 +1,6 @@
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
@@ -103,7 +104,7 @@ export function TimePunchesManagement() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

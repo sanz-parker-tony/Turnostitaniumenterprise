@@ -6,6 +6,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { Building, Save, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -33,7 +34,7 @@ export function TenantSettings() {
     try {
       setLoading(true);
       const response = await fetch(
-        `http://localhost:3001/tenant/settings`,
+        buildApiUrl(`/tenant/settings`),
         {
           headers: {
             'Authorization': `Bearer ${publicApiToken}`,
@@ -66,7 +67,7 @@ export function TenantSettings() {
     try {
       setSaving(true);
       const response = await fetch(
-        `http://localhost:3001/tenant/settings`,
+        buildApiUrl(`/tenant/settings`),
         {
           method: 'PUT',
           headers: {

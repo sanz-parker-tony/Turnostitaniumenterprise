@@ -1,3 +1,5 @@
+import { buildApiUrl } from '../utils/api-config';
+
 /**
  * Backend API compatibility layer.
  * Keeps a small subset of the old ApiClient API shape used by the frontend,
@@ -75,7 +77,7 @@ async function callBackend<T = any>(
     headers.set('Authorization', `Bearer ${session.access_token}`);
   }
 
-  const response = await fetch(`http://localhost:3001${path}`, {
+  const response = await fetch(buildApiUrl(`${path}`), {
     ...init,
     headers,
   });
@@ -280,7 +282,7 @@ export const ApiClient = {
         return { data: { user: null }, error: { message: 'No session' } };
       }
 
-      const response = await fetch('http://localhost:3001/auth/me', {
+      const response = await fetch(buildApiUrl('/auth/me'), {
         headers: {
           Authorization: `Bearer ${accessToken}`,
         },

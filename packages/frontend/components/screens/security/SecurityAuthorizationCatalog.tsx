@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
@@ -23,11 +24,11 @@ import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import { usePermissions } from '@/contexts/PermissionsContext';
 
-const MENU_GROUPS_API = 'http://localhost:3001/menu-groups-management';
-const SCREENS_API = 'http://localhost:3001/screens-management';
-const ACTIONS_API = 'http://localhost:3001/actions-management';
-const SCREEN_ACTIONS_API = 'http://localhost:3001/screen-actions-management';
-const ROLE_SCREEN_ACTIONS_API = 'http://localhost:3001/role-screen-actions-management';
+const MENU_GROUPS_API = buildApiUrl('/menu-groups-management');
+const SCREENS_API = buildApiUrl('/screens-management');
+const ACTIONS_API = buildApiUrl('/actions-management');
+const SCREEN_ACTIONS_API = buildApiUrl('/screen-actions-management');
+const ROLE_SCREEN_ACTIONS_API = buildApiUrl('/role-screen-actions-management');
 
 type TabKey = 'assignment' | 'maintenance';
 type DrawerMode = 'create-screen' | 'create-action' | 'link-action' | null;

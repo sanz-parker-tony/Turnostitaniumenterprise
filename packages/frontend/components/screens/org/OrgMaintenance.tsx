@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { Building2, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
@@ -642,7 +643,7 @@ export function OrgMaintenance({
   const request = async (path: string, init?: RequestInit) => {
     const callWithToken = async (token: string) => {
       try {
-        return await fetch(`http://localhost:3001${path}`, {
+        return await fetch(buildApiUrl(`${path}`), {
           ...init,
           headers: {
             'Content-Type': 'application/json',
@@ -765,7 +766,7 @@ export function OrgMaintenance({
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/organization/employees/${employeeId}/photo`, {
+      const response = await fetch(buildApiUrl(`/organization/employees/${employeeId}/photo`), {
         headers: {
           Authorization: `Bearer ${getToken()}`,
         },

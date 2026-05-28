@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -404,7 +405,7 @@ export function ShiftConstructorManagement() {
   }, [filteredShifts, page]);
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

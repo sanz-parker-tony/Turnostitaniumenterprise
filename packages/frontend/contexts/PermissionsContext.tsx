@@ -5,6 +5,7 @@
 
 'use client';
 
+import { buildApiUrl } from '../utils/api-config';
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 
@@ -69,7 +70,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         if (isMounted) setIsLoading(true);
         console.log('🔄 Cargando pantallas del menú por backend endpoint para rol:', profile.role_key);
 
-        const response = await fetch('http://localhost:3001/users/menu-screens', {
+        const response = await fetch(buildApiUrl('/users/menu-screens'), {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${session.access_token}`,

@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Pencil, Plus, RefreshCw, Trash2, FileText, Eye, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
@@ -200,7 +201,7 @@ export default function KioskRequests() {
     const token = await getAuthToken();
 
     const doFetch = async (bearer: string) => {
-      const response = await fetch(`http://localhost:3001${path}`, {
+      const response = await fetch(buildApiUrl(`${path}`), {
         ...init,
         headers: {
           'Content-Type': 'application/json',
@@ -226,7 +227,7 @@ export default function KioskRequests() {
     if (!row.support_document_name) return;
     try {
       const token = await getAuthToken();
-      const response = await fetch(`http://localhost:3001/kiosk/requests/${row.id}/support-document`, {
+      const response = await fetch(buildApiUrl(`/kiosk/requests/${row.id}/support-document`), {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${token}`,

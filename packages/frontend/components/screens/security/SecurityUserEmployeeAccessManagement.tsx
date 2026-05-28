@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -46,7 +47,7 @@ type EmployeeAccessCapabilities = {
   can_revoke_all: boolean;
 };
 
-const API_BASE = 'http://localhost:3001/security-user-scopes';
+const API_BASE = buildApiUrl('/security-user-scopes');
 
 type ScopeFilterKey =
   | 'company_id'

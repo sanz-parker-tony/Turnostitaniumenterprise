@@ -1,3 +1,4 @@
+import { buildApiUrl } from '../utils/api-config';
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -105,7 +106,7 @@ export default function SystemMenuGroups() {
       }
 
       console.log('📡 Realizando fetch a endpoint...');
-      const url = `http://localhost:3001/system/menu-groups?language=ES`;
+      const url = buildApiUrl(`/system/menu-groups?language=ES`);
       console.log('📡 URL:', url);
       console.log('📡 Headers:', {
         'Authorization': `Bearer ${token.substring(0, 50)}...`,
@@ -172,8 +173,8 @@ export default function SystemMenuGroups() {
       const isEditing = editDialog.item !== null;
 
       const url = isEditing
-        ? `http://localhost:3001/system/menu-groups/${editDialog.item.id}`
-        : `http://localhost:3001/system/menu-groups`;
+        ? buildApiUrl(`/system/menu-groups/${editDialog.item.id}`)
+        : buildApiUrl(`/system/menu-groups`);
 
       const body = isEditing
         ? {
@@ -218,7 +219,7 @@ export default function SystemMenuGroups() {
       }
 
       const response = await fetch(
-        `http://localhost:3001/system/menu-groups/${deleteDialog.item.id}`,
+        buildApiUrl(`/system/menu-groups/${deleteDialog.item.id}`),
         {
           method: 'DELETE',
           headers: {

@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarCheck, Plus, Save, Search, Trash2 } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
@@ -50,7 +51,7 @@ export function ProfileAttendanceEventsManagement() {
   const [newEventId, setNewEventId] = useState('');
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',

@@ -1,5 +1,6 @@
 ﻿'use client';
 
+import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, CircleDot, Clock3, Edit, Minus, Plus, Power, PowerOff, Save, Search, Trash2, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
@@ -123,7 +124,7 @@ export function WorkPatternsManagement() {
   const [openShiftPickerIndex, setOpenShiftPickerIndex] = useState<number | null>(null);
 
   const request = async (path: string, init?: RequestInit) => {
-    const response = await fetch(`http://localhost:3001${path}`, {
+    const response = await fetch(buildApiUrl(`${path}`), {
       ...init,
       headers: {
         'Content-Type': 'application/json',
