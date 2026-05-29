@@ -146,6 +146,7 @@ const getHolidayCatalogs = withDocs(
         workLocationsParams
       );
 
+      
       const holidayTypesPromise = pool.query(
         `
           SELECT
