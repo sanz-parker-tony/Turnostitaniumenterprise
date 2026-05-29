@@ -24,6 +24,7 @@ const ALL_BLOCK_TYPES = new Set<ShiftBlockType>([
   ...Array.from(BREAK_BLOCK_TYPES),
 ]);
 
+
 const DEFAULT_SURCHARGE: Record<ShiftBlockType, number> = {
   ORDINARIA: 0,
   NOCTURNA: 25,
