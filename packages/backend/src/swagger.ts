@@ -114,8 +114,14 @@ function collectEndpointsFromStack(stack: any[], basePath = ''): Endpoint[] {
 }
 
 function buildOpenApiSpec(router: Router) {
-  const port = process.env.BACKEND_PORT || 3001;
-  const serverUrl = process.env.SWAGGER_SERVER_URL || `http://localhost:${port}`;
+  const port = process.env.BACKEND_PORT || process.env.PORT || 3001;
+  const serverUrl =
+    process.env.PUBLIC_API_URL ||
+    process.env.BACKEND_PUBLIC_URL ||
+    process.env.SWAGGER_SERVER_URL ||
+    `http://localhost:${port}`;
+  const normalizedServerUrl = serverUrl.replace(/\/$/, '');
+  const serverDescription = process.env.NODE_ENV === 'production' ? 'Production server' : 'Local server';
   const endpoints = collectEndpointsFromStack((router as any).stack ?? []);
 
   const paths: Record<string, Record<string, any>> = {};
@@ -153,8 +159,8 @@ function buildOpenApiSpec(router: Router) {
     },
     servers: [
       {
-        url: serverUrl,
-        description: 'Servidor actual',
+        url: normalizedServerUrl,
+        description: serverDescription,
       },
     ],
     components: {
