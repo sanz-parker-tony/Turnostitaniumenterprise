@@ -3,3 +3,4 @@ packages/backend/dist
 dist
 packages/optimizer/__pycache__
 .venv
+packages/backend/.env.local
