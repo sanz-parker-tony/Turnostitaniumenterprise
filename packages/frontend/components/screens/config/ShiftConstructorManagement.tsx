@@ -932,6 +932,7 @@ export function ShiftConstructorManagement() {
             />
             <HeaderRefreshButton onClick={() => void loadCatalogs()} />
             <button
+              type="button"
               onClick={openCreateShiftBuilder}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
             >
@@ -1109,6 +1110,7 @@ export function ShiftConstructorManagement() {
           <span>Página {page} de {totalPages}</span>
           <div className="flex items-center gap-2">
             <button
+              type="button"
               className="px-3 py-1.5 rounded border disabled:opacity-50"
               disabled={page <= 1}
               onClick={() => setPage((prev) => Math.max(1, prev - 1))}
@@ -1116,6 +1118,7 @@ export function ShiftConstructorManagement() {
               Anterior
             </button>
             <button
+              type="button"
               className="px-3 py-1.5 rounded border disabled:opacity-50"
               disabled={page >= totalPages}
               onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
@@ -1135,7 +1138,7 @@ export function ShiftConstructorManagement() {
                 <Clock3 className="size-4 text-blue-700" />
                 <h3 className="text-lg font-semibold">Constructor de Turnos Laborales</h3>
               </div>
-              <button onClick={closeShiftBuilder} className="p-1.5 rounded hover:bg-gray-100">
+              <button type="button" onClick={closeShiftBuilder} className="p-1.5 rounded hover:bg-gray-100">
                 <X className="size-4" />
               </button>
             </div>
@@ -1248,6 +1251,7 @@ export function ShiftConstructorManagement() {
 
                   {BLOCK_TYPE_OPTIONS.map((blockType) => (
                     <button
+                      type="button"
                       key={blockType}
                       onClick={() => quickAddBlock(blockType)}
                       className="w-full inline-flex items-center justify-between px-3 py-2 border rounded-md text-sm hover:bg-gray-50"
@@ -1261,6 +1265,7 @@ export function ShiftConstructorManagement() {
                   ))}
 
                   <button
+                    type="button"
                     onClick={() => openNewBlockModal()}
                     className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
                   >
@@ -1269,6 +1274,7 @@ export function ShiftConstructorManagement() {
                   </button>
 
                   <button
+                    type="button"
                     onClick={applyDefaultTemplate}
                     className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-50"
                   >
@@ -1284,6 +1290,7 @@ export function ShiftConstructorManagement() {
                       <div className="flex items-center gap-3">
                         <span className="text-xs text-gray-600">Ajuste cada 15 minutos | Turno extendido (48h)</span>
                         <button
+                          type="button"
                           onClick={removeSelectedBlock}
                           disabled={selectedBlockIndex === null}
                           className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -1440,6 +1447,7 @@ export function ShiftConstructorManagement() {
                               <td className="px-3 py-2 border-b">
                                 <div className="flex items-center gap-1">
                                   <button
+                                    type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       openEditBlockModal(index);
@@ -1450,6 +1458,7 @@ export function ShiftConstructorManagement() {
                                     <Edit2 className="size-3" />
                                   </button>
                                   <button
+                                    type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       removeBlock(index);
@@ -1476,8 +1485,9 @@ export function ShiftConstructorManagement() {
             </div>
 
             <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 px-5 py-3 border-t bg-white">
-              <button onClick={closeShiftBuilder} className="px-4 py-2 rounded-md border text-sm hover:bg-gray-50">Cancelar</button>
+              <button type="button" onClick={closeShiftBuilder} className="px-4 py-2 rounded-md border text-sm hover:bg-gray-50">Cancelar</button>
               <button
+                type="button"
                 onClick={() => void saveShiftAndConstructor()}
                 disabled={saving}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#0074D9] text-white text-sm hover:bg-[#0066C0] disabled:opacity-50"
@@ -1506,6 +1516,7 @@ export function ShiftConstructorManagement() {
                 <h3 className="text-base font-semibold">{blockForm.index === null ? 'Nuevo bloque' : 'Editar bloque'}</h3>
               </div>
               <button
+                type="button"
                 onClick={() => {
                   setShowBlockModal(false);
                   setBlockModalError(null);
@@ -1602,6 +1613,7 @@ export function ShiftConstructorManagement() {
 
             <div className="flex items-center justify-end gap-2 px-4 py-3 border-t bg-white">
               <button
+                type="button"
                 onClick={() => {
                   setShowBlockModal(false);
                   setBlockModalError(null);
@@ -1611,7 +1623,7 @@ export function ShiftConstructorManagement() {
                 <X className="size-4" />
                 Cancelar
               </button>
-              <button onClick={saveBlock} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700">
+              <button type="button" onClick={saveBlock} className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700">
                 <Save className="size-4" />
                 Guardar Bloque
               </button>

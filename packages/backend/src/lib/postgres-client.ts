@@ -29,6 +29,7 @@ interface AuthUser {
 type Filter =
   | { kind: 'eq'; column: string; value: any }
   | { kind: 'neq'; column: string; value: any }
+  | { kind: 'gte'; column: string; value: any }
   | { kind: 'is'; column: string; value: any }
   | { kind: 'in'; column: string; value: any[] }
   | { kind: 'raw'; sql: string; values?: any[] };
@@ -175,6 +176,11 @@ class QueryBuilder<T = any> implements PromiseLike<CompatResult<T>> {
     return this;
   }
 
+  gte(column: string, value: any): QueryBuilder<T> {
+    this.filters.push({ kind: 'gte', column, value });
+    return this;
+  }
+
   is(column: string, value: any): QueryBuilder<T> {
     this.filters.push({ kind: 'is', column, value });
     return this;
@@ -241,6 +247,11 @@ class QueryBuilder<T = any> implements PromiseLike<CompatResult<T>> {
       }
       if (filter.kind === 'neq') {
         clauses.push(`${quoteIdent(filter.column)} <> $${i++}`);
+        values.push(filter.value);
+        continue;
+      }
+      if (filter.kind === 'gte') {
+        clauses.push(`${quoteIdent(filter.column)} >= $${i++}`);
         values.push(filter.value);
         continue;
       }
