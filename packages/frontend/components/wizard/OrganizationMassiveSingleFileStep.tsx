@@ -170,9 +170,6 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     node.scrollTop = node.scrollHeight;
   }, [logs]);
 
-  const canProcess = !!prepared && !parsing && !processing && !reversing && errors.length === 0 && capabilities.can_import;
-  const canReverse = !!selectedRun && !parsing && !processing && !reversing && capabilities.can_reverse;
-
   const summaryItems = useMemo(() => {
     if (!summary) return [];
     return Object.entries(summary);
@@ -182,6 +179,9 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     () => runs.find((run) => run.id === selectedRunId) || null,
     [runs, selectedRunId]
   );
+
+  const canProcess = !!prepared && !parsing && !processing && !reversing && errors.length === 0 && capabilities.can_import;
+  const canReverse = !!selectedRun && !parsing && !processing && !reversing && capabilities.can_reverse;
 
   const activityBars = useMemo<ActivityBar[]>(() => {
     const map = new Map<string, ActivityBar>();
