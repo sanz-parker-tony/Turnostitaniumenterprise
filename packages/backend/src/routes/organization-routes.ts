@@ -812,6 +812,7 @@ type StructureImportRow = {
   work_location_city_id?: string;
   work_location_city_label?: string;
   work_location_city_short_label?: string;
+  work_location_time_zone?: string;
   department_code?: string;
   department_name?: string;
   department_short_name?: string;
@@ -1511,6 +1512,7 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
         state_id: locationStateId,
         city_id: locationCityId,
         address_line1: normalizeText(row.company_address_line1),
+        time_zone: normalizeText(row.work_location_time_zone) || 'America/Guayaquil',
         is_active: normalizeBool(row.is_active, true),
       }, 'work_locations');
 

@@ -54,6 +54,28 @@ import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 
+function InvalidRouteRedirect({ path }: { path: string }) {
+  const { signOut } = useAuth();
+
+  useEffect(() => {
+    console.warn('[ROUTER] Ruta no encontrada. Cerrando sesion:', path);
+    void signOut();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.history.replaceState({}, '', '/login');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  }, [path, signOut]);
+
+  return (
+    <div className="flex min-h-[400px] items-center justify-center">
+      <div className="text-center">
+        <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <p className="text-sm text-muted-foreground">Redirigiendo al login...</p>
+      </div>
+    </div>
+  );
+}
+
 export function Router() {
   const { menuScreens, isLoading } = usePermissions();
   const { profile } = useAuth();
@@ -259,8 +281,5 @@ export function Router() {
       </div>
     );
   }
-
-  // Si no encuentra la ruta, mostrar dashboard por defecto
-  console.log('📊 Ruta no encontrada, renderizando Dashboard por defecto');
-  return <Dashboard />;
+  return <InvalidRouteRedirect path={currentPath} />;
 }

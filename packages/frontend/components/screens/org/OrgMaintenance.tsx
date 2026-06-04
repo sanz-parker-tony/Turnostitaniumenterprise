@@ -187,12 +187,23 @@ function PolygonMapViewController({ center, zoom }: { center: LatLngExpression; 
   return null;
 }
 
+function PolygonMapResizeInvalidator() {
+  const map = useMap();
+  useEffect(() => {
+    const timer = window.setTimeout(() => map.invalidateSize(), 120);
+    return () => window.clearTimeout(timer);
+  }, [map]);
+  return null;
+}
+
 function PolygonEditorField({
   value,
   onChange,
+  large = false,
 }: {
   value: any;
   onChange: (next: any) => void;
+  large?: boolean;
 }) {
   const [points, setPoints] = useState<GeoPoint[]>(() => parseGeofencePoints(value));
   const [center, setCenter] = useState<LatLngExpression>([-2.17, -79.92]);
@@ -365,15 +376,22 @@ function PolygonEditorField({
         Clic sobre el mapa OpenStreetMap para agregar vertices. Vertices: {points.length}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <div className="lg:col-span-2 rounded-md border bg-white overflow-hidden">
-          <MapContainer center={center} zoom={zoom} className="h-[320px] w-full" maxZoom={22} minZoom={3}>
+      <div className={large ? 'space-y-3' : 'grid grid-cols-1 lg:grid-cols-3 gap-3'}>
+        <div className={`${large ? '' : 'lg:col-span-2'} rounded-md border bg-white overflow-hidden`}>
+          <MapContainer
+            center={center}
+            zoom={zoom}
+            className={large ? 'h-[58vh] min-h-[520px] w-full' : 'h-[320px] w-full'}
+            maxZoom={22}
+            minZoom={3}
+          >
             <TileLayer
               attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               maxNativeZoom={19}
               maxZoom={22}
             />
+            <PolygonMapResizeInvalidator />
             <PolygonMapViewController center={center} zoom={zoom} />
             <PolygonMapClickCapture onAddPoint={(point) => commitPoints([...points, point])} />
             <PolygonMapAutoFit points={points} />
@@ -394,12 +412,26 @@ function PolygonEditorField({
           </MapContainer>
         </div>
 
-        <textarea
-          value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
-          readOnly
-          className="h-[320px] w-full border rounded px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
-          placeholder="GeoJSON del poligono"
-        />
+        {large ? (
+          <details className="rounded-md border bg-white">
+            <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+              Ver GeoJSON del poligono
+            </summary>
+            <textarea
+              value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
+              readOnly
+              className="h-[140px] w-full border-0 border-t px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
+              placeholder="GeoJSON del poligono"
+            />
+          </details>
+        ) : (
+          <textarea
+            value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
+            readOnly
+            className="h-[320px] w-full border rounded px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
+            placeholder="GeoJSON del poligono"
+          />
+        )}
       </div>
     </div>
   );
@@ -454,10 +486,11 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
+      { key: 'time_zone', label: 'Zona horaria', type: 'text' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
-    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'geofence_polygon', 'is_active'],
+    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'time_zone', 'geofence_polygon', 'is_active'],
   },
   {
     key: 'departments',
@@ -1505,7 +1538,7 @@ export function OrgMaintenance({
               clearPhotoPreview();
             }}
           />
-          <div className="relative w-full max-w-7xl max-h-[94vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
+          <div className="relative w-full max-w-[96vw] max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
               <h3 className="text-base font-semibold text-gray-900">
                 {editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`}
@@ -1523,11 +1556,23 @@ export function OrgMaintenance({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div
+                className={
+                  entity === 'work-locations'
+                    ? 'grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start'
+                    : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3'
+                }
+              >
               {config.fields.map((field) => (
                 <div
                   key={field.key}
-                  className={`space-y-1 ${entity === 'work-locations' && field.key === 'geofence_polygon' ? 'lg:col-span-3' : ''}`}
+                  className={`space-y-1 ${
+                    entity === 'work-locations'
+                      ? field.key === 'geofence_polygon'
+                        ? 'min-w-0 xl:col-start-2 xl:row-start-1 xl:row-span-12'
+                        : 'xl:col-start-1'
+                      : ''
+                  }`}
                 >
                   <label className="text-xs font-medium text-gray-700">
                     {field.label} {field.required && '*'}
@@ -1591,6 +1636,7 @@ export function OrgMaintenance({
                       onChange={(nextValue) =>
                         setFormData((prev) => ({ ...prev, [field.key]: nextValue }))
                       }
+                      large
                     />
                   ) : field.type === 'select' ? (
 
@@ -1685,7 +1731,7 @@ export function OrgMaintenance({
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center gap-2 border-t bg-white px-4 py-3">
               <button
                 onClick={handleSave}
                 disabled={saving}

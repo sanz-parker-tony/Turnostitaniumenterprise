@@ -29,6 +29,7 @@ import {
 } from './ui/dropdown-menu';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
+import { DevicePermissionToolbar } from './shared/DevicePermissionToolbar';
 
 type UserNotification = {
   id: string;
@@ -236,6 +237,8 @@ export function AppHeader() {
 
       {/* Right side - Notifications & User */}
       <div className="flex items-center gap-2">
+        <DevicePermissionToolbar />
+
         {/* Notifications */}
         <DropdownMenu onOpenChange={setNotificationsOpen}>
           <DropdownMenuTrigger asChild>
@@ -300,7 +303,7 @@ export function AppHeader() {
               <User className="h-5 w-5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-80">
             <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
                 <p className="text-sm font-medium leading-none">{profile?.display_name}</p>
@@ -312,6 +315,10 @@ export function AppHeader() {
                 </p>
               </div>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <div className="px-2 py-1.5">
+              <DevicePermissionToolbar variant="panel" />
+            </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
               <LogOut className="mr-2 h-4 w-4" />

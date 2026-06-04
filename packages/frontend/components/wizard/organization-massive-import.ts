@@ -79,6 +79,7 @@ export type StructureImportRow = {
   work_location_city_id: string | null;
   work_location_city_label: string | null;
   work_location_city_short_label: string | null;
+  work_location_time_zone: string | null;
   department_code: string | null;
   department_name: string | null;
   department_short_name: string | null;
@@ -389,6 +390,7 @@ export async function parseStructureImportFile(file: File): Promise<ParseResult<
         work_location_city_id: toText(row.work_location_city_id),
         work_location_city_label: toText(row.work_location_city_label),
         work_location_city_short_label: toText(row.work_location_city_short_label),
+        work_location_time_zone: toText(row.work_location_time_zone ?? row.time_zone),
         department_code: toText(row.department_code),
         department_name: toText(row.department_name),
         department_short_name: toText(row.department_short_name),
@@ -663,6 +665,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
         work_location_city_id: toText((workLocation as any).work_location_city_id),
         work_location_city_label: toText((workLocation as any).work_location_city_label),
         work_location_city_short_label: toText((workLocation as any).work_location_city_short_label),
+        work_location_time_zone: toText((workLocation as any).work_location_time_zone ?? (workLocation as any).time_zone),
         department_code: toText(row.department_code),
         department_name: toText((department as any).department_name),
         department_short_name: toText((department as any).department_short_name),

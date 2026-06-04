@@ -52,6 +52,26 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function clearBrowserSessionState() {
+  if (typeof window === 'undefined') return;
+
+  [
+    'tt-access-token',
+    'tt-auth-user',
+    'access_token',
+    'user_profile',
+    'bootstrapToken',
+    'tenant_id',
+    'turnosTitanium_tenantId',
+    'turnosTitanium_tenantName',
+    'turnosTitanium_wizardState',
+    'turnosTitanium_wizardCompleted',
+    'wizard_completed',
+  ].forEach((key) => window.localStorage.removeItem(key));
+
+  ['bootstrap_screens_done_v4'].forEach((key) => window.sessionStorage.removeItem(key));
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -311,7 +331,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('🔐 AuthContext: SIGNED_OUT - Limpiando datos');
         setProfile(null);
         setUserRoles([]);
-        localStorage.removeItem('user_profile');
+        clearBrowserSessionState();
         setIsLoading(false);
         setAuthStatusMessage('');
       }
@@ -332,12 +352,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null);
     setUserRoles([]);
     
-    // 2. Limpiar localStorage
-    localStorage.removeItem('user_profile');
-    localStorage.removeItem('bootstrapToken');
-    localStorage.removeItem('turnosTitanium_tenantId');
-    localStorage.removeItem('turnosTitanium_tenantName');
-    localStorage.removeItem('wizard_completed'); // ✅ NUEVO: Limpiar cache del wizard
+    // 2. Limpiar localStorage/sessionStorage
+    clearBrowserSessionState();
     
     console.log('✅ [LOGOUT] Estado local y localStorage limpiados');
     
@@ -425,3 +441,4 @@ export function useAuth() {
   }
   return context;
 }
+

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Paperclip, Search, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
+import { formatClientDateTime } from '@/utils/date-time';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -55,11 +56,8 @@ function statusBadgeClass(statusKey: string | null | undefined): string {
   return 'bg-yellow-100 text-yellow-900 border-yellow-300';
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleString('es-EC');
+function formatDateTime(value: string | null | undefined, timeZone?: string | null): string {
+  return formatClientDateTime(value, 'es-EC', timeZone || undefined);
 }
 
 export default function TimePunchChangeApprovalsManagement() {
@@ -250,7 +248,7 @@ export default function TimePunchChangeApprovalsManagement() {
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-700">Actual</div>
           <div className="text-sm text-slate-700">
-            <div><span className="font-medium">Fecha/Hora:</span> {formatDateTime(current.punch_datetime)}</div>
+            <div><span className="font-medium">Fecha/Hora:</span> {formatDateTime(current.punch_datetime, current.punch_time_zone)}</div>
             <div><span className="font-medium">Movimiento:</span> {currentMovement}</div>
             <div><span className="font-medium">Activo:</span> {current.is_active === false ? 'No' : 'Si'}</div>
           </div>
@@ -258,7 +256,7 @@ export default function TimePunchChangeApprovalsManagement() {
         <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-blue-800">Solicitado</div>
           <div className="text-sm text-slate-700">
-            <div><span className="font-medium">Fecha/Hora:</span> {formatDateTime(requested.punch_datetime)}</div>
+            <div><span className="font-medium">Fecha/Hora:</span> {formatDateTime(requested.punch_datetime, requested.punch_time_zone)}</div>
             <div><span className="font-medium">Movimiento:</span> {requestedMovement}</div>
             <div><span className="font-medium">Activo:</span> {requested.is_active === false ? 'No' : 'Si'}</div>
             {requested.notes ? <div><span className="font-medium">Notas:</span> {String(requested.notes)}</div> : null}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, Pencil, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
+import { formatClientDateTime } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
@@ -25,6 +26,7 @@ interface HistoryRow {
   device_name: string | null;
   device_serial_number: string | null;
   punch_datetime: string;
+  punch_time_zone: string | null;
   punch_key: number;
   punch_key_lookup_id: string | null;
   movement_label: string | null;
@@ -247,7 +249,9 @@ export default function KioskPunchHistory() {
                     const isEditing = edit?.rowId === row.id;
                     return (
                       <tr key={row.id} className="border-t align-top">
-                        <td className="px-2 py-2 whitespace-nowrap text-xs">{new Date(row.punch_datetime).toLocaleString('es-EC')}</td>
+                        <td className="px-2 py-2 whitespace-nowrap text-xs">
+                          {formatClientDateTime(row.punch_datetime, 'es-EC', row.punch_time_zone || undefined)}
+                        </td>
                         <td className="px-2 py-2 truncate" title={row.company_name || '-'}>
                           {row.company_name || '-'}
                         </td>

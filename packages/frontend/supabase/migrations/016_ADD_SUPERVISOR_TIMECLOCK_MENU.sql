@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS public.employee_time_punches
     employee_id uuid NOT NULL,
     time_clock_device_id uuid,
     punch_datetime timestamp with time zone NOT NULL,
+    punch_time_zone character varying(80) DEFAULT 'America/Guayaquil',
     punch_key integer NOT NULL,
     punch_source_id uuid,
     time_punch_status_id uuid,
@@ -197,4 +198,3 @@ BEGIN
      AND rsa.role_id = r.id
      AND rsa.screen_action_id = sa.id;
 END $$;
-

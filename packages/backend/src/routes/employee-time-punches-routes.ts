@@ -310,6 +310,7 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
           e.employee_name,
           e.employee_lastname,
           p.punch_datetime,
+          p.punch_time_zone,
           p.punch_key,
           ec_scope.work_location_id,
           wl.work_location_name,
@@ -402,9 +403,11 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
           COALESCE(s.end_key, e.end_key) AS end_key,
           s.id AS start_punch_id,
           s.punch_datetime AS start_punch_datetime,
+          s.punch_time_zone AS start_punch_time_zone,
           s.punch_key AS start_punch_key,
           e.id AS end_punch_id,
           e.punch_datetime AS end_punch_datetime,
+          e.punch_time_zone AS end_punch_time_zone,
           e.punch_key AS end_punch_key
         FROM starts s
         FULL JOIN ends e
@@ -435,6 +438,7 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
         CASE WHEN p.start_punch_id IS NULL THEN p.start_key ELSE p.end_key END AS missing_punch_key,
         CASE WHEN p.start_punch_id IS NULL THEN 'MISSING_START' ELSE 'MISSING_END' END AS inconsistency_type,
         COALESCE(p.start_punch_datetime, p.end_punch_datetime) AS punch_datetime,
+        COALESCE(p.start_punch_time_zone, p.end_punch_time_zone) AS punch_time_zone,
         COALESCE(p.start_punch_key, p.end_punch_key) AS detected_punch_key
       FROM pairs p
       WHERE p.start_punch_id IS NULL
@@ -1011,6 +1015,7 @@ router.get('/', async (req: Request, res: Response) => {
           d.device_name,
           d.device_serial_number,
           p.punch_datetime,
+          p.punch_time_zone,
           p.punch_key,
           p.punch_source_id,
           src.lookup_label AS punch_source_label,
@@ -1064,6 +1069,7 @@ router.post('/', async (req: Request, res: Response) => {
     const employeeId = normalizeNullableText(req.body?.employee_id);
     const timeClockDeviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchDatetime = normalizeNullableText(req.body?.punch_datetime);
+    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || 'America/Guayaquil';
     const punchKey = parseRequiredInt(req.body?.punch_key);
     const punchSourceId = normalizeNullableText(req.body?.punch_source_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
@@ -1105,6 +1111,7 @@ router.post('/', async (req: Request, res: Response) => {
           employee_id,
           time_clock_device_id,
           punch_datetime,
+          punch_time_zone,
           punch_key,
           punch_source_id,
           time_punch_status_id,
@@ -1118,7 +1125,7 @@ router.post('/', async (req: Request, res: Response) => {
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
         )
         RETURNING *
       `,
@@ -1128,6 +1135,7 @@ router.post('/', async (req: Request, res: Response) => {
         employeeId,
         timeClockDeviceId,
         punchDatetime,
+        punchTimeZone,
         punchKey,
         punchSourceId,
         timePunchStatusId,
@@ -1159,6 +1167,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const employeeId = normalizeNullableText(req.body?.employee_id);
     const timeClockDeviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchDatetime = normalizeNullableText(req.body?.punch_datetime);
+    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || 'America/Guayaquil';
     const punchKey = parseRequiredInt(req.body?.punch_key);
     const punchSourceId = normalizeNullableText(req.body?.punch_source_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
@@ -1199,16 +1208,17 @@ router.put('/:id', async (req: Request, res: Response) => {
           employee_id = $4,
           time_clock_device_id = $5,
           punch_datetime = $6,
-          punch_key = $7,
-          punch_source_id = $8,
-          time_punch_status_id = $9,
-          service_ticket_number = $10,
-          notes = $11,
-          latitud = $12,
-          longitud = $13,
-          process_run_id = $14,
-          is_active = $15,
-          updated_by = $16,
+          punch_time_zone = $7,
+          punch_key = $8,
+          punch_source_id = $9,
+          time_punch_status_id = $10,
+          service_ticket_number = $11,
+          notes = $12,
+          latitud = $13,
+          longitud = $14,
+          process_run_id = $15,
+          is_active = $16,
+          updated_by = $17,
           updated_at = now()
         WHERE id = $1
           AND tenant_id = $2
@@ -1221,6 +1231,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         employeeId,
         timeClockDeviceId,
         punchDatetime,
+        punchTimeZone,
         punchKey,
         punchSourceId,
         timePunchStatusId,

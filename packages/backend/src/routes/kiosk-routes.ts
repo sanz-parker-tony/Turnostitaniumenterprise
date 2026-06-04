@@ -199,8 +199,8 @@ function isPointInsideRing(pointLng: number, pointLat: number, ring: GeoPoint[])
 function resolveWorkLocationForPoint(params: {
   latitude: number;
   longitude: number;
-  locations: Array<{ id: string; work_location_name: string | null; geofence_polygon: any }>;
-}): { inside: boolean; work_location_id: string | null; work_location_name: string | null; message: string } {
+  locations: Array<{ id: string; work_location_name: string | null; geofence_polygon: any; time_zone?: string | null }>;
+}): { inside: boolean; work_location_id: string | null; work_location_name: string | null; time_zone: string | null; message: string } {
   for (const location of params.locations) {
     const rings = parseGeofencePolygonToRings(location.geofence_polygon);
     for (const ring of rings) {
@@ -210,6 +210,7 @@ function resolveWorkLocationForPoint(params: {
           inside: true,
           work_location_id: location.id,
           work_location_name: location.work_location_name || null,
+          time_zone: normalizeNullableText(location.time_zone),
           message: `Está dentro de la localización ${name}`,
         };
       }
@@ -220,6 +221,7 @@ function resolveWorkLocationForPoint(params: {
     inside: false,
     work_location_id: null,
     work_location_name: null,
+    time_zone: null,
     message: 'No está dentro de ninguna localización predefinida',
   };
 }
@@ -569,6 +571,7 @@ function isClosedTimePunchChangeStatusKey(statusKey: string | null | undefined):
 type TimePunchRequestedValues = {
   company_id?: string;
   punch_datetime?: string;
+  punch_time_zone?: string | null;
   punch_key?: number;
   time_clock_device_id?: string | null;
   punch_source_id?: string | null;
@@ -610,6 +613,10 @@ async function normalizeTimePunchRequestedValues(params: {
       throw new Error('requested_values.punch_datetime es invalido');
     }
     normalized.punch_datetime = date.toISOString();
+  }
+
+  if (raw.punch_time_zone !== undefined || raw.client_time_zone !== undefined) {
+    normalized.punch_time_zone = normalizeNullableText(raw.punch_time_zone) || normalizeNullableText(raw.client_time_zone) || null;
   }
 
   const punchKeyLookupId = normalizeNullableText(raw.punch_key_lookup_id);
@@ -1081,6 +1088,7 @@ router.get('/mark/history', async (req: Request, res: Response) => {
           d.device_name,
           d.device_serial_number,
           p.punch_datetime,
+          p.punch_time_zone,
           p.punch_key,
           mv.id AS punch_key_lookup_id,
           mv.lookup_label AS movement_label,
@@ -1144,10 +1152,29 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const deviceId = FIXED_DEVICE_ID;
     const punchKeyLookupId = normalizeNullableText(req.body?.punch_key_lookup_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
+    const punchDateTimeRaw = normalizeNullableText(req.body?.punch_datetime);
+    const clientTimeZone = normalizeNullableText(req.body?.client_time_zone);
     const snapshotBase64 = normalizeNullableText(req.body?.snapshot_base64);
     const latitud = parseNullableCoordinate(req.body?.latitud);
     const longitud = parseNullableCoordinate(req.body?.longitud);
     const notes = FIXED_NOTES;
+    let punchDateTime = new Date();
+
+    if (punchDateTimeRaw) {
+      const parsedClientDate = new Date(punchDateTimeRaw);
+      if (!Number.isFinite(parsedClientDate.getTime())) {
+        return res.status(400).json({ error: 'punch_datetime es invalido' });
+      }
+
+      const maxClientDriftMs = 10 * 60 * 1000;
+      if (Math.abs(Date.now() - parsedClientDate.getTime()) > maxClientDriftMs) {
+        return res.status(400).json({
+          error: 'La hora del dispositivo no coincide con la hora del sistema. Sincronice el reloj y reintente.',
+        });
+      }
+
+      punchDateTime = parsedClientDate;
+    }
 
     if (!snapshotBase64) {
       return res.status(400).json({ error: 'snapshot_base64 es obligatorio para registrar la marcacion' });
@@ -1264,6 +1291,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         SELECT
           wl.id,
           wl.work_location_name,
+          wl.time_zone,
           wl.geofence_polygon
         FROM public.work_locations wl
         WHERE wl.tenant_id = $1::uuid
@@ -1292,6 +1320,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const normalizedStatusId = locationValidation.inside
       ? requestedStatusId || validStatusId || null
       : invalidStatusId || requestedStatusId || validStatusId || null;
+    const effectivePunchTimeZone = locationValidation.time_zone || clientTimeZone || 'America/Guayaquil';
     if (!locationValidation.inside && !invalidStatusId) {
       locationValidation.message =
         `${locationValidation.message}. No existe estado INVALID configurado; se registró con estado alterno.`;
@@ -1306,6 +1335,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           employee_id,
           time_clock_device_id,
           punch_datetime,
+          punch_time_zone,
           punch_key,
           punch_source_id,
           time_punch_status_id,
@@ -1317,7 +1347,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10,true,$11
+          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,true,$13
         )
         RETURNING *
       `,
@@ -1326,6 +1356,8 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         companyId,
         context.employee_id,
         deviceId,
+        punchDateTime.toISOString(),
+        effectivePunchTimeZone,
         punchKey,
         normalizedSourceId,
         normalizedStatusId,
@@ -1348,6 +1380,8 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       return res.status(201).json({
         success: true,
         punch,
+        client_time_zone: clientTimeZone || null,
+        punch_time_zone: effectivePunchTimeZone,
         location_validation: locationValidation,
         snapshot: {
           file_name: snapshot.fileName,
@@ -1613,6 +1647,7 @@ router.get('/my-punches', async (req: Request, res: Response) => {
         SELECT
           p.id,
           p.punch_datetime,
+          p.punch_time_zone,
           p.punch_key,
           p.notes,
           p.latitud,
@@ -4023,6 +4058,7 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
             p.time_clock_device_id,
             d.device_name,
             p.punch_datetime,
+            p.punch_time_zone,
             p.punch_key,
             mv.lookup_label AS punch_key_label,
             p.time_punch_status_id,
@@ -4218,6 +4254,7 @@ router.post('/time-punch-requests', async (req: Request, res: Response) => {
             p.company_id,
             p.time_clock_device_id,
             p.punch_datetime,
+            p.punch_time_zone,
             p.punch_key,
             p.punch_source_id,
             p.time_punch_status_id,
@@ -4296,6 +4333,7 @@ router.post('/time-punch-requests', async (req: Request, res: Response) => {
           company_id: targetPunch.company_id,
           time_clock_device_id: targetPunch.time_clock_device_id,
           punch_datetime: targetPunch.punch_datetime,
+          punch_time_zone: targetPunch.punch_time_zone,
           punch_key: targetPunch.punch_key,
           punch_source_id: targetPunch.punch_source_id,
           time_punch_status_id: targetPunch.time_punch_status_id,
@@ -5031,6 +5069,7 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
               employee_id,
               time_clock_device_id,
               punch_datetime,
+              punch_time_zone,
               punch_key,
               punch_source_id,
               time_punch_status_id,
@@ -5041,8 +5080,8 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             )
             VALUES (
               gen_random_uuid(),
-              $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6::integer, $7::uuid, $8::uuid,
-              NULL, $9, $10::boolean, $11
+              $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::timestamptz, $6, $7::integer, $8::uuid, $9::uuid,
+              NULL, $10, $11::boolean, $12
             )
           `,
           [
@@ -5051,6 +5090,7 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             current.employee_id,
             requestedValues.time_clock_device_id || null,
             requestedValues.punch_datetime,
+            requestedValues.punch_time_zone || 'America/Guayaquil',
             Math.trunc(Number(requestedValues.punch_key)),
             requestedValues.punch_source_id || FIXED_PUNCH_SOURCE_ID,
             requestedValues.time_punch_status_id || null,
@@ -5085,6 +5125,10 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
         if (requestedValues.punch_datetime) {
           updates.push(`punch_datetime = $${next++}::timestamptz`);
           params.push(requestedValues.punch_datetime);
+        }
+        if (requestedValues.punch_time_zone !== undefined) {
+          updates.push(`punch_time_zone = $${next++}`);
+          params.push(requestedValues.punch_time_zone || null);
         }
         if (requestedValues.punch_key !== undefined) {
           updates.push(`punch_key = $${next++}::integer`);

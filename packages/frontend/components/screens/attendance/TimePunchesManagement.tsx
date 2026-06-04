@@ -4,6 +4,7 @@ import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import { formatClientDateTime } from '../../../utils/date-time';
 
 interface CompanyRow {
   id: string;
@@ -45,6 +46,7 @@ interface InconsistencyRow {
   missing_punch_key: number;
   inconsistency_type: 'MISSING_START' | 'MISSING_END';
   punch_datetime: string;
+  punch_time_zone: string | null;
   detected_punch_key: number;
 }
 
@@ -52,17 +54,8 @@ function getToken() {
   return localStorage.getItem('tt-access-token') || publicApiToken;
 }
 
-function toDisplayDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return String(value);
-  return date.toLocaleString('es-EC', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function toDisplayDateTime(value: string | null | undefined, timeZone?: string | null): string {
+  return formatClientDateTime(value, 'es-EC', timeZone || undefined);
 }
 
 function fullEmployeeName(row: InconsistencyRow): string {
@@ -409,7 +402,7 @@ export function TimePunchesManagement() {
               ) : (
                 filteredRows.map((row) => (
                   <tr key={row.id} className="border-b hover:bg-gray-50">
-                    <td className="py-3 pr-3">{toDisplayDateTime(row.punch_datetime)}</td>
+                    <td className="py-3 pr-3">{toDisplayDateTime(row.punch_datetime, row.punch_time_zone)}</td>
                     <td className="py-3 pr-3">
                       {fullEmployeeName(row)}
                       {row.employee_code ? <span className="ml-2 text-xs text-gray-500">({row.employee_code})</span> : null}

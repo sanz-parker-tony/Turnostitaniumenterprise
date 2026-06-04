@@ -1,7 +1,7 @@
 'use client';
 
 import { buildApiUrl } from '../../utils/api-config';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeftCircle,
@@ -17,8 +17,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
+import { formatClientDate, formatClientDateTime, formatClientTime, getClientTimeZone } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { DevicePermissionToolbar, PERMISSIONS_EVENT } from '@/components/shared/DevicePermissionToolbar';
 
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
@@ -66,24 +68,6 @@ function getFullName(employee: EmployeeContext | null): string {
   return `${employee.employee_name || ''} ${employee.employee_lastname || ''}`.trim() || employee.employee_code || 'Empleado';
 }
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('es-EC', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('es-EC', {
-    weekday: 'long',
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
-}
-
 function getBrowserPosition(timeoutMs = 10000): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
@@ -105,11 +89,15 @@ export default function KioskPunch() {
   const [savingLookupId, setSavingLookupId] = useState<string | null>(null);
   const [context, setContext] = useState<ContextPayload | null>(null);
   const [lastMarkAt, setLastMarkAt] = useState<string | null>(null);
+  const [lastMarkTimeZone, setLastMarkTimeZone] = useState<string | null>(null);
   const [defaultPunchStatusId, setDefaultPunchStatusId] = useState('');
   const [clockNow, setClockNow] = useState<Date>(new Date());
   const [photoFailed, setPhotoFailed] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [locationReady, setLocationReady] = useState(false);
+  const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -150,45 +138,84 @@ export default function KioskPunch() {
     return () => clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const initCamera = async () => {
-      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-        setCameraError('Este navegador no soporta camara.');
-        return;
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
-          audio: false,
-        });
-        if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-        streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => undefined);
-        }
-        setCameraReady(true);
-        setCameraError(null);
-      } catch (err: any) {
-        setCameraReady(false);
-        setCameraError(err?.message || 'No se pudo acceder a la camara');
-      }
-    };
-
-    void initCamera();
-
-    return () => {
-      cancelled = true;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-      }
-    };
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraReady(false);
   }, []);
+
+  const startCamera = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Este navegador no soporta camara.');
+      setCameraReady(false);
+      return;
+    }
+    try {
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user' },
+        audio: false,
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+      setCameraReady(true);
+      setCameraError(null);
+    } catch (err: any) {
+      setCameraReady(false);
+      setCameraError(err?.message || 'No se pudo acceder a la camara');
+    }
+  }, [stopCamera]);
+
+  const refreshLocation = useCallback(async () => {
+    try {
+      const position = await getBrowserPosition(12000);
+      setLocationReady(true);
+      setLocationAccuracy(Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null);
+      setLocationError(null);
+      return position;
+    } catch (err: any) {
+      setLocationReady(false);
+      setLocationAccuracy(null);
+      setLocationError(err?.message || 'No se pudo obtener la ubicacion geografica.');
+      throw err;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    if (window.localStorage.getItem('tt-device-camera-enabled') === 'granted') {
+      void startCamera();
+    }
+    if (window.localStorage.getItem('tt-device-location-enabled') === 'granted') {
+      void refreshLocation().catch(() => undefined);
+    }
+
+    const handlePermissionsChanged = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      if (detail.camera === 'granted') void startCamera();
+      if (detail.camera === 'denied') stopCamera();
+      if (detail.location === 'granted') void refreshLocation().catch(() => undefined);
+      if (detail.location === 'denied') {
+        setLocationReady(false);
+        setLocationAccuracy(null);
+      }
+    };
+
+    window.addEventListener(PERMISSIONS_EVENT, handlePermissionsChanged);
+    return () => {
+      window.removeEventListener(PERMISSIONS_EVENT, handlePermissionsChanged);
+      stopCamera();
+    };
+  }, [refreshLocation, startCamera, stopCamera]);
 
   const captureSnapshotBase64 = (): string | null => {
     const video = videoRef.current;
@@ -253,6 +280,7 @@ export default function KioskPunch() {
       const recent = await request('/kiosk/my-punches?limit=1');
       const latest = recent?.data?.[0];
       setLastMarkAt(latest?.punch_datetime || null);
+      setLastMarkTimeZone(latest?.punch_time_zone || null);
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo cargar datos de marcacion');
     } finally {
@@ -283,7 +311,7 @@ export default function KioskPunch() {
     let latitud: number;
     let longitud: number;
     try {
-      const position = await getBrowserPosition();
+      const position = await refreshLocation();
       latitud = position.coords.latitude;
       longitud = position.coords.longitude;
     } catch (err: any) {
@@ -293,6 +321,7 @@ export default function KioskPunch() {
 
     setSavingLookupId(punchKeyLookupId);
     try {
+      const clientPunchDate = new Date();
       const payload = await request('/kiosk/mark/punch', {
         method: 'POST',
         body: JSON.stringify({
@@ -300,12 +329,15 @@ export default function KioskPunch() {
           time_clock_device_id: FIXED_DEVICE_ID,
           punch_key_lookup_id: punchKeyLookupId,
           time_punch_status_id: defaultPunchStatusId || null,
+          punch_datetime: clientPunchDate.toISOString(),
+          client_time_zone: getClientTimeZone(),
           snapshot_base64: snapshotBase64,
           latitud,
           longitud,
         }),
       });
-      setLastMarkAt(new Date().toISOString());
+      setLastMarkAt(payload?.punch?.punch_datetime || clientPunchDate.toISOString());
+      setLastMarkTimeZone(payload?.punch?.punch_time_zone || payload?.punch_time_zone || getClientTimeZone());
       toast.success('Marcacion registrada con camara y geolocalizacion');
       if (payload?.location_validation?.message) {
         toast.info(String(payload.location_validation.message));
@@ -419,6 +451,18 @@ export default function KioskPunch() {
             </div>
           </div>
 
+          <DevicePermissionToolbar
+            variant="panel"
+            onCameraGranted={startCamera}
+            onLocationGranted={(position) => {
+              setLocationReady(true);
+              setLocationAccuracy(
+                Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null
+              );
+              setLocationError(null);
+            }}
+          />
+
           <div className="grid grid-cols-1 lg:grid-cols-[220px_440px_220px] gap-4 items-start">
             <div className="space-y-3">
               {renderKeyButton(1)}
@@ -441,19 +485,24 @@ export default function KioskPunch() {
               <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-24 px-5 py-3 flex items-center justify-between shadow-inner">
                 <div className="leading-tight">
                   <p className="text-slate-300 text-[11px] uppercase tracking-widest">Hora del sistema</p>
-                  <p className="text-slate-300 text-[13px] capitalize">{formatDate(clockNow)}</p>
+                  <p className="text-slate-300 text-[13px] capitalize">{formatClientDate(clockNow)}</p>
                 </div>
-                <p className="text-5xl font-semibold tabular-nums leading-none">{formatTime(clockNow)}</p>
+                <p className="text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
               </div>
               {lastMarkAt && (
                 <p className="text-xs text-slate-600">
-                  Ultima marcacion: {new Date(lastMarkAt).toLocaleString('es-EC')}
+                  Ultima marcacion: {formatClientDateTime(lastMarkAt, 'es-EC', lastMarkTimeZone || undefined)}
                 </p>
               )}
               <p className="text-xs text-slate-600">
                 {cameraReady
                   ? 'Captura automatica activa: al marcar se toma una foto y se guarda con el id de marcacion.'
                   : `Camara no disponible: ${cameraError || 'inicializando...'}`}
+              </p>
+              <p className="text-xs text-slate-600">
+                {locationReady
+                  ? `Ubicacion activa${locationAccuracy ? `, precision aproximada ${locationAccuracy} m` : ''}.`
+                  : `Ubicacion no disponible: ${locationError || 'active la ubicacion antes de marcar.'}`}
               </p>
             </div>
 

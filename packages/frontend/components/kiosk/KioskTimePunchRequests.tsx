@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Pencil, Plus, RefreshCw, Trash2, Paperclip, Clock3, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
+import { formatClientDateTime, getClientTimeZone, toClientDateTimeLocal } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +30,7 @@ interface PunchRow {
   company_id: string | null;
   company_name: string | null;
   punch_datetime: string;
+  punch_time_zone?: string | null;
   punch_key: number;
   punch_key_label: string | null;
   time_punch_status_id: string | null;
@@ -91,28 +93,17 @@ function statusBadgeClass(statusKey: string | null | undefined): string {
   return 'bg-blue-100 text-blue-700 border-blue-200';
 }
 
-function toDateTimeLocal(value: string | null | undefined): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  const hour = `${date.getHours()}`.padStart(2, '0');
-  const minute = `${date.getMinutes()}`.padStart(2, '0');
-  return `${year}-${month}-${day}T${hour}:${minute}`;
+function toDateTimeLocal(value: string | null | undefined, timeZone?: string | null): string {
+  return toClientDateTimeLocal(value, timeZone || undefined);
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleString('es-EC');
+function formatDateTime(value: string | null | undefined, timeZone?: string | null): string {
+  return formatClientDateTime(value, 'es-EC', timeZone || undefined);
 }
 
 function formatPunchLabel(punch: PunchRow): string {
   const label = punch.punch_key_label || `Movimiento ${punch.punch_key}`;
-  return `${formatDateTime(punch.punch_datetime)} - ${label}${punch.is_active ? '' : ' (inactiva)'}`;
+  return `${formatDateTime(punch.punch_datetime, punch.punch_time_zone)} - ${label}${punch.is_active ? '' : ' (inactiva)'}`;
 }
 
 function emptyForm(defaultTypeId = ''): PopupForm {
@@ -304,7 +295,10 @@ export default function KioskTimePunchRequests() {
       request_type_id: row.request_type_id,
       target_punch_id: row.target_punch_id || '',
       reason: row.reason || '',
-      punch_datetime: toDateTimeLocal(rv.punch_datetime || row.current_values?.punch_datetime || null),
+      punch_datetime: toDateTimeLocal(
+        rv.punch_datetime || row.current_values?.punch_datetime || null,
+        rv.punch_time_zone || row.current_values?.punch_time_zone || null
+      ),
       punch_key:
         rv.punch_key !== undefined && rv.punch_key !== null
           ? String(rv.punch_key)
@@ -363,6 +357,7 @@ export default function KioskTimePunchRequests() {
       }
 
       requestedValues.punch_datetime = new Date(popupForm.punch_datetime).toISOString();
+      requestedValues.punch_time_zone = getClientTimeZone();
       requestedValues.punch_key = Math.trunc(Number(popupForm.punch_key));
       requestedValues.time_punch_status_id = popupForm.time_punch_status_id || null;
       requestedValues.notes = popupForm.notes.trim() || null;
@@ -439,7 +434,11 @@ export default function KioskTimePunchRequests() {
 
     return (
       <div className="space-y-1 text-sm text-slate-700">
-        {rv.punch_datetime ? <div><span className="font-medium">Fecha/Hora:</span> {formatDateTime(rv.punch_datetime)}</div> : null}
+        {rv.punch_datetime ? (
+          <div>
+            <span className="font-medium">Fecha/Hora:</span> {formatDateTime(rv.punch_datetime, rv.punch_time_zone)}
+          </div>
+        ) : null}
         {movement ? <div><span className="font-medium">Movimiento:</span> {movement}</div> : null}
         {rv.is_active !== undefined ? <div><span className="font-medium">Activo:</span> {rv.is_active ? 'Si' : 'No'}</div> : null}
         {rv.notes ? <div><span className="font-medium">Notas:</span> {String(rv.notes)}</div> : null}
@@ -517,7 +516,8 @@ export default function KioskTimePunchRequests() {
 
                     {row.target_punch_id ? (
                       <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-700">
-                        <span className="font-medium text-slate-800">Marcacion objetivo:</span> {formatDateTime((row.current_values || {}).punch_datetime || null)}
+                        <span className="font-medium text-slate-800">Marcacion objetivo:</span>{' '}
+                        {formatDateTime((row.current_values || {}).punch_datetime || null, (row.current_values || {}).punch_time_zone || null)}
                       </div>
                     ) : null}
 
