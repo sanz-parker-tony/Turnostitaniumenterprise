@@ -315,16 +315,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(session?.user ?? null);
 
       if (event === 'SIGNED_IN' && session?.user) {
-        console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
-        setIsLoading(true);
-        setAuthStatusMessage('Cargando perfil de la sesion...');
-        try {
-          await loadProfile(session.user);
-        } catch (error) {
-          console.error('❌ Error cargando perfil en SIGNED_IN:', error);
-        } finally {
-          setIsLoading(false); // ✅ CRÍTICO: Siempre ejecutar esto
-        }
+        // El flujo explicito de signIn() carga el perfil una sola vez.
+        // Evita carreras donde el evento SIGNED_IN desmonta Login con isLoading global.
+        setAuthStatusMessage('');
       }
 
       if (event === 'SIGNED_OUT') {
@@ -397,7 +390,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     authStatusMessage,
     signIn: async (email: string, password: string) => {
       try {
-        setIsLoading(true);
         setAuthStatusMessage('Ejecutando query de login...');
         const { data, error } = await ApiClient.auth.signInWithPassword({ email, password });
         
@@ -421,7 +413,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Error en signIn:', error);
         throw error;
       } finally {
-        setIsLoading(false);
         setAuthStatusMessage('');
       }
     },
@@ -441,4 +432,5 @@ export function useAuth() {
   }
   return context;
 }
+
 

@@ -77,10 +77,19 @@ async function callBackend<T = any>(
     headers.set('Authorization', `Bearer ${session.access_token}`);
   }
 
-  const response = await fetch(buildApiUrl(`${path}`), {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(buildApiUrl(`${path}`), {
+      ...init,
+      headers,
+    });
+  } catch (error: any) {
+    return {
+      data: null,
+      error: { message: error?.message || 'No se pudo conectar con el backend' },
+      status: 0,
+    };
+  }
 
   const payload = await response.json().catch(() => ({}));
 
@@ -244,9 +253,13 @@ export const ApiClient = {
       });
 
       if (error || !data?.session) {
+        const message =
+          typeof error === 'string'
+            ? error
+            : error?.message || error?.error || 'Invalid login credentials';
         return {
           data: { session: null, user: null },
-          error: { message: error?.message || 'Invalid login credentials' },
+          error: { message },
         };
       }
 

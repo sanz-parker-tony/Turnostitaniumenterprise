@@ -15,7 +15,7 @@ import { Toaster } from 'sonner';
 import { ApiClient } from './lib/api-client';
 
 function AppContent() {
-  const { user, session, profile, isLoading, signOut } = useAuth();
+  const { user, session, profile, isLoading } = useAuth();
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
@@ -69,14 +69,11 @@ function AppContent() {
       setShowWizard(false);
       setMustChangePassword(false);
       setWizardCompleted(null);
-      void signOut();
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.history.replaceState({}, '', '/login');
         window.dispatchEvent(new PopStateEvent('popstate'));
       }
     }
-    // signOut intentionally omitted to avoid rerunning this effect on context value recreation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, isLoading]);
 
   useEffect(() => {
