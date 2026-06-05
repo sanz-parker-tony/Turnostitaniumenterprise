@@ -112,6 +112,8 @@ function DeviceStatusIcon({
 export default function KioskPunch() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cameraStartRunRef = useRef(0);
+  const cameraReadyRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [savingLookupId, setSavingLookupId] = useState<string | null>(null);
   const [context, setContext] = useState<ContextPayload | null>(null);
@@ -125,6 +127,10 @@ export default function KioskPunch() {
   const [locationReady, setLocationReady] = useState(false);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    cameraReadyRef.current = cameraReady;
+  }, [cameraReady]);
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -176,19 +182,38 @@ export default function KioskPunch() {
     setCameraReady(false);
   }, []);
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (attempt = 1) => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       setCameraError('Este navegador no soporta camara.');
       setCameraReady(false);
       return;
     }
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      setCameraError('La camara requiere HTTPS.');
+      setCameraReady(false);
+      return;
+    }
+
+    const currentRun = ++cameraStartRunRef.current;
     try {
       stopCamera();
+      setCameraError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user' },
+        video: { facingMode: { ideal: 'user' } },
         audio: false,
       });
+      if (currentRun !== cameraStartRunRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
+      stream.getVideoTracks().forEach((track) => {
+        track.onended = () => {
+          setCameraReady(false);
+          setCameraError('La camara se desconecto. Reintentando...');
+          window.setTimeout(() => void startCamera(), 500);
+        };
+      });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => undefined);
@@ -197,7 +222,14 @@ export default function KioskPunch() {
       setCameraError(null);
     } catch (err: any) {
       setCameraReady(false);
-      setCameraError(err?.message || 'No se pudo acceder a la camara');
+      const message = err?.message || 'No se pudo acceder a la camara';
+      setCameraError(message);
+
+      const retryable = ['NotReadableError', 'AbortError', 'OverconstrainedError'].includes(err?.name);
+      if (retryable && attempt < 4) {
+        const retryDelayMs = 700 * attempt;
+        window.setTimeout(() => void startCamera(attempt + 1), retryDelayMs);
+      }
     }
   }, [stopCamera]);
 
@@ -217,10 +249,32 @@ export default function KioskPunch() {
   }, []);
 
   useEffect(() => {
-    void startCamera();
-    void refreshLocation().catch(() => undefined);
+    const activateDevices = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      void startCamera();
+      void refreshLocation().catch(() => undefined);
+    };
+
+    activateDevices();
+
+    const handleVisibleOrFocus = () => {
+      if (!streamRef.current || !cameraReadyRef.current) {
+        void startCamera();
+      } else if (videoRef.current) {
+        void videoRef.current.play().catch(() => undefined);
+      }
+      void refreshLocation().catch(() => undefined);
+    };
+
+    window.addEventListener('focus', handleVisibleOrFocus);
+    window.addEventListener('pageshow', handleVisibleOrFocus);
+    document.addEventListener('visibilitychange', handleVisibleOrFocus);
 
     return () => {
+      window.removeEventListener('focus', handleVisibleOrFocus);
+      window.removeEventListener('pageshow', handleVisibleOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibleOrFocus);
+      cameraStartRunRef.current += 1;
       stopCamera();
     };
   }, [refreshLocation, startCamera, stopCamera]);
