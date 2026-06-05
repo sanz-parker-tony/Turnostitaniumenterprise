@@ -14,12 +14,36 @@ import { DashboardLayout } from './components/DashboardLayout';
 import { Toaster } from 'sonner';
 import { ApiClient } from './lib/api-client';
 
+function LoadingScreen({ label, detail }: { label: string; detail: string }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-gray-600">{label}</p>
+        <p className="text-xs text-gray-400 mt-2">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const { user, session, profile, isLoading } = useAuth();
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
   const [wizardCompleted, setWizardCompleted] = useState<boolean | null>(null);
+  const [currentPath, setCurrentPath] = useState(() =>
+    typeof window === 'undefined' ? '/' : window.location.pathname
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const syncPath = () => setCurrentPath(window.location.pathname);
+    syncPath();
+    window.addEventListener('popstate', syncPath);
+    return () => window.removeEventListener('popstate', syncPath);
+  }, []);
 
   useEffect(() => {
     if (!user || !session?.access_token) return;
@@ -71,6 +95,7 @@ function AppContent() {
       setWizardCompleted(null);
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.history.replaceState({}, '', '/login');
+        setCurrentPath('/login');
         window.dispatchEvent(new PopStateEvent('popstate'));
       }
     }
@@ -80,6 +105,7 @@ function AppContent() {
     if (!user || isLoading) return;
     if (typeof window !== 'undefined' && window.location.pathname === '/login') {
       window.history.replaceState({}, '', '/dashboard');
+      setCurrentPath('/dashboard');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
   }, [user, isLoading]);
@@ -202,21 +228,15 @@ function AppContent() {
   };
 
   if (isLoading || checkingWizard) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-slate-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Cargando...</p>
-          <p className="text-xs text-gray-400 mt-2">
-            {isLoading ? 'Auth...' : 'Wizard...'}
-          </p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen label="Cargando..." detail={isLoading ? 'Auth...' : 'Wizard...'} />;
   }
 
   if (!user) {
     return <Login />;
+  }
+
+  if (currentPath === '/login') {
+    return <LoadingScreen label="Entrando..." detail="Redirigiendo al dashboard..." />;
   }
 
   if (mustChangePassword) {

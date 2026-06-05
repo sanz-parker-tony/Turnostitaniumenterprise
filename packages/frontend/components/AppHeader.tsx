@@ -103,6 +103,11 @@ export function AppHeader() {
 
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
+  const isKioskPunchRoute = [
+    '/dashboard/kiosk/timeclock',
+    '/kiosk/punch',
+    '/kiosk/timeclock',
+  ].includes(currentPath);
 
   const handleLogout = async () => {
     await signOut();
@@ -237,7 +242,7 @@ export function AppHeader() {
 
       {/* Right side - Notifications & User */}
       <div className="flex items-center gap-2">
-        <DevicePermissionToolbar />
+        {!isKioskPunchRoute ? <DevicePermissionToolbar /> : null}
 
         {/* Notifications */}
         <DropdownMenu onOpenChange={setNotificationsOpen}>
@@ -316,10 +321,14 @@ export function AppHeader() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <div className="px-2 py-1.5">
-              <DevicePermissionToolbar variant="panel" />
-            </div>
-            <DropdownMenuSeparator />
+            {!isKioskPunchRoute ? (
+              <>
+                <div className="px-2 py-1.5">
+                  <DevicePermissionToolbar variant="panel" />
+                </div>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
               <LogOut className="mr-2 h-4 w-4" />
               Cerrar Sesión

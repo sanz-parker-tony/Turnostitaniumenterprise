@@ -54,23 +54,27 @@ import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 
-function InvalidRouteRedirect({ path }: { path: string }) {
-  const { signOut } = useAuth();
-
-  useEffect(() => {
-    console.warn('[ROUTER] Ruta no encontrada. Cerrando sesion:', path);
-    void signOut();
-    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-      window.history.replaceState({}, '', '/login');
-      window.dispatchEvent(new PopStateEvent('popstate'));
-    }
-  }, [path, signOut]);
-
+function InvalidRouteFallback({ path }: { path: string }) {
   return (
     <div className="flex min-h-[400px] items-center justify-center">
-      <div className="text-center">
-        <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-        <p className="text-sm text-muted-foreground">Redirigiendo al login...</p>
+      <div className="max-w-lg rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm">
+        <h1 className="text-2xl font-bold text-gray-900">Ruta no encontrada</h1>
+        <p className="mt-2 text-sm text-gray-600">
+          La ruta solicitada no esta registrada en el router de la aplicacion.
+        </p>
+        <p className="mt-4 rounded-lg bg-gray-50 px-3 py-2 font-mono text-xs text-gray-700">
+          {path || '/'}
+        </p>
+        <button
+          onClick={() => {
+            window.history.replaceState({}, '', '/dashboard');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }}
+          className="mt-6 inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver al Dashboard
+        </button>
       </div>
     </div>
   );
@@ -281,5 +285,5 @@ export function Router() {
       </div>
     );
   }
-  return <InvalidRouteRedirect path={currentPath} />;
+  return <InvalidRouteFallback path={currentPath} />;
 }

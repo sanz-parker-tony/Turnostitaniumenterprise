@@ -1,15 +1,17 @@
 'use client';
 
 import { buildApiUrl } from '../../utils/api-config';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ComponentType, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeftCircle,
   ArrowRightCircle,
   Building2,
+  Camera,
   DoorClosed,
   DoorOpen,
   Loader2,
+  MapPin,
   MonitorSmartphone,
   User,
   Utensils,
@@ -20,7 +22,6 @@ import { createClient } from '@/utils/backend/client';
 import { formatClientDate, formatClientDateTime, formatClientTime, getClientTimeZone } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { DevicePermissionToolbar, PERMISSIONS_EVENT } from '@/components/shared/DevicePermissionToolbar';
 
 const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
@@ -80,6 +81,32 @@ function getBrowserPosition(timeoutMs = 10000): Promise<GeolocationPosition> {
       maximumAge: 0,
     });
   });
+}
+
+function DeviceStatusIcon({
+  active,
+  label,
+  title,
+  icon: Icon,
+}: {
+  active: boolean;
+  label: string;
+  title: string;
+  icon: ComponentType<{ className?: string }>;
+}) {
+  return (
+    <div
+      title={title}
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+        active
+          ? 'border-amber-300 bg-amber-100 text-amber-800 shadow-[0_0_0_3px_rgba(251,191,36,0.18)]'
+          : 'border-slate-200 bg-slate-100 text-slate-400'
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+      <span>{label}</span>
+    </div>
+  );
 }
 
 export default function KioskPunch() {
@@ -190,29 +217,10 @@ export default function KioskPunch() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    void startCamera();
+    void refreshLocation().catch(() => undefined);
 
-    if (window.localStorage.getItem('tt-device-camera-enabled') === 'granted') {
-      void startCamera();
-    }
-    if (window.localStorage.getItem('tt-device-location-enabled') === 'granted') {
-      void refreshLocation().catch(() => undefined);
-    }
-
-    const handlePermissionsChanged = (event: Event) => {
-      const detail = (event as CustomEvent).detail || {};
-      if (detail.camera === 'granted') void startCamera();
-      if (detail.camera === 'denied') stopCamera();
-      if (detail.location === 'granted') void refreshLocation().catch(() => undefined);
-      if (detail.location === 'denied') {
-        setLocationReady(false);
-        setLocationAccuracy(null);
-      }
-    };
-
-    window.addEventListener(PERMISSIONS_EVENT, handlePermissionsChanged);
     return () => {
-      window.removeEventListener(PERMISSIONS_EVENT, handlePermissionsChanged);
       stopCamera();
     };
   }, [refreshLocation, startCamera, stopCamera]);
@@ -445,23 +453,31 @@ export default function KioskPunch() {
                 <p className="text-sm text-slate-600">Codigo: {context.employee.employee_code || '-'}</p>
               </div>
             </div>
-            <div className="text-sm text-slate-700 space-y-1">
-              <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
-              <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {fixedDeviceLabel}</p>
+            <div className="space-y-3 text-sm text-slate-700">
+              <div className="space-y-1">
+                <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
+                <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {fixedDeviceLabel}</p>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <DeviceStatusIcon
+                  active={cameraReady}
+                  icon={Camera}
+                  label="Camara"
+                  title={cameraReady ? 'Camara activa' : cameraError || 'Camara no activa'}
+                />
+                <DeviceStatusIcon
+                  active={locationReady}
+                  icon={MapPin}
+                  label="GPS"
+                  title={
+                    locationReady
+                      ? `Ubicacion activa${locationAccuracy ? `, precision ${locationAccuracy} m` : ''}`
+                      : locationError || 'Ubicacion no activa'
+                  }
+                />
+              </div>
             </div>
           </div>
-
-          <DevicePermissionToolbar
-            variant="panel"
-            onCameraGranted={startCamera}
-            onLocationGranted={(position) => {
-              setLocationReady(true);
-              setLocationAccuracy(
-                Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null
-              );
-              setLocationError(null);
-            }}
-          />
 
           <div className="grid grid-cols-1 lg:grid-cols-[220px_440px_220px] gap-4 items-start">
             <div className="space-y-3">
