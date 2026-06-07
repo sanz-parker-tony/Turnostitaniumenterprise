@@ -614,6 +614,9 @@ function eventLabel(eventKey: string | null | undefined): string {
   if (key === 'FALTA') return 'Falta';
   if (key === 'ATRASO') return 'Atraso';
   if (key === 'SALIDA_ANTICIPADA') return 'Salida anticipada';
+  if (key === 'PERMISO_APROBADO') return 'Permiso aprobado';
+  if (key === 'FERIADO') return 'Feriado';
+  if (key === 'NO_LABORAL') return 'No laboral';
   return 'Normal';
 }
 
@@ -622,6 +625,9 @@ function eventPillClass(eventKey: string | null | undefined): string {
   if (key === 'FALTA') return 'bg-red-100 text-red-700';
   if (key === 'ATRASO') return 'bg-amber-100 text-amber-700';
   if (key === 'SALIDA_ANTICIPADA') return 'bg-orange-100 text-orange-700';
+  if (key === 'PERMISO_APROBADO') return 'bg-blue-100 text-blue-700';
+  if (key === 'FERIADO') return 'bg-violet-100 text-violet-700';
+  if (key === 'NO_LABORAL') return 'bg-slate-100 text-slate-700';
   return 'bg-emerald-100 text-emerald-700';
 }
 
@@ -739,7 +745,7 @@ function SupervisorHome({ payload }: { payload: any }) {
                 <div className="min-w-0">
                   <p className="truncate font-medium">{row.employee_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {row.area_name || 'Sin area'} · {row.shift_short_name || row.shift_name || 'Sin turno'} · Entrada {formatTimeOnly(row.first_entry)}
+                    {row.area_name || 'Sin area'} Ãƒâ€šÃ‚Â· {row.shift_short_name || row.shift_name || 'Sin turno'} Ãƒâ€šÃ‚Â· Entrada {formatTimeOnly(row.first_entry)}
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
@@ -763,7 +769,9 @@ function SupervisorHome({ payload }: { payload: any }) {
                 <div className="min-w-0">
                   <p className="truncate font-medium">{row.employee_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {formatTimeOnly(row.punch_datetime)} · {row.movement_label || `Movimiento ${row.punch_key}`} · {row.area_name || 'Sin area'}
+                    {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin area'}
+                    {row.is_holiday ? ` - Feriado: ${row.holiday_name || 'Si'} - Trabaja feriados: ${row.work_on_holidays ? 'Si' : 'No'}` : ''}
+                    {row.has_approved_leave ? ` - Permiso: ${row.approved_leave_name || 'Aprobado'}` : ''}
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
@@ -1173,7 +1181,7 @@ export function Dashboard() {
       bgColor: 'bg-green-100',
     },
     {
-      title: 'Marcaciones Año',
+      title: 'Marcaciones AÃƒÆ’Ã‚Â±o',
       value: formatMetric(metrics.total_punches_year),
       icon: Fingerprint,
       description: `Hoy: ${formatMetric(metrics.total_punches_today)}`,

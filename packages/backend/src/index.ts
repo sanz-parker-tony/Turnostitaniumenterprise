@@ -92,7 +92,7 @@ function getPostgresAnonClient() {
 }
 
 // ============================================================================
-// MIDDLEWARE DE AUTENTICACIÃ“N
+// MIDDLEWARE DE AUTENTICACIÃƒâ€œN
 // ============================================================================
 
 export const requireAuth = async (req: Request, res: Response, next: NextFunction) => {
@@ -102,10 +102,10 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
 
   const authHeader = req.headers.authorization;
 
-  console.log('ðŸ” [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
+  console.log('Ã°Å¸â€Â [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
 
   if (!authHeader?.startsWith('Bearer ')) {
-    console.error('âŒ [requireAuth] Missing or invalid Authorization header');
+    console.error('Ã¢ÂÅ’ [requireAuth] Missing or invalid Authorization header');
     return res.status(401).json({
       code: 401,
       error: 'Authorization header missing or invalid',
@@ -116,7 +116,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
   const token = authHeader.split(' ')[1];
 
   if (!token || token.length < 20) {
-    console.error('âŒ [requireAuth] Token vacÃ­o o muy corto');
+    console.error('Ã¢ÂÅ’ [requireAuth] Token vacÃƒÂ­o o muy corto');
     return res.status(401).json({
       code: 401,
       error: 'Invalid token',
@@ -124,7 +124,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     });
   }
 
-  console.log('ðŸ” [requireAuth] Token length:', token.length);
+  console.log('Ã°Å¸â€Â [requireAuth] Token length:', token.length);
 
   const PostgresAdmin = getPostgresClient();
 
@@ -132,7 +132,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     const { data: { user }, error } = await PostgresAdmin.auth.getUser(token);
 
     if (error) {
-      console.error('âŒ [requireAuth] Error de autenticaciÃ³n:', error.message);
+      console.error('Ã¢ÂÅ’ [requireAuth] Error de autenticaciÃƒÂ³n:', error.message);
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
@@ -141,7 +141,7 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     }
 
     if (!user) {
-      console.error('âŒ [requireAuth] Usuario no encontrado en el token');
+      console.error('Ã¢ÂÅ’ [requireAuth] Usuario no encontrado en el token');
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
@@ -149,11 +149,11 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    console.log('âœ… [requireAuth] Usuario autenticado:', user.email);
+    console.log('Ã¢Å“â€¦ [requireAuth] Usuario autenticado:', user.email);
     (req as any).user = user;
     next();
   } catch (err: any) {
-    console.error('ðŸ’¥ [requireAuth] Error inesperado:', err);
+    console.error('Ã°Å¸â€™Â¥ [requireAuth] Error inesperado:', err);
     return res.status(500).json({
       code: 500,
       error: 'Internal server error',
@@ -189,7 +189,7 @@ router.get('/health', (req: Request, res: Response) => {
 });
 
 router.get('/bootstrap/ping', (req: Request, res: Response) => {
-  console.log('ðŸ“ [PING] Endpoint alcanzado correctamente');
+  console.log('Ã°Å¸Ââ€œ [PING] Endpoint alcanzado correctamente');
   return res.json({
     success: true,
     message: 'Bootstrap endpoint is reachable',
@@ -980,6 +980,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             c.company_name,
             ec.work_location_id,
             wl.work_location_name,
+            COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
+            COALESCE(wl.state_id, c.company_state_id) AS employee_state_id,
+            COALESCE(wl.city_id, c.company_city_id) AS employee_city_id,
             ec.department_id,
             d.department_name,
             ec.area_id,
@@ -987,7 +990,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ec.employee_profile_id,
             ep.profile_name AS employee_profile_name,
             ec.work_group_id,
-            wg.work_group_name
+            wg.work_group_name,
+            COALESCE(ec.work_on_holidays, false) AS work_on_holidays
           FROM public.employees e
           INNER JOIN public.employee_companies ec
             ON ec.employee_id = e.id
@@ -1013,6 +1017,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             c.company_name,
             ec.work_location_id,
             wl.work_location_name,
+            COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
+            COALESCE(wl.state_id, c.company_state_id) AS employee_state_id,
+            COALESCE(wl.city_id, c.company_city_id) AS employee_city_id,
             ec.department_id,
             d.department_name,
             ec.area_id,
@@ -1020,7 +1027,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ec.employee_profile_id,
             ep.profile_name AS employee_profile_name,
             ec.work_group_id,
-            wg.work_group_name
+            wg.work_group_name,
+            COALESCE(ec.work_on_holidays, false) AS work_on_holidays
           FROM public.user_roles ur
           INNER JOIN public.roles r
             ON r.id = ur.role_id
@@ -1076,7 +1084,17 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             s.shift_name,
             s.shift_short_name,
             s.start_time,
-            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            holiday.id AS holiday_id,
+            holiday.holiday_name,
+            (holiday.id IS NOT NULL) AS is_holiday,
+            approved_leave.id AS approved_leave_id,
+            approved_leave.justification_name AS approved_leave_name,
+            (approved_leave.id IS NOT NULL) AS has_approved_leave,
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes,
             COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
             COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes
           FROM assigned_employees ae
@@ -1088,6 +1106,67 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id, h.holiday_name
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id, jt.justification_name
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            LEFT JOIN public.justification_types jt
+              ON jt.id = r.justification_type_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
         ),
         punch_summary AS (
           SELECT
@@ -1111,6 +1190,13 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           tp.department_name,
           tp.shift_name,
           tp.shift_short_name,
+          tp.holiday_id,
+          tp.holiday_name,
+          tp.is_holiday,
+          tp.approved_leave_id,
+          tp.approved_leave_name,
+          tp.has_approved_leave,
+          tp.work_on_holidays,
           tp.start_time,
           tp.work_minutes,
           COALESCE(ps.first_entry, ps.first_punch) AS first_entry,
@@ -1130,14 +1216,17 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         LEFT JOIN punch_summary ps
           ON ps.employee_id = tp.employee_id
         WHERE
-          (
-            COALESCE(ps.first_entry, ps.first_punch) IS NULL
-            AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-          )
-          OR COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-          OR (
-            COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
-            AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+          tp.work_minutes > 0
+          AND (
+            (
+              COALESCE(ps.first_entry, ps.first_punch) IS NULL
+              AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+            )
+            OR COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+            OR (
+              COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
+              AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+            )
           )
         ORDER BY
           CASE
@@ -1171,6 +1260,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
             ae.area_name,
+            ae.company_id,
+            ae.work_location_id,
+            ae.employee_country_id,
+            ae.employee_state_id,
+            ae.employee_city_id,
+            ae.work_on_holidays,
             mv.lookup_label AS movement_label
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
@@ -1196,15 +1291,28 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           l.*,
           s.shift_name,
           s.shift_short_name,
+          holiday.id AS holiday_id,
+          holiday.holiday_name,
+          (holiday.id IS NOT NULL) AS is_holiday,
+          approved_leave.id AS approved_leave_id,
+          approved_leave.justification_name AS approved_leave_name,
+          (approved_leave.id IS NOT NULL) AS has_approved_leave,
           CASE
+            WHEN approved_leave.id IS NOT NULL
+              THEN 'PERMISO_APROBADO'
+            WHEN holiday.id IS NOT NULL AND COALESCE(l.work_on_holidays, false) = false
+              THEN 'FERIADO'
+            WHEN p.id IS NULL OR s.id IS NULL OR COALESCE(sw.work_minutes, 0) <= 0
+              THEN 'NO_LABORAL'
             WHEN l.punch_key IN (1, 5)
              AND s.start_time IS NOT NULL
+             AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
               THEN 'ATRASO'
             WHEN l.punch_key IN (4, 6)
              AND s.start_time IS NOT NULL
-             AND COALESCE(s.work_minutes, 0) > 0
-             AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(s.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
+             AND COALESCE(sw.work_minutes, 0) > 0
+             AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
               THEN 'SALIDA_ANTICIPADA'
             ELSE 'NORMAL'
           END AS event_key
@@ -1217,6 +1325,67 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         LEFT JOIN public.shifts s
           ON s.id = p.shift_id
          AND s.tenant_id = p.tenant_id
+        LEFT JOIN public.shift_constructors sc
+          ON sc.shift_id = s.id
+         AND sc.tenant_id = s.tenant_id
+         AND sc.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*)::int AS active_block_count,
+            COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+              WHERE b.is_break = false
+                AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+            ), 0)::int AS required_work_minutes
+          FROM public.shift_constructor_blocks b
+          WHERE b.constructor_id = sc.id
+            AND b.tenant_id = sc.tenant_id
+            AND b.is_active = true
+        ) cb ON true
+        LEFT JOIN LATERAL (
+          SELECT CASE
+            WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+            ELSE COALESCE(s.work_minutes, 0)
+          END::int AS work_minutes
+        ) sw ON true
+        LEFT JOIN LATERAL (
+          SELECT h.id, h.holiday_name
+          FROM public.holidays h
+          WHERE h.tenant_id = $1::uuid
+            AND h.is_active = true
+            AND (
+              (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM l.punch_datetime::date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM l.punch_datetime::date))
+              OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = l.punch_datetime::date)
+            )
+            AND (h.company_id IS NULL OR h.company_id = l.company_id)
+            AND (h.country_id IS NULL OR h.country_id = l.employee_country_id)
+            AND (h.state_id IS NULL OR h.state_id = l.employee_state_id)
+            AND (h.city_id IS NULL OR h.city_id = l.employee_city_id)
+            AND (h.work_location_id IS NULL OR h.work_location_id = l.work_location_id)
+          ORDER BY
+            CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+            CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+            CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+            CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+            CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+            h.holiday_name ASC
+          LIMIT 1
+        ) holiday ON true
+        LEFT JOIN LATERAL (
+          SELECT r.id, jt.justification_name
+          FROM public.employee_absence_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          LEFT JOIN public.justification_types jt
+            ON jt.id = r.justification_type_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = l.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            AND r.start_datetime::date <= l.punch_datetime::date
+            AND COALESCE(r.end_datetime, r.start_datetime)::date >= l.punch_datetime::date
+          ORDER BY r.start_datetime ASC, r.created_at ASC
+          LIMIT 1
+        ) approved_leave ON true
         ORDER BY l.punch_datetime DESC
       `,
       scopedParams
@@ -1236,7 +1405,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ae.area_name,
             p.shift_date,
             s.start_time,
-            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes,
             COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
@@ -1248,6 +1421,70 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id, h.holiday_name
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id, jt.justification_name
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            LEFT JOIN public.justification_types jt
+              ON jt.id = r.justification_type_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
+          WHERE approved_leave.id IS NULL
+            AND (holiday.id IS NULL OR ae.work_on_holidays = true)
+            AND sw.work_minutes > 0
         ),
         punch_summary AS (
           SELECT
@@ -1348,7 +1585,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             COALESCE(NULLIF(TRIM(ae.area_name), ''), 'Sin area') AS area_name,
             p.shift_date,
             s.start_time,
-            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes,
             COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
@@ -1360,6 +1601,70 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id, h.holiday_name
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id, jt.justification_name
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            LEFT JOIN public.justification_types jt
+              ON jt.id = r.justification_type_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
+          WHERE approved_leave.id IS NULL
+            AND (holiday.id IS NULL OR ae.work_on_holidays = true)
+            AND sw.work_minutes > 0
         ),
         punch_summary AS (
           SELECT
@@ -1442,7 +1747,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             COALESCE(NULLIF(TRIM(ae.area_name), ''), 'Sin area') AS area_name,
             p.shift_date,
             s.start_time,
-            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes,
             COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
@@ -1454,6 +1763,70 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id, h.holiday_name
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id, jt.justification_name
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            LEFT JOIN public.justification_types jt
+              ON jt.id = r.justification_type_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
+          WHERE approved_leave.id IS NULL
+            AND (holiday.id IS NULL OR ae.work_on_holidays = true)
+            AND sw.work_minutes > 0
         ),
         punch_summary AS (
           SELECT
@@ -1543,7 +1916,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
             p.shift_date,
             s.start_time,
-            COALESCE(s.work_minutes, 0)::int AS work_minutes
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
             ON p.employee_id = ae.employee_id
@@ -1554,6 +1931,70 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id, h.holiday_name
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id, jt.justification_name
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            LEFT JOIN public.justification_types jt
+              ON jt.id = r.justification_type_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
+          WHERE approved_leave.id IS NULL
+            AND (holiday.id IS NULL OR ae.work_on_holidays = true)
+            AND sw.work_minutes > 0
         ),
         punch_summary AS (
           SELECT
@@ -1922,7 +2363,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               AND r.shift_date = p.shift_date
               AND r.is_active = true
               AND (
-                UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
+                UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N')
                 OR UPPER(COALESCE(st.lookup_label, '')) LIKE 'PENDIENTE%'
                 OR UPPER(COALESCE(st.lookup_label, '')) LIKE 'EN REVISI%'
               )
@@ -2352,7 +2793,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           calendarHolidays.push({
             date: birthDateCurrentYear,
             icon_key: 'Cake',
-            title: 'Cumpleaños',
+            title: 'CumpleaÃ±os',
             subtitle: `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() || 'Empleado',
             bg_color: '#FCE7F3',
             text_color: '#9D174D',
@@ -2509,7 +2950,7 @@ router.post('/auth/login', async (req: Request, res: Response) => {
     const { data, error } = await authLogin(String(email), String(password));
     if (error || !data?.session) {
       return res.status(401).json({
-        error: error?.message || 'Credenciales inválidas',
+        error: error?.message || 'Credenciales invÃ¡lidas',
       });
     }
 
@@ -2544,7 +2985,7 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
     if (authError) {
       console.error('Error listando usuarios de auth:', authError);
       return res.status(500).json({
-        error: 'Error al listar usuarios de autenticaciÃ³n',
+        error: 'Error al listar usuarios de autenticaciÃƒÂ³n',
         details: authError.message,
       });
     }
@@ -2555,9 +2996,9 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
       .limit(100);
 
     if (publicError) {
-      console.error('Error listando usuarios pÃºblicos:', publicError);
+      console.error('Error listando usuarios pÃƒÂºblicos:', publicError);
       return res.status(500).json({
-        error: 'Error al listar usuarios pÃºblicos',
+        error: 'Error al listar usuarios pÃƒÂºblicos',
         details: publicError.message,
       });
     }
@@ -2596,9 +3037,9 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
         : null,
     });
   } catch (error: any) {
-    console.error('Error en diagnÃ³stico:', error);
+    console.error('Error en diagnÃƒÂ³stico:', error);
     return res.status(500).json({
-      error: 'Error interno en diagnÃ³stico',
+      error: 'Error interno en diagnÃƒÂ³stico',
       details: error.message,
     });
   }
@@ -2613,10 +3054,10 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     const password = body.password || 'Titanium2026!';
     const displayName = body.displayName || 'System Administrator';
 
-    console.log(`ðŸ”§ Intentando crear usuario ${email}...`);
+    console.log(`Ã°Å¸â€Â§ Intentando crear usuario ${email}...`);
 
     // Verificar que tenant SYSTEM existe
-    console.log('ðŸ” Verificando tenant SYSTEM...');
+    console.log('Ã°Å¸â€Â Verificando tenant SYSTEM...');
     const { data: systemTenant, error: tenantCheckError } = await Postgres
       .from('tenants')
       .select('id, tenant_key')
@@ -2624,23 +3065,23 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (tenantCheckError || !systemTenant) {
-      console.error('âŒ ERROR CRÃTICO: Tenant SYSTEM no existe');
+      console.error('Ã¢ÂÅ’ ERROR CRÃƒÂTICO: Tenant SYSTEM no existe');
       return res.status(500).json({
         error: 'SETUP INCOMPLETO: Tenant SYSTEM no encontrado',
-        details: 'Debes ejecutar los scripts SQL de migraciÃ³n primero',
+        details: 'Debes ejecutar los scripts SQL de migraciÃƒÂ³n primero',
         solution: 'Ejecuta los scripts SQL en tu PostgreSQL y ejecuta los archivos en /Postgres/migrations/ en orden',
         requiredFiles: ['001_INITIAL_SCHEMA.sql', '002_SEED_COMPLETE.sql'],
       });
     }
 
-    console.log(`âœ… Tenant SYSTEM encontrado (id: ${systemTenant.id})`);
+    console.log(`Ã¢Å“â€¦ Tenant SYSTEM encontrado (id: ${systemTenant.id})`);
 
     // Verificar si ya existe
     const { data: existingUser } = await Postgres.auth.admin.listUsers();
     const userExists = existingUser?.users?.find(u => u.email === email);
 
     if (userExists) {
-      console.log(`â­ï¸ Usuario ${email} ya existe (id: ${userExists.id})`);
+      console.log(`Ã¢ÂÂ­Ã¯Â¸Â Usuario ${email} ya existe (id: ${userExists.id})`);
 
       return res.json({
         success: true,
@@ -2655,7 +3096,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     }
 
     // Crear usuario
-    console.log('ðŸ”§ Creando usuario con admin.createUser...');
+    console.log('Ã°Å¸â€Â§ Creando usuario con admin.createUser...');
 
     const { data: newUser, error: createError } = await Postgres.auth.admin.createUser({
       email: email,
@@ -2667,7 +3108,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     });
 
     if (createError) {
-      console.error('âŒ Error creando usuario:', createError);
+      console.error('Ã¢ÂÅ’ Error creando usuario:', createError);
       return res.status(500).json({
         error: 'No se pudo crear el usuario',
         details: createError.message,
@@ -2678,16 +3119,16 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     const userId = newUser?.user?.id;
 
     if (!userId) {
-      console.error('âŒ No se obtuvo ID de usuario');
+      console.error('Ã¢ÂÅ’ No se obtuvo ID de usuario');
       return res.status(500).json({
-        error: 'Error al obtener ID de usuario despuÃ©s de creaciÃ³n',
+        error: 'Error al obtener ID de usuario despuÃƒÂ©s de creaciÃƒÂ³n',
       });
     }
 
-    console.log(`âœ… Usuario creado en auth.users (id: ${userId})`);
+    console.log(`Ã¢Å“â€¦ Usuario creado en auth.users (id: ${userId})`);
 
     // Crear en public.users
-    console.log('ðŸ”§ Creando/actualizando usuario en public.users...');
+    console.log('Ã°Å¸â€Â§ Creando/actualizando usuario en public.users...');
     const { data: publicUser, error: publicError } = await Postgres
       .from('users')
       .upsert(
@@ -2709,7 +3150,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (publicError) {
-      console.error('âŒ Error creando/actualizando usuario en public.users:', publicError);
+      console.error('Ã¢ÂÅ’ Error creando/actualizando usuario en public.users:', publicError);
       return res.status(500).json({
         error: 'Error al crear perfil de usuario',
         details: publicError.message,
@@ -2721,15 +3162,15 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
     });
     if (syncPasswordError) {
       return res.status(500).json({
-        error: 'Error al sincronizar contraseÃ±a del usuario',
+        error: 'Error al sincronizar contraseÃƒÂ±a del usuario',
         details: syncPasswordError.message,
       });
     }
 
-    console.log(`âœ… Usuario creado/actualizado en public.users (id: ${publicUser.id})`);
+    console.log(`Ã¢Å“â€¦ Usuario creado/actualizado en public.users (id: ${publicUser.id})`);
 
     // Obtener rol SYSTEM_ADMIN
-    console.log('ðŸ” Buscando rol SYSTEM_ADMIN...');
+    console.log('Ã°Å¸â€Â Buscando rol SYSTEM_ADMIN...');
     const { data: systemAdminRole, error: roleError } = await Postgres
       .from('roles')
       .select('id')
@@ -2738,19 +3179,19 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .single();
 
     if (roleError || !systemAdminRole) {
-      console.error('âŒ ERROR CRÃTICO: Rol SYSTEM_ADMIN no existe');
+      console.error('Ã¢ÂÅ’ ERROR CRÃƒÂTICO: Rol SYSTEM_ADMIN no existe');
       return res.status(500).json({
         error: 'SETUP INCOMPLETO: Rol SYSTEM_ADMIN no encontrado',
-        details: 'Debes ejecutar los scripts SQL de migraciÃ³n primero',
+        details: 'Debes ejecutar los scripts SQL de migraciÃƒÂ³n primero',
         solution: 'Ejecuta los scripts SQL en tu PostgreSQL y ejecuta los archivos en /Postgres/migrations/ en orden',
         requiredFiles: ['001_INITIAL_SCHEMA.sql', '002_SEED_COMPLETE.sql'],
       });
     }
 
-    console.log(`âœ… Rol SYSTEM_ADMIN encontrado (id: ${systemAdminRole.id})`);
+    console.log(`Ã¢Å“â€¦ Rol SYSTEM_ADMIN encontrado (id: ${systemAdminRole.id})`);
 
     // Asignar rol
-    console.log('ðŸ”§ Asignando rol SYSTEM_ADMIN al usuario...');
+    console.log('Ã°Å¸â€Â§ Asignando rol SYSTEM_ADMIN al usuario...');
     const { error: roleAssignError } = await Postgres
       .from('user_roles')
       .insert({
@@ -2762,14 +3203,14 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       });
 
     if (roleAssignError) {
-      console.error('âŒ Error asignando rol:', roleAssignError);
+      console.error('Ã¢ÂÅ’ Error asignando rol:', roleAssignError);
       return res.status(500).json({
         error: 'Error al asignar rol',
         details: roleAssignError.message,
       });
     }
 
-    console.log(`âœ… Rol SYSTEM_ADMIN asignado al usuario`);
+    console.log(`Ã¢Å“â€¦ Rol SYSTEM_ADMIN asignado al usuario`);
 
     return res.json({
       success: true,
@@ -2782,16 +3223,16 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       credentials: {
         email: email,
         password: password,
-        note: 'âš ï¸ IMPORTANTE: Cambia esta contraseÃ±a despuÃ©s del primer login',
+        note: 'Ã¢Å¡Â Ã¯Â¸Â IMPORTANTE: Cambia esta contraseÃƒÂ±a despuÃƒÂ©s del primer login',
       },
       nextSteps: [
-        '1. Inicia sesiÃ³n con las credenciales proporcionadas',
-        '2. Cambia la contraseÃ±a inmediatamente',
-        '3. Completa el wizard de configuraciÃ³n inicial',
+        '1. Inicia sesiÃƒÂ³n con las credenciales proporcionadas',
+        '2. Cambia la contraseÃƒÂ±a inmediatamente',
+        '3. Completa el wizard de configuraciÃƒÂ³n inicial',
       ],
     });
   } catch (error: any) {
-    console.error('ðŸ’¥ Error creando usuario system.admin:', error);
+    console.error('Ã°Å¸â€™Â¥ Error creando usuario system.admin:', error);
     return res.status(500).json({
       error: 'Error interno al crear usuario',
       details: error.message,
@@ -3081,4 +3522,3 @@ router.use((req: Request, res: Response) => {
 });
 
 export default router;
-

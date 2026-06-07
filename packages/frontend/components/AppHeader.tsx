@@ -103,6 +103,8 @@ export function AppHeader() {
 
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const showDevicePermissionToolbar = roleKey === 'EMPLOYEE';
   const isKioskPunchRoute = [
     '/dashboard/kiosk/timeclock',
     '/kiosk/punch',
@@ -242,7 +244,7 @@ export function AppHeader() {
 
       {/* Right side - Notifications & User */}
       <div className="flex items-center gap-2">
-        {!isKioskPunchRoute ? <DevicePermissionToolbar /> : null}
+        {showDevicePermissionToolbar && !isKioskPunchRoute ? <DevicePermissionToolbar /> : null}
 
         {/* Notifications */}
         <DropdownMenu onOpenChange={setNotificationsOpen}>
@@ -321,7 +323,7 @@ export function AppHeader() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {!isKioskPunchRoute ? (
+            {showDevicePermissionToolbar && !isKioskPunchRoute ? (
               <>
                 <div className="px-2 py-1.5">
                   <DevicePermissionToolbar variant="panel" />
