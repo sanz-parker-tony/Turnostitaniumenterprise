@@ -207,6 +207,10 @@ function toIsoDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function isFutureDateIso(dateIso: string): boolean {
+  return dateIso > toIsoDate(new Date());
+}
+
 function startOfWeek(date: Date): Date {
   const next = new Date(date);
   const day = next.getDay();
@@ -299,6 +303,10 @@ function classifyShiftText(shiftName?: string | null, shiftShortName?: string | 
 }
 
 function getShiftVisualMeta(shift: ShiftRow | null, kind: ShiftKind) {
+  if (kind === 'L' || Number(shift?.work_minutes || 0) <= 0) {
+    return KIND_META.L;
+  }
+
   const iconKey = normalizeShiftIconKey(shift?.shift_icon_key);
   if (iconKey && SHIFT_ICON_META[iconKey]) {
     return SHIFT_ICON_META[iconKey];
@@ -657,7 +665,7 @@ export function EmployeeShiftPlanningManagement() {
       setChanges({});
       setLegendShiftIds([]);
       setHasAppliedParameters(false);
-      setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
+      setError('Rango de fechas inválido. Ajuste Fecha Inicio y Fecha Fin.');
       return;
     }
     void loadAll();
@@ -742,6 +750,7 @@ export function EmployeeShiftPlanningManagement() {
 
   const setCellShift = (employee: EmployeeRow, dateIso: string, shiftId: string | null) => {
     if (confirmed) return;
+    if (!isFutureDateIso(dateIso)) return;
 
     const plan = plansByKey.get(keyOf(employee.id, dateIso));
     const originalShiftId = plan?.shift_id || null;
@@ -906,7 +915,7 @@ export function EmployeeShiftPlanningManagement() {
 
   const applyGeneratedPlanningToTable = (planificacion: ShiftPlanningGeneratedItem[]) => {
     const employeesById = new Map(filteredEmployees.map((employee) => [employee.id, employee]));
-    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)));
+    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)).filter(isFutureDateIso));
     const generated: Record<string, DayCellChange> = {};
     let appliedCount = 0;
 
@@ -936,7 +945,6 @@ export function EmployeeShiftPlanningManagement() {
     });
 
     setChanges(generated);
-    setPlans([]);
     setLegendShiftIds(Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id))));
     setHasAppliedParameters(true);
     setConfirmed(false);
@@ -978,6 +986,11 @@ export function EmployeeShiftPlanningManagement() {
       return;
     }
 
+    if (!rangeDays.some((day) => isFutureDateIso(toIsoDate(day)))) {
+      setError('No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
+      return;
+    }
+
     if (Math.max(1, Math.trunc(Number(requiredEmployeesPerShift || 1))) < 1) {
       setError('La dotación mínima por turno debe ser mayor o igual a 1.');
       return;
@@ -996,8 +1009,12 @@ export function EmployeeShiftPlanningManagement() {
 
       const planificacion = Array.isArray(response?.planificacion) ? response.planificacion : [];
       const applied = applyGeneratedPlanningToTable(planificacion);
+      if (applied === 0) {
+        setError('La planificación generada no contiene cambios para fechas futuras del rango seleccionado.');
+        return;
+      }
       setSuccess(
-        response?.message || `Planificación aplicada en ${applied} celdas.`
+        response?.message || `Planificación aplicada en ${applied} celdas futuras.`
       );
     } catch (err: any) {
       setError(err?.message || 'Error preparando payload de planificación');
@@ -1012,6 +1029,8 @@ export function EmployeeShiftPlanningManagement() {
     filteredEmployees.forEach((employee) => {
       rangeDays.forEach((day) => {
         const dateIso = toIsoDate(day);
+        if (!isFutureDateIso(dateIso)) return;
+
         const cellKey = keyOf(employee.id, dateIso);
         const explicitChange = changes[cellKey];
         const existingShiftId = plansByKey.get(keyOf(employee.id, dateIso))?.shift_id || null;
@@ -1069,7 +1088,7 @@ export function EmployeeShiftPlanningManagement() {
 
   const reloadGridFromDatabase = async () => {
     if (rangeDays.length === 0) {
-      setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
+      setError('Rango de fechas inválido. Ajuste Fecha Inicio y Fecha Fin.');
       return;
     }
     setLoading(true);
@@ -1093,7 +1112,13 @@ export function EmployeeShiftPlanningManagement() {
 
   const applyParameters = async () => {
     if (rangeDays.length === 0) {
-      setError('Rango de fechas invalido. Ajuste Fecha Inicio y Fecha Fin.');
+      setError('Rango de fechas inválido. Ajuste Fecha Inicio y Fecha Fin.');
+      return;
+    }
+
+    const editableRangeDays = rangeDays.filter((day) => isFutureDateIso(toIsoDate(day)));
+    if (editableRangeDays.length === 0) {
+      setError('No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
       return;
     }
 
@@ -1146,7 +1171,7 @@ export function EmployeeShiftPlanningManagement() {
         ? Math.floor((employeeIndex * patternCycleLength) / Math.max(1, employeeCount)) % patternCycleLength
         : 0;
 
-      rangeDays.forEach((day, dayIndex) => {
+      editableRangeDays.forEach((day, dayIndex) => {
         const dateIso = toIsoDate(day);
         const cycleDay = ((dayIndex + phaseOffset) % patternCycleLength) + 1;
         const byCycle = shiftByCycleDay.get(cycleDay) || null;
@@ -1179,7 +1204,7 @@ export function EmployeeShiftPlanningManagement() {
         )
       );
 
-      rangeDays.forEach((day, dayIndex) => {
+      editableRangeDays.forEach((day, dayIndex) => {
         const dateIso = toIsoDate(day);
         const dayCountByShift: Record<string, number> = {};
 
@@ -1261,20 +1286,19 @@ export function EmployeeShiftPlanningManagement() {
 
     const orderedLegend = Array.from(new Set(fallbackSequence));
     setChanges(generated);
-    setPlans([]);
     setLegendShiftIds(orderedLegend);
     setHasAppliedParameters(true);
     setConfirmed(false);
     setError(null);
     if (shouldEnforceCoverage && uncoveredGaps > 0) {
-      setSuccess(`Secuencia aplicada con cobertura parcial: patrón ${activePattern?.name || ''} en ${rangeDays.length} días. Quedaron ${uncoveredGaps} huecos de cobertura por dotación insuficiente o restricciones de compañía.`);
+      setSuccess(`Secuencia aplicada con cobertura parcial: patrón ${activePattern?.name || ''} en ${editableRangeDays.length} días futuros. Quedaron ${uncoveredGaps} huecos de cobertura por dotación insuficiente o restricciones de compañía.`);
       return;
     }
     if (!shouldEnforceCoverage) {
-      setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${rangeDays.length} días de planificación, con turnos iguales para todos los empleados.`);
+      setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${editableRangeDays.length} días futuros, con turnos iguales para todos los empleados.`);
       return;
     }
-    setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${rangeDays.length} días de planificación, con cobertura diaria mínima por turno.`);
+    setSuccess(`Parámetros aplicados: patrón ${activePattern?.name || ''} en ${editableRangeDays.length} días futuros, con cobertura diaria mínima por turno.`);
   };
 
   const countByDayAndShift = useMemo(() => {
@@ -1351,7 +1375,7 @@ export function EmployeeShiftPlanningManagement() {
             id,
             kind: 'fatiga',
             severity: 'high',
-            text: `Empleado ${employee.employee_code} tiene ${consecutive} dias consecutivos de trabajo.`,
+            text: `Empleado ${employee.employee_code} tiene ${consecutive} días consecutivos de trabajo.`,
             recommendation: `Convertir ${formatDayMonth(dateIso)} en libre para reducir fatiga.`,
             apply: () => setCellShift(employee, dateIso, null),
           });
@@ -1450,11 +1474,11 @@ export function EmployeeShiftPlanningManagement() {
                 <button
                   className={`rounded-full px-3 py-1 ${viewMode === 'employees' ? 'bg-white shadow' : ''}`}
                   onClick={() => setViewMode('employees')}
-                >Empleado x Dia</button>
+                >Empleado x Día</button>
                 <button
                   className={`rounded-full px-3 py-1 ${viewMode === 'shifts' ? 'bg-white shadow' : ''}`}
                   onClick={() => setViewMode('shifts')}
-                >Turnos por Dia</button>
+                >Turnos por Día</button>
               </div>
             </div>
 
@@ -1492,14 +1516,15 @@ export function EmployeeShiftPlanningManagement() {
                           const Icon = meta.Icon;
                           const label = shift?.shift_name || KIND_META[kind].label;
                           const hint = getShiftTimeHint(shift, kind);
+                          const editable = !confirmed && isFutureDateIso(dateIso);
                           return (
                             <td key={dateIso} className="px-1 py-1">
                               <button
                                 onClick={() => cycleCell(employee, dateIso)}
-                                disabled={confirmed}
-                                className="flex h-10 w-full items-center justify-center rounded-md border"
+                                disabled={!editable}
+                                className="flex h-10 w-full items-center justify-center rounded-md border disabled:cursor-not-allowed disabled:opacity-70"
                                 style={{ backgroundColor: meta.bg, borderColor: '#E5E7EB' }}
-                                title={`${label} | ${hint}`}
+                                title={editable ? `${label} | ${hint}` : `${label} | ${hint} | Solo se puede modificar fechas futuras`}
                               >
                                 <Icon className="size-4" style={{ color: meta.color }} />
                               </button>

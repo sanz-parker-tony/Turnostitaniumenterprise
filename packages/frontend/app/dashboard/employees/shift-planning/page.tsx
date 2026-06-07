@@ -7,8 +7,8 @@ export default function EmployeesShiftPlanningPage() {
   return (
     <ScreenPageShell
       screenKey="EMPLOYEE_SHIFT_PLANNING"
-      title="Planificación Turnos"
-      description="Planificación de turnos por empleado"
+      title="PlanificaciÃ³n Turnos"
+      description="PlanificaciÃ³n de turnos por empleado"
     >
       <EmployeeShiftPlanningManagement />
     </ScreenPageShell>

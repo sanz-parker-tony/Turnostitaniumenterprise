@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
+import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 
 const router = Router();
 
@@ -111,6 +112,17 @@ async function resolveAssignedEmployeeIds(tenantId: string, userId: string | nul
 
 function isDateIso(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function getTodayIsoDate(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Guayaquil',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const valueByType = new Map(parts.map((part) => [part.type, part.value]));
+  return `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}`;
 }
 
 function isFreeShiftLabel(name?: string | null, shortName?: string | null): boolean {
@@ -564,6 +576,10 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         throw new Error('Cada cambio requiere employee_id y shift_date (YYYY-MM-DD)');
       }
 
+      if (shiftDate <= getTodayIsoDate()) {
+        throw new Error(`Solo se pueden modificar turnos con fecha posterior a la fecha actual (${shiftDate})`);
+      }
+
       if (restrictByEmployeeScope && !assignedEmployeeIdSet.has(employeeId)) {
         throw new Error(`El empleado ${employeeId} no está asignado al usuario autenticado`);
       }
@@ -649,6 +665,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
     }
 
     await client.query('COMMIT');
+    publishTenantDashboardEvent(tenantId, 'shift_plans_changed', null);
 
     return res.status(200).json({
       success: true,

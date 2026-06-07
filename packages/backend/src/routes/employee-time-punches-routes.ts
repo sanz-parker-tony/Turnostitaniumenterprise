@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { withDocs } from '../lib/swagger-docs.js';
+import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 
 const router = Router();
 
@@ -1149,6 +1150,7 @@ router.post('/', async (req: Request, res: Response) => {
       ]
     );
 
+    publishTenantDashboardEvent(tenantId, 'time_punch_created', employeeId);
     return res.status(201).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1246,6 +1248,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     );
 
     if (!result.rows[0]) return res.status(404).json({ error: 'Marcación no encontrada' });
+    publishTenantDashboardEvent(tenantId, 'time_punch_updated', employeeId);
     return res.status(200).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1271,6 +1274,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
     );
 
     if (!result.rows[0]) return res.status(404).json({ error: 'Marcación no encontrada' });
+    publishTenantDashboardEvent(tenantId, 'time_punch_deleted', null);
     return res.status(200).json({ success: true, deleted_id: result.rows[0].id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

@@ -375,10 +375,12 @@ export default function KioskPunch() {
 
     let latitud: number;
     let longitud: number;
+    let locationAccuracyMeters: number | null = null;
     try {
       const position = await refreshLocation();
       latitud = position.coords.latitude;
       longitud = position.coords.longitude;
+      locationAccuracyMeters = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo obtener la ubicacion geografica.');
       return;
@@ -393,12 +395,12 @@ export default function KioskPunch() {
           company_id: context.employee.company_id,
           time_clock_device_id: activeDevice?.id || null,
           punch_key_lookup_id: punchKeyLookupId,
-          time_punch_status_id: defaultPunchStatusId || null,
           punch_datetime: clientPunchDate.toISOString(),
           client_time_zone: getClientTimeZone(),
           snapshot_base64: snapshotBase64,
           latitud,
           longitud,
+          location_accuracy_meters: locationAccuracyMeters,
         }),
       });
       setLastMarkAt(payload?.punch?.punch_datetime || clientPunchDate.toISOString());

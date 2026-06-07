@@ -1,5 +1,6 @@
 ﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
+import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -132,6 +133,9 @@ function parseNullableCoordinate(value: any): number | null {
 }
 
 type GeoPoint = { lng: number; lat: number };
+const EARTH_RADIUS_METERS = 6371000;
+const DEFAULT_GEOFENCE_TOLERANCE_METERS = 25;
+const MAX_GEOFENCE_TOLERANCE_METERS = 50;
 
 function toFiniteGeoPoint(value: any): GeoPoint | null {
   const lng = Number(value?.[0]);
@@ -195,11 +199,70 @@ function isPointInsideRing(pointLng: number, pointLat: number, ring: GeoPoint[])
   return inside;
 }
 
+function clampGeofenceToleranceMeters(accuracyMeters: number | null): number {
+  if (!Number.isFinite(accuracyMeters || Number.NaN) || accuracyMeters === null) {
+    return DEFAULT_GEOFENCE_TOLERANCE_METERS;
+  }
+  return Math.min(
+    MAX_GEOFENCE_TOLERANCE_METERS,
+    Math.max(DEFAULT_GEOFENCE_TOLERANCE_METERS, Math.ceil(accuracyMeters))
+  );
+}
+
+function geoPointToLocalMeters(point: GeoPoint, origin: GeoPoint): { x: number; y: number } {
+  const latRadians = (origin.lat * Math.PI) / 180;
+  return {
+    x: (((point.lng - origin.lng) * Math.PI) / 180) * EARTH_RADIUS_METERS * Math.cos(latRadians),
+    y: (((point.lat - origin.lat) * Math.PI) / 180) * EARTH_RADIUS_METERS,
+  };
+}
+
+function distancePointToSegmentMeters(point: GeoPoint, start: GeoPoint, end: GeoPoint): number {
+  const origin = point;
+  const p = { x: 0, y: 0 };
+  const a = geoPointToLocalMeters(start, origin);
+  const b = geoPointToLocalMeters(end, origin);
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const wx = p.x - a.x;
+  const wy = p.y - a.y;
+  const segmentLengthSquared = vx * vx + vy * vy;
+
+  if (segmentLengthSquared <= Number.EPSILON) {
+    return Math.hypot(p.x - a.x, p.y - a.y);
+  }
+
+  const projection = Math.max(0, Math.min(1, (wx * vx + wy * vy) / segmentLengthSquared));
+  const projectedX = a.x + projection * vx;
+  const projectedY = a.y + projection * vy;
+  return Math.hypot(p.x - projectedX, p.y - projectedY);
+}
+
+function minDistanceToRingMeters(pointLng: number, pointLat: number, ring: GeoPoint[]): number {
+  const point = { lng: pointLng, lat: pointLat };
+  let minDistance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < ring.length; i += 1) {
+    const start = ring[i];
+    const end = ring[(i + 1) % ring.length];
+    minDistance = Math.min(minDistance, distancePointToSegmentMeters(point, start, end));
+  }
+  return minDistance;
+}
+
 function resolveWorkLocationForPoint(params: {
   latitude: number;
   longitude: number;
+  accuracyMeters?: number | null;
   locations: Array<{ id: string; work_location_name: string | null; geofence_polygon: any; time_zone?: string | null }>;
 }): { inside: boolean; work_location_id: string | null; work_location_name: string | null; time_zone: string | null; message: string } {
+  const toleranceMeters = clampGeofenceToleranceMeters(params.accuracyMeters ?? null);
+  let nearestLocation: {
+    id: string;
+    work_location_name: string | null;
+    time_zone?: string | null;
+    distanceMeters: number;
+  } | null = null;
+
   for (const location of params.locations) {
     const rings = parseGeofencePolygonToRings(location.geofence_polygon);
     for (const ring of rings) {
@@ -213,7 +276,31 @@ function resolveWorkLocationForPoint(params: {
           message: `Está dentro de la localización ${name}`,
         };
       }
+
+      const distanceMeters = minDistanceToRingMeters(params.longitude, params.latitude, ring);
+      if (
+        Number.isFinite(distanceMeters) &&
+        (!nearestLocation || distanceMeters < nearestLocation.distanceMeters)
+      ) {
+        nearestLocation = {
+          id: location.id,
+          work_location_name: location.work_location_name || null,
+          time_zone: location.time_zone,
+          distanceMeters,
+        };
+      }
     }
+  }
+
+  if (nearestLocation && nearestLocation.distanceMeters <= toleranceMeters) {
+    const name = nearestLocation.work_location_name || nearestLocation.id;
+    return {
+      inside: true,
+      work_location_id: nearestLocation.id,
+      work_location_name: nearestLocation.work_location_name,
+      time_zone: normalizeNullableText(nearestLocation.time_zone),
+      message: `Está dentro de la localización ${name} por tolerancia GPS (${Math.round(nearestLocation.distanceMeters)} m del polígono)`,
+    };
   }
 
   return {
@@ -1156,6 +1243,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const snapshotBase64 = normalizeNullableText(req.body?.snapshot_base64);
     const latitud = parseNullableCoordinate(req.body?.latitud);
     const longitud = parseNullableCoordinate(req.body?.longitud);
+    const locationAccuracyMeters = parseNullableCoordinate(req.body?.location_accuracy_meters);
     const notes = FIXED_NOTES;
     let punchDateTime = new Date();
 
@@ -1189,6 +1277,9 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     }
     if (longitud < -180 || longitud > 180) {
       return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
+    }
+    if (locationAccuracyMeters !== null && (!Number.isFinite(locationAccuracyMeters) || locationAccuracyMeters < 0)) {
+      return res.status(400).json({ error: 'location_accuracy_meters debe ser numerico mayor o igual a 0' });
     }
 
     const employeeCompanies = await getEmployeeCompanies(context.tenant_id, context.employee_id);
@@ -1304,6 +1395,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const locationValidation = resolveWorkLocationForPoint({
       latitude: latitud,
       longitude: longitud,
+      accuracyMeters: locationAccuracyMeters,
       locations: workLocationsResult.rows,
     });
     const validStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
@@ -1317,7 +1409,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       ['NO_VALIDO_GEOFENCE', 'INVALID']
     );
     const normalizedStatusId = locationValidation.inside
-      ? requestedStatusId || validStatusId || null
+      ? validStatusId || requestedStatusId || null
       : invalidStatusId || requestedStatusId || validStatusId || null;
     const effectivePunchTimeZone = locationValidation.time_zone || clientTimeZone || 'America/Guayaquil';
     if (!locationValidation.inside && !invalidStatusId) {
@@ -1376,6 +1468,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         punchDateTime: punch.punch_datetime,
       });
 
+      publishTenantDashboardEvent(context.tenant_id, 'time_punch_created', context.employee_id);
       return res.status(201).json({
         success: true,
         punch,
@@ -1580,6 +1673,7 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       params
     );
 
+    publishTenantDashboardEvent(context.tenant_id, 'time_punch_updated', context.employee_id);
     return res.status(200).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1609,6 +1703,7 @@ router.delete('/mark/history/:id', async (req: Request, res: Response) => {
       [punchId, context.tenant_id, context.employee_id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Marcacion no encontrada' });
+    publishTenantDashboardEvent(context.tenant_id, 'time_punch_deleted', context.employee_id);
     return res.status(200).json({ success: true, deleted_id: result.rows[0].id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -5098,6 +5193,7 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             getActor(req),
           ]
         );
+        publishTenantDashboardEvent(current.tenant_id, 'time_punch_created', current.employee_id);
       } else if (current.request_type_key === 'UPDATE_PUNCH' || current.request_type_key === 'TOGGLE_ACTIVE') {
         if (!current.target_punch_id) {
           return res.status(400).json({ error: 'No existe target_punch_id para aplicar la aprobacion' });
@@ -5169,6 +5265,7 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             `,
             params
           );
+          publishTenantDashboardEvent(current.tenant_id, 'time_punch_updated', current.employee_id);
         }
       }
     }

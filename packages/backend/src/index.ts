@@ -7,6 +7,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient, authLogin } from './lib/postgres-client.js';
 import { pool } from './lib/db.js';
+import { getTenantDashboardEventVersion, waitForTenantDashboardEvent } from './lib/dashboard-events.js';
 
 // Importar funciones de bootstrap
 import {
@@ -1202,9 +1203,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           COALESCE(ps.first_entry, ps.first_punch) AS first_entry,
           COALESCE(ps.last_exit, ps.last_punch) AS last_exit,
           CASE
-            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
-             AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-              THEN 'FALTA'
+            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 'FALTA'
             WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
               THEN 'ATRASO'
             WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
@@ -1218,10 +1217,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         WHERE
           tp.work_minutes > 0
           AND (
-            (
-              COALESCE(ps.first_entry, ps.first_punch) IS NULL
-              AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-            )
+            COALESCE(ps.first_entry, ps.first_punch) IS NULL
             OR COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
             OR (
               COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
@@ -1230,9 +1226,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           )
         ORDER BY
           CASE
-            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
-             AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-              THEN 1
+            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 1
             WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
               THEN 2
             WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
@@ -1510,12 +1504,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             COALESCE(NULLIF(TRIM(pl.area_name), ''), 'Sin area') AS area_name,
             pl.shift_date,
             CASE
-              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
-               AND (
-                 pl.shift_date < CURRENT_DATE
-                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
-               )
-                THEN 1 ELSE 0
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 1 ELSE 0
             END AS absent,
             GREATEST(
               0,
@@ -1690,12 +1679,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             pl.employee_name,
             pl.area_name,
             CASE
-              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
-               AND (
-                 pl.shift_date < CURRENT_DATE
-                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
-               )
-                THEN 1 ELSE 0
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 1 ELSE 0
             END AS absent,
             GREATEST(
               0,
@@ -1852,12 +1836,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             pl.employee_name,
             pl.area_name,
             CASE
-              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
-               AND (
-                 pl.shift_date < CURRENT_DATE
-                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
-               )
-                THEN 1 ELSE 0
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 1 ELSE 0
             END AS absent,
             GREATEST(
               0,
@@ -2041,6 +2020,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     return res.status(200).json({
       success: true,
       generated_at: new Date().toISOString(),
+      realtime: {
+        version: getTenantDashboardEventVersion(tenantId),
+      },
       supervisor: {
         display_name: context.display_name || context.email,
         email: context.email,
@@ -2068,6 +2050,63 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         employee_absence: rankingMoreRows.filter((row: any) => row.ranking_type === 'employee_absence').slice(0, 5),
         employee_overtime: employeeOvertimeResult.rows || [],
       },
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Internal server error',
+    });
+  }
+});
+
+router.get('/dashboard/supervisor-events', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const authUserId = user?.id;
+    if (!authUserId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const contextResult = await pool.query(
+      `
+        SELECT
+          u.id AS user_id,
+          u.tenant_id,
+          ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys
+        FROM public.users u
+        LEFT JOIN public.user_roles ur
+          ON ur.user_id = u.id
+         AND ur.tenant_id = u.tenant_id
+         AND ur.is_active = true
+         AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+         AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        LEFT JOIN public.roles r
+          ON r.id = ur.role_id
+         AND r.tenant_id = ur.tenant_id
+         AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+        GROUP BY u.id, u.tenant_id
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    const context = contextResult.rows[0];
+    if (!context?.tenant_id) {
+      return res.status(403).json({ error: 'No se pudo resolver contexto de supervisor' });
+    }
+
+    const roleKeys = (context.role_keys || []).map((key: string) => String(key || '').trim().toUpperCase());
+    const canViewSupervisorDashboard = roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(key));
+    if (!canViewSupervisorDashboard) {
+      return res.status(403).json({ error: 'Dashboard disponible para Supervisor/RRHH' });
+    }
+
+    const sinceVersion = Number.isFinite(Number(req.query.since)) ? Math.max(0, Math.trunc(Number(req.query.since))) : 0;
+    const eventResult = await waitForTenantDashboardEvent(String(context.tenant_id), sinceVersion);
+
+    return res.status(200).json({
+      success: true,
+      ...eventResult,
+      generated_at: new Date().toISOString(),
     });
   } catch (error: any) {
     return res.status(500).json({

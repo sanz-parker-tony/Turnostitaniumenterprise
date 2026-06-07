@@ -807,7 +807,7 @@ function SupervisorHome({ payload }: { payload: any }) {
                 <div className="min-w-0">
                   <p className="truncate font-medium">{row.employee_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {row.area_name || 'Sin area'} Ãƒâ€šÃ‚Â· {row.shift_short_name || row.shift_name || 'Sin turno'} Ãƒâ€šÃ‚Â· Entrada {formatTimeOnly(row.first_entry)}
+                    {row.area_name || 'Sin área'} · {row.shift_short_name || row.shift_name || 'Sin turno'} · Entrada {formatTimeOnly(row.first_entry)}
                   </p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
@@ -831,7 +831,7 @@ function SupervisorHome({ payload }: { payload: any }) {
                 <div className="min-w-0">
                   <p className="truncate font-medium">{row.employee_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin area'}
+                    {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin área'}
                     {row.is_holiday ? ` - Feriado: ${row.holiday_name || 'Si'} - Trabaja feriados: ${row.work_on_holidays ? 'Si' : 'No'}` : ''}
                     {row.has_approved_leave ? ` - Permiso: ${row.approved_leave_name || 'Aprobado'}` : ''}
                   </p>
@@ -1154,39 +1154,74 @@ export function Dashboard() {
 
   useEffect(() => {
     let mounted = true;
-    let intervalId: number | undefined;
+    let realtimeVersion = 0;
+    let retryTimerId: number | undefined;
+    let summaryAbortController: AbortController | undefined;
+    let eventsAbortController: AbortController | undefined;
 
-    const loadSupervisor = async () => {
+    const loadSupervisor = async (showLoading = true) => {
       if (!isSupervisor) return;
       if (!session?.access_token) return;
       try {
-        if (mounted) {
+        summaryAbortController?.abort();
+        summaryAbortController = new AbortController();
+        if (mounted && showLoading) {
           setSupervisorLoading(true);
           setSupervisorError(null);
         }
         const resp = await fetch(buildApiUrl('/dashboard/supervisor-summary'), {
           headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: summaryAbortController.signal,
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data?.error || 'No se pudo cargar el dashboard de supervisor');
-        if (mounted) setSupervisorPayload(data);
+        const nextVersion = Number(data?.realtime?.version);
+        if (Number.isFinite(nextVersion)) realtimeVersion = Math.max(realtimeVersion, nextVersion);
+        if (mounted) {
+          setSupervisorPayload(data);
+          setSupervisorError(null);
+        }
       } catch (e: any) {
-        if (mounted) setSupervisorError(e?.message || 'Error cargando dashboard de supervisor');
+        if (e?.name !== 'AbortError' && mounted) setSupervisorError(e?.message || 'Error cargando dashboard de supervisor');
       } finally {
-        if (mounted) setSupervisorLoading(false);
+        if (mounted && showLoading) setSupervisorLoading(false);
+      }
+    };
+
+    const waitForSupervisorEvent = async () => {
+      if (!isSupervisor || !session?.access_token || !mounted) return;
+      try {
+        eventsAbortController?.abort();
+        eventsAbortController = new AbortController();
+        const resp = await fetch(buildApiUrl(`/dashboard/supervisor-events?since=${realtimeVersion}`), {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          signal: eventsAbortController.signal,
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'No se pudo escuchar cambios del dashboard');
+        const nextVersion = Number(data?.version);
+        if (Number.isFinite(nextVersion) && nextVersion > realtimeVersion) {
+          realtimeVersion = nextVersion;
+          await loadSupervisor(false);
+        }
+        if (mounted) void waitForSupervisorEvent();
+      } catch (e: any) {
+        if (e?.name === 'AbortError' || !mounted) return;
+        retryTimerId = window.setTimeout(() => {
+          void loadSupervisor(false);
+          void waitForSupervisorEvent();
+        }, 5000);
       }
     };
 
     void loadSupervisor();
-    if (isSupervisor && session?.access_token) {
-      intervalId = window.setInterval(() => {
-        void loadSupervisor();
-      }, 10000);
-    }
+    void waitForSupervisorEvent();
 
     return () => {
       mounted = false;
-      if (intervalId !== undefined) window.clearInterval(intervalId);
+      summaryAbortController?.abort();
+      eventsAbortController?.abort();
+      if (retryTimerId !== undefined) window.clearTimeout(retryTimerId);
     };
   }, [isSupervisor, session?.access_token]);
 
@@ -1243,7 +1278,7 @@ export function Dashboard() {
       bgColor: 'bg-green-100',
     },
     {
-      title: 'Marcaciones AÃƒÆ’Ã‚Â±o',
+      title: 'Marcaciones Año',
       value: formatMetric(metrics.total_punches_year),
       icon: Fingerprint,
       description: `Hoy: ${formatMetric(metrics.total_punches_today)}`,
