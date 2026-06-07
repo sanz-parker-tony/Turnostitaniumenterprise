@@ -587,7 +587,15 @@ const SUPERVISOR_ISSUE_PIE_CONFIG = [
   { eventKey: 'SALIDA_ANTICIPADA', label: 'Salidas anticipadas', color: '#f97316' },
 ];
 
-const ISSUE_PIE_REST_COLOR = '#e2e8f0';
+const SUPERVISOR_NO_ISSUE_COLOR = '#e2e8f0';
+
+const SUPERVISOR_SURCHARGE_PIE_CONFIG = [
+  { key: 'night_minutes', label: 'Jornada nocturna', detail: 'Recargo 25%', color: '#22c55e' },
+  { key: 'extra_50_minutes', label: 'Horas extra 50%', detail: 'Recargo 50%', color: '#06b6d4' },
+  { key: 'extra_100_minutes', label: 'Horas extra 100%', detail: 'Recargo 100%', color: '#7c3aed' },
+];
+
+const LATEST_PUNCH_LIMIT_OPTIONS = [10, 25, 50, 100];
 
 function formatMetric(value: unknown): string {
   const num = Number(value ?? 0);
@@ -657,6 +665,13 @@ function dateTimeToLocalMinutes(value: string | null | undefined): number | null
   const match = String(value).match(/(?:T|\s)(\d{2}):(\d{2})/);
   if (!match) return null;
   return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function getDefaultLatestPunchesFromTime(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return '08:30';
+  if (hour < 17) return '12:00';
+  return '17:00';
 }
 
 function getWeekdayInitial(value: unknown): string {
@@ -763,67 +778,181 @@ function RankingList({
   );
 }
 
-function SupervisorIssuePie({
-  label,
-  affected,
+function SupervisorIssuesPie({
+  rows,
   total,
-  color,
 }: {
-  label: string;
-  affected: number;
+  rows: Array<{ eventKey: string; label: string; color: string; affected: number }>;
   total: number;
-  color: string;
 }) {
   const safeTotal = Math.max(0, Math.trunc(Number(total || 0)));
-  const safeAffected = Math.max(0, Math.min(safeTotal, Math.trunc(Number(affected || 0))));
-  const unaffected = Math.max(0, safeTotal - safeAffected);
-  const percent = safeTotal > 0 ? (safeAffected / safeTotal) * 100 : 0;
-  const data = safeTotal > 0
-    ? [
-      { name: label, value: safeAffected },
-      { name: 'Sin novedad', value: unaffected },
-    ]
-    : [{ name: 'Sin empleados', value: 1 }];
+  const totalAffected = rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.affected || 0))), 0);
+  const noIssueCount = Math.max(0, safeTotal - totalAffected);
+  const data = [
+    ...rows
+    .map((row) => ({
+      ...row,
+      value: Math.max(0, Math.trunc(Number(row.affected || 0))),
+      percent: safeTotal > 0 ? (Math.max(0, Math.trunc(Number(row.affected || 0))) / safeTotal) * 100 : 0,
+    }))
+    .filter((row) => row.value > 0),
+    ...(noIssueCount > 0 ? [{
+      eventKey: 'SIN_NOVEDAD',
+      label: 'Sin novedad',
+      color: SUPERVISOR_NO_ISSUE_COLOR,
+      affected: noIssueCount,
+      value: noIssueCount,
+      percent: safeTotal > 0 ? (noIssueCount / safeTotal) * 100 : 0,
+    }] : []),
+  ];
 
   return (
-    <div className="rounded-lg border bg-white p-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold">{label}</p>
-        <span className="text-xs text-muted-foreground">{safeAffected}/{safeTotal}</span>
-      </div>
-      <div className="mt-2 grid grid-cols-[88px_1fr] items-center gap-3">
-        <ResponsiveContainer width="100%" height={88}>
+    <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+      <div className="rounded-lg border bg-white p-3">
+        <ResponsiveContainer width="100%" height={220}>
           <PieChart>
             <Pie
               data={data}
               dataKey="value"
-              nameKey="name"
-              innerRadius={24}
-              outerRadius={40}
-              paddingAngle={safeAffected > 0 && unaffected > 0 ? 2 : 0}
+              nameKey="label"
+              innerRadius={58}
+              outerRadius={92}
+              paddingAngle={data.length > 1 ? 2 : 0}
               isAnimationActive={false}
             >
               {data.map((entry, index) => (
                 <Cell
-                  key={`${label}-${entry.name}`}
-                  fill={safeTotal === 0 ? ISSUE_PIE_REST_COLOR : index === 0 ? color : ISSUE_PIE_REST_COLOR}
+                  key={`${entry.eventKey}-${index}`}
+                  fill={entry.color}
                 />
               ))}
             </Pie>
-            <RechartsTooltip formatter={(value: unknown, name: unknown) => [`${formatMetric(value)} personas`, String(name)]} />
+            <RechartsTooltip
+              formatter={(value: unknown, name: unknown, item: any) => [
+                `${formatMetric(value)} personas (${formatPercent(item?.payload?.percent)})`,
+                String(name),
+              ]}
+            />
           </PieChart>
         </ResponsiveContainer>
-        <div>
-          <p className="text-2xl font-bold" style={{ color }}>{formatPercent(percent)}</p>
-          <p className="text-xs text-muted-foreground">del total de empleados</p>
+        <div className="text-center">
+          <p className="text-2xl font-bold">{formatPercent(safeTotal > 0 ? (totalAffected / safeTotal) * 100 : 0)}</p>
+          <p className="text-xs text-muted-foreground">{formatMetric(totalAffected)} incidencias / {formatMetric(safeTotal)} empleados</p>
         </div>
+      </div>
+      <div className="grid content-center gap-2">
+        {rows.map((row) => {
+          const percent = safeTotal > 0 ? (Number(row.affected || 0) / safeTotal) * 100 : 0;
+          return (
+            <div key={row.eventKey} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
+                <span className="truncate font-medium">{row.label}</span>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-semibold">{formatMetric(row.affected)} / {formatMetric(safeTotal)}</p>
+                <p className="text-xs text-muted-foreground">{formatPercent(percent)}</p>
+              </div>
+            </div>
+          );
+        })}
+        {safeTotal > 0 ? (
+          <div className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: SUPERVISOR_NO_ISSUE_COLOR }} />
+              <span className="truncate font-medium">Sin novedad</span>
+            </div>
+            <div className="shrink-0 text-right">
+              <p className="font-semibold">{formatMetric(noIssueCount)} / {formatMetric(safeTotal)}</p>
+              <p className="text-xs text-muted-foreground">{formatPercent(safeTotal > 0 ? (noIssueCount / safeTotal) * 100 : 0)}</p>
+            </div>
+          </div>
+        ) : null}
+        {data.length === 0 ? (
+          <p className="rounded-lg border bg-white px-3 py-2 text-sm text-muted-foreground">Sin novedades operativas detectadas hoy.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SupervisorSurchargePie({
+  rows,
+}: {
+  rows: Array<{ key: string; label: string; detail: string; color: string; minutes: number }>;
+}) {
+  const totalMinutes = rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.minutes || 0))), 0);
+  const data = rows
+    .map((row) => ({
+      ...row,
+      value: Math.max(0, Math.trunc(Number(row.minutes || 0))),
+      hours: Math.max(0, Number(row.minutes || 0)) / 60,
+      percent: totalMinutes > 0 ? (Math.max(0, Math.trunc(Number(row.minutes || 0))) / totalMinutes) * 100 : 0,
+    }))
+    .filter((row) => row.value > 0);
+
+  return (
+    <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
+      <div className="rounded-lg border bg-white p-3">
+        <ResponsiveContainer width="100%" height={170}>
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="label"
+              innerRadius={45}
+              outerRadius={72}
+              paddingAngle={data.length > 1 ? 2 : 0}
+              isAnimationActive={false}
+            >
+              {data.map((entry, index) => (
+                <Cell key={`${entry.key}-${index}`} fill={entry.color} />
+              ))}
+            </Pie>
+            <RechartsTooltip
+              formatter={(value: unknown, name: unknown, item: any) => [
+                `${formatHours(Number(value || 0) / 60)} (${formatPercent(item?.payload?.percent)})`,
+                String(name),
+              ]}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+        <div className="text-center">
+          <p className="text-2xl font-bold">{formatHours(totalMinutes / 60)}</p>
+          <p className="text-xs text-muted-foreground">Total horas con recargo</p>
+        </div>
+      </div>
+      <div className="grid content-center gap-2">
+        {rows.map((row) => {
+          const minutes = Math.max(0, Math.trunc(Number(row.minutes || 0)));
+          const percent = totalMinutes > 0 ? (minutes / totalMinutes) * 100 : 0;
+          return (
+            <div key={row.key} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: row.color }} />
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{row.label}</p>
+                  <p className="text-xs text-muted-foreground">{row.detail}</p>
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="font-semibold">{formatHours(minutes / 60)}</p>
+                <p className="text-xs text-muted-foreground">{formatPercent(percent)}</p>
+              </div>
+            </div>
+          );
+        })}
+        {data.length === 0 ? (
+          <p className="rounded-lg border bg-white px-3 py-2 text-sm text-muted-foreground">Sin horas con recargo registradas hoy.</p>
+        ) : null}
       </div>
     </div>
   );
 }
 
 function SupervisorHome({ payload }: { payload: any }) {
-  const [latestPunchesFromTime, setLatestPunchesFromTime] = useState('');
+  const [latestPunchesFromTime, setLatestPunchesFromTime] = useState(() => getDefaultLatestPunchesFromTime());
+  const [latestPunchesLimit, setLatestPunchesLimit] = useState(10);
   const todayIssues = Array.isArray(payload?.today_issues) ? payload.today_issues : [];
   const latestPunches = Array.isArray(payload?.latest_punches) ? payload.latest_punches : [];
   const last7Days = Array.isArray(payload?.trends?.last_7_days) ? payload.trends.last_7_days : [];
@@ -832,11 +961,13 @@ function SupervisorHome({ payload }: { payload: any }) {
   const last4WeeksChart = withTrendLabels(last4Weeks, 'weekly');
   const rankings = payload?.rankings || {};
   const assignedEmployees = Math.max(0, Number(payload?.metrics?.assigned_employees || 0));
+  const surchargeHours = payload?.surcharge_hours || {};
+  const combinedIssueSources = useMemo(() => [...todayIssues, ...latestPunches], [todayIssues, latestPunches]);
 
   const issuePieRows = useMemo(() => (
     SUPERVISOR_ISSUE_PIE_CONFIG.map((config) => {
       const employeeIds = new Set(
-        todayIssues
+        combinedIssueSources
           .filter((row: any) => String(row?.event_key || '').toUpperCase() === config.eventKey)
           .map((row: any) => String(row?.employee_id || '').trim())
           .filter(Boolean)
@@ -847,7 +978,14 @@ function SupervisorHome({ payload }: { payload: any }) {
         affected: employeeIds.size,
       };
     })
-  ), [todayIssues]);
+  ), [combinedIssueSources]);
+
+  const surchargeRows = useMemo(() => (
+    SUPERVISOR_SURCHARGE_PIE_CONFIG.map((config) => ({
+      ...config,
+      minutes: Math.max(0, Number(surchargeHours?.[config.key] || 0)),
+    }))
+  ), [surchargeHours]);
 
   const filteredLatestPunches = useMemo(() => {
     const fromMinutes = timeInputToMinutes(latestPunchesFromTime);
@@ -858,6 +996,8 @@ function SupervisorHome({ payload }: { payload: any }) {
       return punchMinutes !== null && punchMinutes >= fromMinutes;
     });
   }, [latestPunches, latestPunchesFromTime]);
+
+  const visibleLatestPunches = filteredLatestPunches.slice(0, latestPunchesLimit);
 
   const kpis = [
     {
@@ -908,65 +1048,90 @@ function SupervisorHome({ payload }: { payload: any }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
-            <CardDescription>Porcentaje de empleados con novedad frente al total asignado.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 lg:grid-cols-3">
-              {issuePieRows.map((row) => (
-                <SupervisorIssuePie
-                  key={row.eventKey}
-                  label={row.label}
-                  affected={row.affected}
-                  total={assignedEmployees}
-                  color={row.color}
-                />
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid items-stretch gap-4 xl:grid-cols-2">
+        <div className="flex h-full flex-col gap-4">
+          <Card className="flex-1">
+            <CardHeader>
+              <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
+              <CardDescription>Porcentaje de empleados con novedad frente al total asignado.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SupervisorIssuesPie rows={issuePieRows} total={assignedEmployees} />
+            </CardContent>
+          </Card>
 
-        <Card>
+          <Card className="flex-1">
+            <CardHeader>
+              <CardTitle>Horas con recargo</CardTitle>
+              <CardDescription>Jornada nocturna y horas extras registradas contra turnos del día.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SupervisorSurchargePie rows={surchargeRows} />
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="flex h-full flex-col">
           <CardHeader>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <CardTitle>Últimas 10 marcaciones del día</CardTitle>
+                <CardTitle>Últimas marcaciones del día</CardTitle>
                 <CardDescription>Se refresca automáticamente para reflejar nuevas marcaciones.</CardDescription>
               </div>
-              <label className="flex shrink-0 flex-col gap-1 text-xs font-medium text-slate-600">
-                Evaluar desde
-                <input
-                  type="time"
-                  value={latestPunchesFromTime}
-                  onChange={(event) => setLatestPunchesFromTime(event.target.value)}
-                  className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
-                />
-              </label>
+              <div className="grid shrink-0 grid-cols-2 gap-2">
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                  Mostrar
+                  <select
+                    value={latestPunchesLimit}
+                    onChange={(event) => setLatestPunchesLimit(Number(event.target.value))}
+                    className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  >
+                    {LATEST_PUNCH_LIMIT_OPTIONS.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                  Evaluar desde
+                  <input
+                    type="time"
+                    value={latestPunchesFromTime}
+                    onChange={(event) => setLatestPunchesFromTime(event.target.value)}
+                    className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+                  />
+                </label>
+              </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="min-h-0 flex-1">
             {filteredLatestPunches.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {latestPunchesFromTime ? `Sin marcaciones registradas desde ${latestPunchesFromTime}.` : 'Sin marcaciones registradas hoy.'}
               </p>
-            ) : filteredLatestPunches.map((row: any) => (
-              <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{row.employee_name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin área'}
-                    {row.is_holiday ? ` - Feriado: ${row.holiday_name || 'Si'} - Trabaja feriados: ${row.work_on_holidays ? 'Si' : 'No'}` : ''}
-                    {row.has_approved_leave ? ` - Permiso: ${row.approved_leave_name || 'Aprobado'}` : ''}
-                  </p>
-                </div>
-                <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
-                  {eventLabel(row.event_key)}
-                </span>
+            ) : (
+              <div className="max-h-[760px] space-y-2 overflow-y-auto pr-1">
+                {visibleLatestPunches.map((row: any) => (
+                  <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{row.employee_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin área'}
+                        {row.is_holiday ? ` - Feriado: ${row.holiday_name || 'Sí'} - Trabaja feriados: ${row.work_on_holidays ? 'Sí' : 'No'}` : ''}
+                        {row.has_approved_leave ? ` - Permiso: ${row.approved_leave_name || 'Aprobado'}` : ''}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
+                      {eventLabel(row.event_key)}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+            {filteredLatestPunches.length > visibleLatestPunches.length ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Mostrando {formatMetric(visibleLatestPunches.length)} de {formatMetric(filteredLatestPunches.length)} marcaciones filtradas.
+              </p>
+            ) : null}
           </CardContent>
         </Card>
       </div>
