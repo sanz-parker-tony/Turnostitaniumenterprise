@@ -631,22 +631,74 @@ function eventPillClass(eventKey: string | null | undefined): string {
   return 'bg-emerald-100 text-emerald-700';
 }
 
+function getWeekdayInitial(value: unknown): string {
+  const raw = String(value || '');
+  const date = raw ? new Date(raw) : null;
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const labels = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
+  return labels[date.getDay()] || '';
+}
+
+function withTrendLabels(rows: any[], type: 'daily' | 'weekly'): any[] {
+  return rows.map((row, index) => ({
+    ...row,
+    axis_label: type === 'daily'
+      ? getWeekdayInitial(row.bucket_start) || row.label || ''
+      : `W${index + 1}`,
+  }));
+}
+
 function SupervisorMiniLine({
   data,
   dataKey,
   stroke,
+  unitLabel,
+  axisLabel,
 }: {
   data: any[];
   dataKey: string;
   stroke: string;
+  unitLabel: string;
+  axisLabel: string;
 }) {
+  const isPercent = dataKey === 'absence_rate';
   return (
-    <ResponsiveContainer width="100%" height={54}>
-      <LineChart data={data} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+    <div className="mt-2">
+      <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>{unitLabel}</span>
+        <span>{data.length > 0 ? axisLabel : 'Sin datos'}</span>
+      </div>
+      <ResponsiveContainer width="100%" height={72}>
+      <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+        <XAxis
+          dataKey="axis_label"
+          axisLine={false}
+          tickLine={false}
+          tick={{ fontSize: 10, fill: '#64748b' }}
+          interval={0}
+          height={20}
+        />
+        <YAxis
+          axisLine={false}
+          tickLine={false}
+          tick={{ fontSize: 9, fill: '#64748b' }}
+          width={30}
+          domain={isPercent ? [0, 100] : [0, 'auto']}
+          tickFormatter={(value: unknown) => isPercent ? `${Number(value)}%` : `${Number(value)}h`}
+          tickCount={3}
+        />
         <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={2} dot={false} />
-        <RechartsTooltip />
+        <RechartsTooltip
+          formatter={(value: unknown) => [dataKey === 'absence_rate' ? formatPercent(value) : formatHours(value), unitLabel]}
+          labelFormatter={(_, items) => {
+            const payload = items?.[0]?.payload;
+            return payload?.label || payload?.bucket_start || 'Periodo';
+          }}
+        />
       </LineChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -688,6 +740,8 @@ function SupervisorHome({ payload }: { payload: any }) {
   const latestPunches = Array.isArray(payload?.latest_punches) ? payload.latest_punches : [];
   const last7Days = Array.isArray(payload?.trends?.last_7_days) ? payload.trends.last_7_days : [];
   const last4Weeks = Array.isArray(payload?.trends?.last_4_weeks) ? payload.trends.last_4_weeks : [];
+  const last7DaysChart = withTrendLabels(last7Days, 'daily');
+  const last4WeeksChart = withTrendLabels(last4Weeks, 'weekly');
   const rankings = payload?.rankings || {};
 
   const kpis = [
@@ -695,8 +749,10 @@ function SupervisorHome({ payload }: { payload: any }) {
       title: 'Ausentismo 7 dias',
       value: formatPercent(last7Days[last7Days.length - 1]?.absence_rate),
       detail: `${formatMetric(last7Days.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
-      data: last7Days,
+      data: last7DaysChart,
       dataKey: 'absence_rate',
+      unitLabel: '% ausentismo',
+      axisLabel: 'Dias',
       stroke: '#dc2626',
       icon: UserX,
     },
@@ -704,8 +760,10 @@ function SupervisorHome({ payload }: { payload: any }) {
       title: 'Ausentismo 4 semanas',
       value: formatPercent(last4Weeks[last4Weeks.length - 1]?.absence_rate),
       detail: `${formatMetric(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
-      data: last4Weeks,
+      data: last4WeeksChart,
       dataKey: 'absence_rate',
+      unitLabel: '% ausentismo',
+      axisLabel: 'Semanas',
       stroke: '#f97316',
       icon: TrendingDown,
     },
@@ -713,8 +771,10 @@ function SupervisorHome({ payload }: { payload: any }) {
       title: 'Horas extra 7 dias',
       value: formatHours(last7Days.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
       detail: 'Acumulado semanal',
-      data: last7Days,
+      data: last7DaysChart,
       dataKey: 'overtime_hours',
+      unitLabel: 'horas extra',
+      axisLabel: 'Dias',
       stroke: '#2563eb',
       icon: Clock3,
     },
@@ -722,8 +782,10 @@ function SupervisorHome({ payload }: { payload: any }) {
       title: 'Horas extra 4 semanas',
       value: formatHours(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
       detail: 'Acumulado mensual',
-      data: last4Weeks,
+      data: last4WeeksChart,
       dataKey: 'overtime_hours',
+      unitLabel: 'horas extra',
+      axisLabel: 'Semanas',
       stroke: '#7c3aed',
       icon: Activity,
     },
@@ -795,7 +857,7 @@ function SupervisorHome({ payload }: { payload: any }) {
               <CardContent>
                 <div className="text-2xl font-bold">{kpi.value}</div>
                 <p className="text-xs text-muted-foreground">{kpi.detail}</p>
-                <SupervisorMiniLine data={kpi.data} dataKey={kpi.dataKey} stroke={kpi.stroke} />
+                <SupervisorMiniLine data={kpi.data} dataKey={kpi.dataKey} stroke={kpi.stroke} unitLabel={kpi.unitLabel} axisLabel={kpi.axisLabel} />
               </CardContent>
             </Card>
           );
