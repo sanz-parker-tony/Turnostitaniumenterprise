@@ -1,6 +1,7 @@
 ﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
+import { resolveEffectiveNumberSetting } from '../lib/effective-settings.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -23,6 +24,8 @@ const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE
 const DEFAULT_REQUEST_SUPPORT_DOCS_PATH = path.join('storage', 'request-support-docs');
 const DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES = 5 * 1024 * 1024;
 const FIXED_NOTES = 'marcaci\u00f3n manual v\u00eda web';
+const MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY = 'MIN_MINUTES_BETWEEN_VALID_PUNCHES';
+const DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES = 5;
 
 type EmployeeContext = {
   user_id: string;
@@ -34,6 +37,7 @@ type EmployeeContext = {
   employee_photo_path: string | null;
   company_id: string | null;
   company_name: string | null;
+  employee_profile_id: string | null;
 };
 
 type UserContext = {
@@ -860,6 +864,7 @@ async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | n
         e.employee_lastname,
         e.employee_photo_path,
         ec.company_id,
+        ec.employee_profile_id,
         c.company_name
       FROM public.users u
       INNER JOIN public.employees e
@@ -867,7 +872,7 @@ async function resolveEmployeeContext(req: Request): Promise<EmployeeContext | n
        AND e.tenant_id = u.tenant_id
        AND e.is_active = true
       LEFT JOIN LATERAL (
-        SELECT company_id
+        SELECT company_id, employee_profile_id
         FROM public.employee_companies ec
         WHERE ec.tenant_id = u.tenant_id
           AND ec.employee_id = e.id
@@ -1043,6 +1048,7 @@ async function getEmployeeCompanies(tenantId: string, employeeId: string) {
     `
       SELECT DISTINCT
         ec.company_id,
+        ec.employee_profile_id,
         c.company_name
       FROM public.employee_companies ec
       INNER JOIN public.companies c
@@ -1055,6 +1061,40 @@ async function getEmployeeCompanies(tenantId: string, employeeId: string) {
     [tenantId, employeeId]
   );
   return result.rows;
+}
+
+async function findRecentValidPunch(params: {
+  tenantId: string;
+  employeeId: string;
+  validStatusId: string | null;
+  punchDateTime: Date;
+  minMinutesBetweenPunches: number;
+}) {
+  if (!params.validStatusId || params.minMinutesBetweenPunches <= 0) return null;
+
+  const result = await pool.query(
+    `
+      SELECT id, punch_datetime, punch_key
+      FROM public.employee_time_punches
+      WHERE tenant_id = $1::uuid
+        AND employee_id = $2::uuid
+        AND time_punch_status_id = $3::uuid
+        AND is_active = true
+        AND punch_datetime <= $4::timestamptz
+        AND punch_datetime >= ($4::timestamptz - ($5::numeric * interval '1 minute'))
+      ORDER BY punch_datetime DESC
+      LIMIT 1
+    `,
+    [
+      params.tenantId,
+      params.employeeId,
+      params.validStatusId,
+      params.punchDateTime.toISOString(),
+      params.minMinutesBetweenPunches,
+    ]
+  );
+
+  return result.rows[0] || null;
 }
 
 router.get('/mark/context', async (req: Request, res: Response) => {
@@ -1122,6 +1162,7 @@ router.get('/mark/context', async (req: Request, res: Response) => {
         employee_photo_path: context.employee_photo_path,
         company_id: context.company_id,
         company_name: context.company_name,
+        employee_profile_id: context.employee_profile_id,
       },
       companies: companiesResult,
       devices: devicesResult.rows,
@@ -1291,12 +1332,14 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       });
     }
 
-    const hasCompany = employeeCompanies.some((row) => row.company_id === companyId);
+    const selectedEmployeeCompany = employeeCompanies.find((row) => row.company_id === companyId) || null;
+    const hasCompany = Boolean(selectedEmployeeCompany);
     if (!hasCompany) {
       return res.status(400).json({
         error: 'La empresa seleccionada no esta asignada al empleado',
       });
     }
+    const employeeProfileId = selectedEmployeeCompany?.employee_profile_id || context.employee_profile_id || null;
 
     if (!punchKeyLookupId) {
       return res.status(400).json({ error: 'punch_key_lookup_id es obligatorio' });
@@ -1415,6 +1458,37 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     if (!locationValidation.inside && !invalidStatusId) {
       locationValidation.message =
         `${locationValidation.message}. No existe estado INVALID configurado; se registró con estado alterno.`;
+    }
+
+    const minMinutesBetweenValidPunches = await resolveEffectiveNumberSetting(pool, {
+      tenantId: context.tenant_id,
+      companyId,
+      employeeProfileId,
+      settingKey: MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY,
+      fallback: DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES,
+      min: 0,
+      max: 1440,
+    });
+
+    if (normalizedStatusId && validStatusId && normalizedStatusId === validStatusId) {
+      const recentValidPunch = await findRecentValidPunch({
+        tenantId: context.tenant_id,
+        employeeId: context.employee_id,
+        validStatusId,
+        punchDateTime,
+        minMinutesBetweenPunches: minMinutesBetweenValidPunches,
+      });
+
+      if (recentValidPunch) {
+        return res.status(409).json({
+          error: `Ya existe una marcación válida reciente. Deben pasar al menos ${minMinutesBetweenValidPunches} minutos entre marcaciones válidas.`,
+          duplicate_guard: {
+            min_minutes_between_valid_punches: minMinutesBetweenValidPunches,
+            last_punch_id: recentValidPunch.id,
+            last_punch_datetime: recentValidPunch.punch_datetime,
+          },
+        });
+      }
     }
 
     const insertResult = await pool.query(
