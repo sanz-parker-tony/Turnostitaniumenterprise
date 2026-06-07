@@ -918,6 +918,723 @@ router.get('/dashboard/system-admin-summary', requireAuth, async (req: Request, 
   }
 });
 
+router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const user = (req as any).user;
+    const authUserId = user?.id;
+    if (!authUserId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const contextResult = await pool.query(
+      `
+        SELECT
+          u.id AS user_id,
+          u.email,
+          u.display_name,
+          u.tenant_id,
+          t.tenant_name,
+          ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys
+        FROM public.users u
+        LEFT JOIN public.tenants t
+          ON t.id = u.tenant_id
+        LEFT JOIN public.user_roles ur
+          ON ur.user_id = u.id
+         AND ur.tenant_id = u.tenant_id
+         AND ur.is_active = true
+         AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+         AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        LEFT JOIN public.roles r
+          ON r.id = ur.role_id
+         AND r.tenant_id = ur.tenant_id
+         AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+        GROUP BY u.id, u.email, u.display_name, u.tenant_id, t.tenant_name
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    const context = contextResult.rows[0];
+    if (!context?.tenant_id || !context?.user_id) {
+      return res.status(403).json({ error: 'No se pudo resolver contexto de supervisor' });
+    }
+
+    const roleKeys = (context.role_keys || []).map((key: string) => String(key || '').trim().toUpperCase());
+    const canViewSupervisorDashboard = roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(key));
+    if (!canViewSupervisorDashboard) {
+      return res.status(403).json({ error: 'Dashboard disponible para Supervisor/RRHH' });
+    }
+
+    const tenantId = String(context.tenant_id);
+    const userId = String(context.user_id);
+    const unrestrictedTenantAdmin = roleKeys.includes('TENANT_ADMIN') && !roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
+
+    const assignedEmployeesSql = unrestrictedTenantAdmin
+      ? `
+          SELECT DISTINCT ON (e.id)
+            e.id AS employee_id,
+            e.employee_code,
+            e.employee_name,
+            e.employee_lastname,
+            ec.company_id,
+            c.company_name,
+            ec.work_location_id,
+            wl.work_location_name,
+            ec.department_id,
+            d.department_name,
+            ec.area_id,
+            ar.area_name,
+            ec.employee_profile_id,
+            ep.profile_name AS employee_profile_name,
+            ec.work_group_id,
+            wg.work_group_name
+          FROM public.employees e
+          INNER JOIN public.employee_companies ec
+            ON ec.employee_id = e.id
+           AND ec.tenant_id = e.tenant_id
+           AND ec.is_active = true
+          LEFT JOIN public.companies c ON c.id = ec.company_id
+          LEFT JOIN public.work_locations wl ON wl.id = ec.work_location_id
+          LEFT JOIN public.departments d ON d.id = ec.department_id
+          LEFT JOIN public.areas ar ON ar.id = ec.area_id
+          LEFT JOIN public.employee_profiles ep ON ep.id = ec.employee_profile_id
+          LEFT JOIN public.work_groups wg ON wg.id = ec.work_group_id
+          WHERE e.tenant_id = $1::uuid
+            AND e.is_active = true
+          ORDER BY e.id, ec.created_at DESC NULLS LAST
+        `
+      : `
+          SELECT DISTINCT ON (e.id)
+            e.id AS employee_id,
+            e.employee_code,
+            e.employee_name,
+            e.employee_lastname,
+            ec.company_id,
+            c.company_name,
+            ec.work_location_id,
+            wl.work_location_name,
+            ec.department_id,
+            d.department_name,
+            ec.area_id,
+            ar.area_name,
+            ec.employee_profile_id,
+            ep.profile_name AS employee_profile_name,
+            ec.work_group_id,
+            wg.work_group_name
+          FROM public.user_roles ur
+          INNER JOIN public.roles r
+            ON r.id = ur.role_id
+           AND r.tenant_id = ur.tenant_id
+           AND r.is_active = true
+          INNER JOIN public.user_role_employee_assignments ura
+            ON ura.tenant_id = ur.tenant_id
+           AND ura.user_role_id = ur.id
+           AND ura.is_active = true
+          INNER JOIN public.employees e
+            ON e.id = ura.employee_id
+           AND e.tenant_id = ura.tenant_id
+           AND e.is_active = true
+          INNER JOIN public.employee_companies ec
+            ON ec.employee_id = e.id
+           AND ec.tenant_id = e.tenant_id
+           AND ec.is_active = true
+          LEFT JOIN public.companies c ON c.id = ec.company_id
+          LEFT JOIN public.work_locations wl ON wl.id = ec.work_location_id
+          LEFT JOIN public.departments d ON d.id = ec.department_id
+          LEFT JOIN public.areas ar ON ar.id = ec.area_id
+          LEFT JOIN public.employee_profiles ep ON ep.id = ec.employee_profile_id
+          LEFT JOIN public.work_groups wg ON wg.id = ec.work_group_id
+          WHERE ur.tenant_id = $1::uuid
+            AND ur.user_id = $2::uuid
+            AND ur.is_active = true
+            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+            AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+          ORDER BY e.id, ec.created_at DESC NULLS LAST
+        `;
+    const scopedParams = unrestrictedTenantAdmin ? [tenantId] : [tenantId, userId];
+
+    const assignedCountResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql})
+        SELECT
+          COUNT(*)::int AS assigned_employees,
+          COUNT(DISTINCT area_id)::int AS assigned_areas,
+          COUNT(DISTINCT department_id)::int AS assigned_departments
+        FROM assigned_employees
+      `,
+      scopedParams
+    );
+
+    const todayIssuesResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        today_plans AS (
+          SELECT
+            ae.*,
+            p.shift_date,
+            s.shift_name,
+            s.shift_short_name,
+            s.start_time,
+            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
+            COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date = CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+        ),
+        punch_summary AS (
+          SELECT
+            p.employee_id,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          GROUP BY p.employee_id
+        )
+        SELECT
+          tp.employee_id,
+          tp.employee_code,
+          CONCAT(tp.employee_lastname, ' ', tp.employee_name) AS employee_name,
+          tp.area_name,
+          tp.department_name,
+          tp.shift_name,
+          tp.shift_short_name,
+          tp.start_time,
+          tp.work_minutes,
+          COALESCE(ps.first_entry, ps.first_punch) AS first_entry,
+          COALESCE(ps.last_exit, ps.last_punch) AS last_exit,
+          CASE
+            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+             AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+              THEN 'FALTA'
+            WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+              THEN 'ATRASO'
+            WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
+             AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+              THEN 'SALIDA_ANTICIPADA'
+            ELSE 'NORMAL'
+          END AS event_key
+        FROM today_plans tp
+        LEFT JOIN punch_summary ps
+          ON ps.employee_id = tp.employee_id
+        WHERE
+          (
+            COALESCE(ps.first_entry, ps.first_punch) IS NULL
+            AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+          )
+          OR COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+          OR (
+            COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
+            AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+          )
+        ORDER BY
+          CASE
+            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+             AND now() >= (tp.shift_date + tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+              THEN 1
+            WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+              THEN 2
+            WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
+             AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+              THEN 3
+            ELSE 4
+          END,
+          tp.employee_lastname,
+          tp.employee_name
+        LIMIT 50
+      `,
+      scopedParams
+    );
+
+    const latestPunchesResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        latest AS (
+          SELECT
+            p.id,
+            p.employee_id,
+            p.punch_datetime,
+            p.punch_key,
+            p.notes,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
+            ae.area_name,
+            mv.lookup_label AS movement_label
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+          LEFT JOIN LATERAL (
+            SELECT lv.lookup_label
+            FROM public.lookup_values lv
+            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
+              AND lv.sort_order = p.punch_key
+              AND lv.is_active = true
+              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
+            LIMIT 1
+          ) mv ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          ORDER BY p.punch_datetime DESC, p.created_at DESC
+          LIMIT 10
+        )
+        SELECT
+          l.*,
+          s.shift_name,
+          s.shift_short_name,
+          CASE
+            WHEN l.punch_key IN (1, 5)
+             AND s.start_time IS NOT NULL
+             AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
+              THEN 'ATRASO'
+            WHEN l.punch_key IN (4, 6)
+             AND s.start_time IS NOT NULL
+             AND COALESCE(s.work_minutes, 0) > 0
+             AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(s.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
+              THEN 'SALIDA_ANTICIPADA'
+            ELSE 'NORMAL'
+          END AS event_key
+        FROM latest l
+        LEFT JOIN public.employee_shift_plans p
+          ON p.tenant_id = $1::uuid
+         AND p.employee_id = l.employee_id
+         AND p.shift_date = CURRENT_DATE
+         AND p.is_active = true
+        LEFT JOIN public.shifts s
+          ON s.id = p.shift_id
+         AND s.tenant_id = p.tenant_id
+        ORDER BY l.punch_datetime DESC
+      `,
+      scopedParams
+    );
+
+    const trendResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        days AS (
+          SELECT gs::date AS day
+          FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') gs
+        ),
+        plans AS (
+          SELECT
+            ae.employee_id,
+            ae.area_id,
+            ae.area_name,
+            p.shift_date,
+            s.start_time,
+            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
+           AND p.shift_date <= CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+        ),
+        punch_summary AS (
+          SELECT
+            p.employee_id,
+            p.punch_datetime::date AS punch_date,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE - INTERVAL '29 days'
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          GROUP BY p.employee_id, p.punch_datetime::date
+        ),
+        daily_employee AS (
+          SELECT
+            pl.employee_id,
+            pl.area_id,
+            COALESCE(NULLIF(TRIM(pl.area_name), ''), 'Sin area') AS area_name,
+            pl.shift_date,
+            CASE
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+               AND (
+                 pl.shift_date < CURRENT_DATE
+                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
+               )
+                THEN 1 ELSE 0
+            END AS absent,
+            GREATEST(
+              0,
+              COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int - pl.work_minutes
+            ) AS overtime_minutes
+          FROM plans pl
+          LEFT JOIN punch_summary ps
+            ON ps.employee_id = pl.employee_id
+           AND ps.punch_date = pl.shift_date
+        ),
+        daily AS (
+          SELECT
+            d.day,
+            COUNT(de.employee_id)::int AS planned,
+            COALESCE(SUM(de.absent), 0)::int AS absences,
+            COALESCE(SUM(de.overtime_minutes), 0)::int AS overtime_minutes
+          FROM days d
+          LEFT JOIN daily_employee de
+            ON de.shift_date = d.day
+          GROUP BY d.day
+        ),
+        weekly AS (
+          SELECT
+            date_trunc('week', day)::date AS week_start,
+            COUNT(*)::int AS days,
+            SUM(planned)::int AS planned,
+            SUM(absences)::int AS absences,
+            SUM(overtime_minutes)::int AS overtime_minutes
+          FROM daily
+          GROUP BY 1
+          ORDER BY 1 DESC
+          LIMIT 4
+        )
+        SELECT
+          'daily' AS series_type,
+          day AS bucket_start,
+          TO_CHAR(day, 'DD/MM') AS label,
+          planned,
+          absences,
+          CASE WHEN planned = 0 THEN 0 ELSE ROUND((absences::numeric / planned::numeric) * 100, 2) END AS absence_rate,
+          ROUND(overtime_minutes::numeric / 60.0, 2) AS overtime_hours
+        FROM daily
+        WHERE day >= CURRENT_DATE - INTERVAL '6 days'
+        UNION ALL
+        SELECT
+          'weekly' AS series_type,
+          week_start AS bucket_start,
+          'S' || TO_CHAR(week_start, 'IW') AS label,
+          planned,
+          absences,
+          CASE WHEN planned = 0 THEN 0 ELSE ROUND((absences::numeric / planned::numeric) * 100, 2) END AS absence_rate,
+          ROUND(overtime_minutes::numeric / 60.0, 2) AS overtime_hours
+        FROM weekly
+        ORDER BY series_type, bucket_start
+      `,
+      scopedParams
+    );
+
+    const rankingResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        plans AS (
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
+            COALESCE(NULLIF(TRIM(ae.area_name), ''), 'Sin area') AS area_name,
+            p.shift_date,
+            s.start_time,
+            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
+           AND p.shift_date <= CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+        ),
+        punch_summary AS (
+          SELECT
+            p.employee_id,
+            p.punch_datetime::date AS punch_date,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE - INTERVAL '29 days'
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          GROUP BY p.employee_id, p.punch_datetime::date
+        ),
+        daily_employee AS (
+          SELECT
+            pl.employee_id,
+            pl.employee_code,
+            pl.employee_name,
+            pl.area_name,
+            CASE
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+               AND (
+                 pl.shift_date < CURRENT_DATE
+                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
+               )
+                THEN 1 ELSE 0
+            END AS absent,
+            GREATEST(
+              0,
+              COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int - pl.work_minutes
+            ) AS overtime_minutes
+          FROM plans pl
+          LEFT JOIN punch_summary ps
+            ON ps.employee_id = pl.employee_id
+           AND ps.punch_date = pl.shift_date
+        ),
+        area_rank AS (
+          SELECT
+            area_name AS name,
+            COUNT(*)::int AS planned,
+            SUM(absent)::int AS absences,
+            ROUND((SUM(absent)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2) AS absence_rate,
+            ROUND(SUM(overtime_minutes)::numeric / 60.0, 2) AS overtime_hours
+          FROM daily_employee
+          GROUP BY area_name
+        ),
+        employee_rank AS (
+          SELECT
+            employee_id,
+            employee_code,
+            employee_name AS name,
+            COUNT(*)::int AS planned,
+            SUM(absent)::int AS absences,
+            ROUND((SUM(absent)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2) AS absence_rate,
+            ROUND(SUM(overtime_minutes)::numeric / 60.0, 2) AS overtime_hours
+          FROM daily_employee
+          GROUP BY employee_id, employee_code, employee_name
+        )
+        SELECT 'area_absence' AS ranking_type, name, NULL::text AS employee_code, planned, absences, absence_rate, overtime_hours
+        FROM area_rank
+        ORDER BY absence_rate DESC NULLS LAST, absences DESC, name ASC
+        LIMIT 5
+      `,
+      scopedParams
+    );
+
+    const rankingMoreResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        plans AS (
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
+            COALESCE(NULLIF(TRIM(ae.area_name), ''), 'Sin area') AS area_name,
+            p.shift_date,
+            s.start_time,
+            COALESCE(s.work_minutes, 0)::int AS work_minutes,
+            COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
+           AND p.shift_date <= CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+        ),
+        punch_summary AS (
+          SELECT
+            p.employee_id,
+            p.punch_datetime::date AS punch_date,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE - INTERVAL '29 days'
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          GROUP BY p.employee_id, p.punch_datetime::date
+        ),
+        daily_employee AS (
+          SELECT
+            pl.employee_id,
+            pl.employee_code,
+            pl.employee_name,
+            pl.area_name,
+            CASE
+              WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+               AND (
+                 pl.shift_date < CURRENT_DATE
+                 OR now() >= (pl.shift_date + pl.start_time + (pl.entry_grace_minutes || ' minutes')::interval)
+               )
+                THEN 1 ELSE 0
+            END AS absent,
+            GREATEST(
+              0,
+              COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int - pl.work_minutes
+            ) AS overtime_minutes
+          FROM plans pl
+          LEFT JOIN punch_summary ps
+            ON ps.employee_id = pl.employee_id
+           AND ps.punch_date = pl.shift_date
+        ),
+        area_rank AS (
+          SELECT
+            area_name AS name,
+            COUNT(*)::int AS planned,
+            SUM(absent)::int AS absences,
+            ROUND((SUM(absent)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2) AS absence_rate,
+            ROUND(SUM(overtime_minutes)::numeric / 60.0, 2) AS overtime_hours
+          FROM daily_employee
+          GROUP BY area_name
+        ),
+        employee_rank AS (
+          SELECT
+            employee_id,
+            employee_code,
+            employee_name AS name,
+            COUNT(*)::int AS planned,
+            SUM(absent)::int AS absences,
+            ROUND((SUM(absent)::numeric / NULLIF(COUNT(*)::numeric, 0)) * 100, 2) AS absence_rate,
+            ROUND(SUM(overtime_minutes)::numeric / 60.0, 2) AS overtime_hours
+          FROM daily_employee
+          GROUP BY employee_id, employee_code, employee_name
+        ),
+        unioned AS (
+          SELECT 'area_overtime' AS ranking_type, name, NULL::text AS employee_code, planned, absences, absence_rate, overtime_hours
+          FROM area_rank
+          ORDER BY overtime_hours DESC, name ASC
+          LIMIT 5
+        )
+        SELECT * FROM unioned
+        UNION ALL
+        SELECT 'employee_absence' AS ranking_type, name, employee_code, planned, absences, absence_rate, overtime_hours
+        FROM employee_rank
+        ORDER BY ranking_type, absence_rate DESC NULLS LAST, absences DESC, name ASC
+        LIMIT 10
+      `,
+      scopedParams
+    );
+
+    const employeeOvertimeResult = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        plans AS (
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
+            p.shift_date,
+            s.start_time,
+            COALESCE(s.work_minutes, 0)::int AS work_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
+           AND p.shift_date <= CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+        ),
+        punch_summary AS (
+          SELECT
+            p.employee_id,
+            p.punch_datetime::date AS punch_date,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE - INTERVAL '29 days'
+            AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
+          GROUP BY p.employee_id, p.punch_datetime::date
+        )
+        SELECT
+          pl.employee_name AS name,
+          pl.employee_code,
+          ROUND(SUM(GREATEST(
+            0,
+            COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int - pl.work_minutes
+          ))::numeric / 60.0, 2) AS overtime_hours
+        FROM plans pl
+        LEFT JOIN punch_summary ps
+          ON ps.employee_id = pl.employee_id
+         AND ps.punch_date = pl.shift_date
+        GROUP BY pl.employee_id, pl.employee_code, pl.employee_name
+        ORDER BY overtime_hours DESC, pl.employee_name ASC
+        LIMIT 5
+      `,
+      scopedParams
+    );
+
+    const base = assignedCountResult.rows[0] || {};
+    const todayIssues = todayIssuesResult.rows || [];
+    const latestPunches = latestPunchesResult.rows || [];
+    const trendRows = trendResult.rows || [];
+    const areaAbsenceRanking = rankingResult.rows || [];
+    const rankingMoreRows = rankingMoreResult.rows || [];
+
+    return res.status(200).json({
+      success: true,
+      generated_at: new Date().toISOString(),
+      supervisor: {
+        display_name: context.display_name || context.email,
+        email: context.email,
+        tenant_name: context.tenant_name,
+        role_keys: roleKeys,
+      },
+      metrics: {
+        assigned_employees: Number(base.assigned_employees || 0),
+        assigned_areas: Number(base.assigned_areas || 0),
+        assigned_departments: Number(base.assigned_departments || 0),
+        today_absences: todayIssues.filter((row: any) => row.event_key === 'FALTA').length,
+        today_late: todayIssues.filter((row: any) => row.event_key === 'ATRASO').length,
+        today_early_departures: todayIssues.filter((row: any) => row.event_key === 'SALIDA_ANTICIPADA').length,
+        today_punches: latestPunches.length,
+      },
+      today_issues: todayIssues,
+      latest_punches: latestPunches,
+      trends: {
+        last_7_days: trendRows.filter((row: any) => row.series_type === 'daily'),
+        last_4_weeks: trendRows.filter((row: any) => row.series_type === 'weekly'),
+      },
+      rankings: {
+        area_absence: areaAbsenceRanking,
+        area_overtime: rankingMoreRows.filter((row: any) => row.ranking_type === 'area_overtime'),
+        employee_absence: rankingMoreRows.filter((row: any) => row.ranking_type === 'employee_absence').slice(0, 5),
+        employee_overtime: employeeOvertimeResult.rows || [],
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      error: error?.message || 'Internal server error',
+    });
+  }
+});
+
 /**
  * GET /dashboard/employee-summary
  *
@@ -2364,6 +3081,4 @@ router.use((req: Request, res: Response) => {
 });
 
 export default router;
-
-
 

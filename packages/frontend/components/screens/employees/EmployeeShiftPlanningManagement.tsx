@@ -54,8 +54,14 @@ type EmployeeRow = {
   employee_lastname: string;
   company_id: string | null;
   company_name: string | null;
-  cost_center_id?: string | null;
-  cost_center_name?: string | null;
+  work_location_id?: string | null;
+  work_location_name?: string | null;
+  department_id?: string | null;
+  department_name?: string | null;
+  area_id?: string | null;
+  area_name?: string | null;
+  employee_profile_id?: string | null;
+  employee_profile_name?: string | null;
   work_group_id?: string | null;
   work_group_name?: string | null;
   work_on_holidays?: boolean | null;
@@ -98,10 +104,17 @@ type ShiftKind = 'M' | 'T' | 'N' | 'L' | 'O' | 'X';
 type ShiftDistributionMode = 'staggered' | 'same';
 
 type EmployeeCombinationRow = {
+  employee_id: string;
   company_id: string | null;
   company_name: string | null;
-  cost_center_id: string | null;
-  cost_center_name: string | null;
+  work_location_id: string | null;
+  work_location_name: string | null;
+  department_id: string | null;
+  department_name: string | null;
+  area_id: string | null;
+  area_name: string | null;
+  employee_profile_id: string | null;
+  employee_profile_name: string | null;
   work_group_id: string | null;
   work_group_name: string | null;
 };
@@ -109,6 +122,11 @@ type EmployeeCombinationRow = {
 type CompanyFilterRow = {
   id: string;
   company_name: string;
+};
+
+type FilterOption = {
+  id: string;
+  name: string;
 };
 
 type WorkPatternShift = {
@@ -324,7 +342,10 @@ export function EmployeeShiftPlanningManagement() {
   const [changes, setChanges] = useState<Record<string, DayCellChange>>({});
 
   const [companyFilter, setCompanyFilter] = useState('ALL');
-  const [costCenterFilter, setCostCenterFilter] = useState('ALL');
+  const [workLocationFilter, setWorkLocationFilter] = useState('ALL');
+  const [departmentFilter, setDepartmentFilter] = useState('ALL');
+  const [areaFilter, setAreaFilter] = useState('ALL');
+  const [employeeProfileFilter, setEmployeeProfileFilter] = useState('ALL');
   const [workGroupFilter, setWorkGroupFilter] = useState('ALL');
   const [diasTrabajo, setDiasTrabajo] = useState(5);
   const [diasLibres, setDiasLibres] = useState(2);
@@ -398,28 +419,85 @@ export function EmployeeShiftPlanningManagement() {
     return map;
   }, [shifts]);
 
-  const availableCostCenters = useMemo(() => {
+  const availableWorkLocations = useMemo(() => {
     if (companyFilter === 'ALL') return [];
-    const map = new Map<string, { id: string; cost_center_name: string }>();
+    const map = new Map<string, FilterOption>();
     employeeCombinations.forEach((combo) => {
       if (combo.company_id !== companyFilter) return;
-      if (!combo.cost_center_id) return;
-      if (!map.has(combo.cost_center_id)) {
-        map.set(combo.cost_center_id, {
-          id: combo.cost_center_id,
-          cost_center_name: combo.cost_center_name || 'Centro de Costo',
+      if (!combo.work_location_id) return;
+      if (!map.has(combo.work_location_id)) {
+        map.set(combo.work_location_id, {
+          id: combo.work_location_id,
+          name: combo.work_location_name || 'Localización',
         });
       }
     });
-    return Array.from(map.values()).sort((a, b) => a.cost_center_name.localeCompare(b.cost_center_name));
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [employeeCombinations, companyFilter]);
 
+  const availableDepartments = useMemo(() => {
+    if (companyFilter === 'ALL' || workLocationFilter === 'ALL') return [];
+    const map = new Map<string, FilterOption>();
+    employeeCombinations.forEach((combo) => {
+      if (combo.company_id !== companyFilter) return;
+      if (combo.work_location_id !== workLocationFilter) return;
+      if (!combo.department_id) return;
+      if (!map.has(combo.department_id)) {
+        map.set(combo.department_id, {
+          id: combo.department_id,
+          name: combo.department_name || 'Departamento',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [employeeCombinations, companyFilter, workLocationFilter]);
+
+  const availableAreas = useMemo(() => {
+    if (companyFilter === 'ALL' || workLocationFilter === 'ALL' || departmentFilter === 'ALL') return [];
+    const map = new Map<string, FilterOption>();
+    employeeCombinations.forEach((combo) => {
+      if (combo.company_id !== companyFilter) return;
+      if (combo.work_location_id !== workLocationFilter) return;
+      if (combo.department_id !== departmentFilter) return;
+      if (!combo.area_id) return;
+      if (!map.has(combo.area_id)) {
+        map.set(combo.area_id, {
+          id: combo.area_id,
+          name: combo.area_name || 'Área',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [employeeCombinations, companyFilter, workLocationFilter, departmentFilter]);
+
+  const availableEmployeeProfiles = useMemo(() => {
+    if (companyFilter === 'ALL' || workLocationFilter === 'ALL') return [];
+    const map = new Map<string, FilterOption>();
+    employeeCombinations.forEach((combo) => {
+      if (combo.company_id !== companyFilter) return;
+      if (combo.work_location_id !== workLocationFilter) return;
+      if (departmentFilter !== 'ALL' && combo.department_id !== departmentFilter) return;
+      if (areaFilter !== 'ALL' && combo.area_id !== areaFilter) return;
+      if (!combo.employee_profile_id) return;
+      if (!map.has(combo.employee_profile_id)) {
+        map.set(combo.employee_profile_id, {
+          id: combo.employee_profile_id,
+          name: combo.employee_profile_name || 'Perfil',
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [employeeCombinations, companyFilter, workLocationFilter, departmentFilter, areaFilter]);
+
   const availableWorkGroups = useMemo(() => {
-    if (companyFilter === 'ALL' || costCenterFilter === 'ALL') return [];
+    if (companyFilter === 'ALL' || workLocationFilter === 'ALL') return [];
     const map = new Map<string, { id: string; work_group_name: string }>();
     employeeCombinations.forEach((combo) => {
       if (combo.company_id !== companyFilter) return;
-      if (combo.cost_center_id !== costCenterFilter) return;
+      if (combo.work_location_id !== workLocationFilter) return;
+      if (departmentFilter !== 'ALL' && combo.department_id !== departmentFilter) return;
+      if (areaFilter !== 'ALL' && combo.area_id !== areaFilter) return;
+      if (employeeProfileFilter !== 'ALL' && combo.employee_profile_id !== employeeProfileFilter) return;
       if (!combo.work_group_id) return;
       if (!map.has(combo.work_group_id)) {
         map.set(combo.work_group_id, {
@@ -429,16 +507,22 @@ export function EmployeeShiftPlanningManagement() {
       }
     });
     return Array.from(map.values()).sort((a, b) => a.work_group_name.localeCompare(b.work_group_name));
-  }, [employeeCombinations, companyFilter, costCenterFilter]);
+  }, [employeeCombinations, companyFilter, workLocationFilter, departmentFilter, areaFilter, employeeProfileFilter]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter((employee) => {
-      const companyOk = companyFilter === 'ALL' || employee.company_id === companyFilter;
-      const costCenterOk = costCenterFilter === 'ALL' || employee.cost_center_id === costCenterFilter;
-      const workGroupOk = workGroupFilter === 'ALL' || employee.work_group_id === workGroupFilter;
-      return companyOk && costCenterOk && workGroupOk;
+      return employeeCombinations.some((combo) => {
+        if (combo.employee_id !== employee.id) return false;
+        if (companyFilter !== 'ALL' && combo.company_id !== companyFilter) return false;
+        if (workLocationFilter !== 'ALL' && combo.work_location_id !== workLocationFilter) return false;
+        if (departmentFilter !== 'ALL' && combo.department_id !== departmentFilter) return false;
+        if (areaFilter !== 'ALL' && combo.area_id !== areaFilter) return false;
+        if (employeeProfileFilter !== 'ALL' && combo.employee_profile_id !== employeeProfileFilter) return false;
+        if (workGroupFilter !== 'ALL' && combo.work_group_id !== workGroupFilter) return false;
+        return true;
+      });
     });
-  }, [employees, companyFilter, costCenterFilter, workGroupFilter]);
+  }, [employees, employeeCombinations, companyFilter, workLocationFilter, departmentFilter, areaFilter, employeeProfileFilter, workGroupFilter]);
 
   const shiftOptionsByCompany = useMemo(() => {
     const map = new Map<string, ShiftRow[]>();
@@ -580,13 +664,34 @@ export function EmployeeShiftPlanningManagement() {
   }, [rangeFrom, rangeTo, rangeDays.length]);
 
   useEffect(() => {
-    setCostCenterFilter('ALL');
+    setWorkLocationFilter('ALL');
+    setDepartmentFilter('ALL');
+    setAreaFilter('ALL');
+    setEmployeeProfileFilter('ALL');
     setWorkGroupFilter('ALL');
   }, [companyFilter]);
 
   useEffect(() => {
+    setDepartmentFilter('ALL');
+    setAreaFilter('ALL');
+    setEmployeeProfileFilter('ALL');
     setWorkGroupFilter('ALL');
-  }, [costCenterFilter]);
+  }, [workLocationFilter]);
+
+  useEffect(() => {
+    setAreaFilter('ALL');
+    setEmployeeProfileFilter('ALL');
+    setWorkGroupFilter('ALL');
+  }, [departmentFilter]);
+
+  useEffect(() => {
+    setEmployeeProfileFilter('ALL');
+    setWorkGroupFilter('ALL');
+  }, [areaFilter]);
+
+  useEffect(() => {
+    setWorkGroupFilter('ALL');
+  }, [employeeProfileFilter]);
 
   const cellShiftId = (employee: EmployeeRow, dateIso: string): string | null => {
     const change = changes[keyOf(employee.id, dateIso)];
@@ -726,7 +831,11 @@ export function EmployeeShiftPlanningManagement() {
     return {
       filtrosEmpleados: {
         soloEmpleadosTurnosRotativos: true,
-        areaId: costCenterFilter === 'ALL' ? null : costCenterFilter,
+        empresaId: companyFilter === 'ALL' ? null : companyFilter,
+        localizacionId: workLocationFilter === 'ALL' ? null : workLocationFilter,
+        departamentoId: departmentFilter === 'ALL' ? null : departmentFilter,
+        areaId: areaFilter === 'ALL' ? null : areaFilter,
+        perfilId: employeeProfileFilter === 'ALL' ? null : employeeProfileFilter,
         grupoTrabajoId: workGroupFilter === 'ALL' ? null : workGroupFilter,
       },
       rangoFechas: {
@@ -1579,7 +1688,7 @@ export function EmployeeShiftPlanningManagement() {
               <Filter className="size-4" />
               Filtros de Empleados
             </div>
-            <p className="mb-3 text-sm text-gray-600">Filtros secuenciales por combinaciones reales de employee_companies</p>
+            <p className="mb-3 text-sm text-gray-600">Filtros secuenciales según empleados asignados al supervisor y employee_companies</p>
             <div className="space-y-2">
               <div>
                 <label className="mb-1 block text-sm font-medium">Empresa</label>
@@ -1595,16 +1704,58 @@ export function EmployeeShiftPlanningManagement() {
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Centro de Costo</label>
+                <label className="mb-1 block text-sm font-medium">Localización</label>
                 <select
-                  value={costCenterFilter}
-                  onChange={(event) => setCostCenterFilter(event.target.value)}
+                  value={workLocationFilter}
+                  onChange={(event) => setWorkLocationFilter(event.target.value)}
                   disabled={companyFilter === 'ALL'}
                   className="w-full rounded-xl border px-3 py-2 text-sm"
                 >
-                  <option value="ALL">Todos los centros</option>
-                  {availableCostCenters.map((option) => (
-                    <option key={option.id} value={option.id}>{option.cost_center_name}</option>
+                  <option value="ALL">Todas las localizaciones</option>
+                  {availableWorkLocations.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Departamento</label>
+                <select
+                  value={departmentFilter}
+                  onChange={(event) => setDepartmentFilter(event.target.value)}
+                  disabled={companyFilter === 'ALL' || workLocationFilter === 'ALL'}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todos los departamentos</option>
+                  {availableDepartments.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Área</label>
+                <select
+                  value={areaFilter}
+                  onChange={(event) => setAreaFilter(event.target.value)}
+                  disabled={companyFilter === 'ALL' || workLocationFilter === 'ALL' || departmentFilter === 'ALL'}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todas las áreas</option>
+                  {availableAreas.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">Perfil</label>
+                <select
+                  value={employeeProfileFilter}
+                  onChange={(event) => setEmployeeProfileFilter(event.target.value)}
+                  disabled={companyFilter === 'ALL' || workLocationFilter === 'ALL'}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  <option value="ALL">Todos los perfiles</option>
+                  {availableEmployeeProfiles.map((option) => (
+                    <option key={option.id} value={option.id}>{option.name}</option>
                   ))}
                 </select>
               </div>
@@ -1613,7 +1764,7 @@ export function EmployeeShiftPlanningManagement() {
                 <select
                   value={workGroupFilter}
                   onChange={(event) => setWorkGroupFilter(event.target.value)}
-                  disabled={companyFilter === 'ALL' || costCenterFilter === 'ALL'}
+                  disabled={companyFilter === 'ALL' || workLocationFilter === 'ALL'}
                   className="w-full rounded-xl border px-3 py-2 text-sm"
                 >
                   <option value="ALL">Todos los grupos</option>

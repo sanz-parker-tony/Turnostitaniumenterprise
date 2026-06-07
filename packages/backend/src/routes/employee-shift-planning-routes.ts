@@ -30,6 +30,85 @@ async function resolveTenantId(req: Request): Promise<string | null> {
   return result.rows[0]?.tenant_id || null;
 }
 
+async function resolveInternalUserId(req: Request, tenantId: string): Promise<string | null> {
+  const authUserId = String((req as any)?.user?.id || '').trim();
+  if (!authUserId) return null;
+
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM public.users
+      WHERE auth_user_id = $1
+        AND tenant_id = $2
+        AND is_active = true
+      LIMIT 1
+    `,
+    [authUserId, tenantId]
+  );
+
+  return result.rows[0]?.id || null;
+}
+
+async function resolveUserRoleKeys(tenantId: string, userId: string | null): Promise<string[]> {
+  if (!userId) return [];
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT UPPER(r.role_key) AS role_key
+      FROM public.user_roles ur
+      JOIN public.roles r
+        ON r.id = ur.role_id
+       AND r.tenant_id = ur.tenant_id
+       AND r.is_active = true
+      WHERE ur.tenant_id = $1
+        AND ur.user_id = $2
+        AND ur.is_active = true
+        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+    `,
+    [tenantId, userId]
+  );
+
+  return result.rows.map((row) => String(row.role_key || '').trim()).filter(Boolean);
+}
+
+function shouldRestrictByEmployeeScope(roleKeys: string[]): boolean {
+  const restrictedRoles = new Set(['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN']);
+  return roleKeys.some((roleKey) => restrictedRoles.has(roleKey)) && !roleKeys.includes('TENANT_ADMIN');
+}
+
+async function resolveAssignedEmployeeIds(tenantId: string, userId: string | null): Promise<string[]> {
+  if (!userId) return [];
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT ura.employee_id::text AS employee_id
+      FROM public.user_roles ur
+      INNER JOIN public.roles r
+        ON r.id = ur.role_id
+       AND r.tenant_id = ur.tenant_id
+       AND r.is_active = true
+      INNER JOIN public.user_role_employee_assignments ura
+        ON ura.tenant_id = ur.tenant_id
+       AND ura.user_role_id = ur.id
+       AND ura.is_active = true
+      INNER JOIN public.employees e
+        ON e.id = ura.employee_id
+       AND e.tenant_id = ura.tenant_id
+       AND e.is_active = true
+      WHERE ur.tenant_id = $1
+        AND ur.user_id = $2
+        AND ur.is_active = true
+        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+        AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+    `,
+    [tenantId, userId]
+  );
+
+  return result.rows.map((row) => String(row.employee_id || '').trim()).filter(Boolean);
+}
+
 function isDateIso(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -49,42 +128,112 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
 
+    const userId = await resolveInternalUserId(req, tenantId);
+    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
+    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const assignmentParams = restrictByEmployeeScope ? [tenantId, userId] : [tenantId];
+    const accessibleAssignmentsSql = restrictByEmployeeScope
+      ? `
+          SELECT
+            ec.tenant_id,
+            ec.employee_id,
+            ec.company_id,
+            ec.work_location_id,
+            ec.department_id,
+            ec.area_id,
+            ec.work_group_id,
+            ec.employee_profile_id,
+            ec.work_on_holidays
+          FROM public.user_roles ur
+          INNER JOIN public.roles r
+            ON r.id = ur.role_id
+           AND r.tenant_id = ur.tenant_id
+           AND r.is_active = true
+          INNER JOIN public.user_role_employee_assignments ura
+            ON ura.tenant_id = ur.tenant_id
+           AND ura.user_role_id = ur.id
+           AND ura.is_active = true
+          INNER JOIN public.employee_companies ec
+            ON ec.tenant_id = ura.tenant_id
+           AND ec.employee_id = ura.employee_id
+           AND ec.is_active = true
+          INNER JOIN public.employees e
+            ON e.id = ura.employee_id
+           AND e.tenant_id = ura.tenant_id
+           AND e.is_active = true
+          WHERE ur.tenant_id = $1
+            AND ur.user_id = $2
+            AND ur.is_active = true
+            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+            AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+        `
+      : `
+          SELECT
+            ec.tenant_id,
+            ec.employee_id,
+            ec.company_id,
+            ec.work_location_id,
+            ec.department_id,
+            ec.area_id,
+            ec.work_group_id,
+            ec.employee_profile_id,
+            ec.work_on_holidays
+          FROM public.employee_companies ec
+          INNER JOIN public.employees e
+            ON e.id = ec.employee_id
+           AND e.tenant_id = ec.tenant_id
+           AND e.is_active = true
+          WHERE ec.tenant_id = $1
+            AND ec.is_active = true
+        `;
+
     const [employeesResult, shiftsResult, shiftTypesResult, combinationsResult] = await Promise.all([
       pool.query(
         `
+          WITH accessible_assignments AS (
+            ${accessibleAssignmentsSql}
+          )
           SELECT
+            DISTINCT ON (e.id)
             e.id,
             e.employee_code,
             e.employee_name,
             e.employee_lastname,
-            ec.company_id,
-            ec.cost_center_id,
-            ec.work_group_id,
-            ec.work_on_holidays,
+            aa.company_id,
+            aa.work_location_id,
+            aa.department_id,
+            aa.area_id,
+            aa.employee_profile_id,
+            aa.work_group_id,
+            aa.work_on_holidays,
             c.company_name,
-            cc.cost_center_name,
+            wl.work_location_name,
+            d.department_name,
+            ar.area_name,
+            ep.profile_name AS employee_profile_name,
             wg.work_group_name
           FROM public.employees e
-          LEFT JOIN LATERAL (
-            SELECT company_id, cost_center_id, work_group_id, work_on_holidays
-            FROM public.employee_companies ec
-            WHERE ec.tenant_id = e.tenant_id
-              AND ec.employee_id = e.id
-              AND ec.is_active = true
-            ORDER BY ec.created_at DESC NULLS LAST
-            LIMIT 1
-          ) ec ON true
+          INNER JOIN accessible_assignments aa
+            ON aa.tenant_id = e.tenant_id
+           AND aa.employee_id = e.id
           LEFT JOIN public.companies c
-            ON c.id = ec.company_id
-          LEFT JOIN public.cost_centers cc
-            ON cc.id = ec.cost_center_id
+            ON c.id = aa.company_id
+          LEFT JOIN public.work_locations wl
+            ON wl.id = aa.work_location_id
+          LEFT JOIN public.departments d
+            ON d.id = aa.department_id
+          LEFT JOIN public.areas ar
+            ON ar.id = aa.area_id
+          LEFT JOIN public.employee_profiles ep
+            ON ep.id = aa.employee_profile_id
           LEFT JOIN public.work_groups wg
-            ON wg.id = ec.work_group_id
+            ON wg.id = aa.work_group_id
           WHERE e.tenant_id = $1
             AND e.is_active = true
-          ORDER BY e.employee_lastname ASC, e.employee_name ASC
+          ORDER BY e.id, e.employee_lastname ASC, e.employee_name ASC
         `,
-        [tenantId]
+        assignmentParams
       ),
       pool.query(
         `
@@ -109,32 +258,49 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       ),
       pool.query(
         `
+          WITH accessible_assignments AS (
+            ${accessibleAssignmentsSql}
+          )
           SELECT DISTINCT
-            ec.company_id,
+            aa.employee_id,
+            aa.company_id,
             c.company_name,
-            ec.cost_center_id,
-            cc.cost_center_name,
-            ec.work_group_id,
+            aa.work_location_id,
+            wl.work_location_name,
+            aa.department_id,
+            d.department_name,
+            aa.area_id,
+            ar.area_name,
+            aa.employee_profile_id,
+            ep.profile_name AS employee_profile_name,
+            aa.work_group_id,
             wg.work_group_name
-          FROM public.employee_companies ec
+          FROM accessible_assignments aa
           INNER JOIN public.companies c
-            ON c.id = ec.company_id
-          LEFT JOIN public.cost_centers cc
-            ON cc.id = ec.cost_center_id
+            ON c.id = aa.company_id
+          LEFT JOIN public.work_locations wl
+            ON wl.id = aa.work_location_id
+          LEFT JOIN public.departments d
+            ON d.id = aa.department_id
+          LEFT JOIN public.areas ar
+            ON ar.id = aa.area_id
+          LEFT JOIN public.employee_profiles ep
+            ON ep.id = aa.employee_profile_id
           LEFT JOIN public.work_groups wg
-            ON wg.id = ec.work_group_id
-          WHERE ec.tenant_id = $1
-            AND ec.is_active = true
-            AND ec.company_id IS NOT NULL
-          ORDER BY c.company_name ASC, cc.cost_center_name ASC NULLS LAST, wg.work_group_name ASC NULLS LAST
+            ON wg.id = aa.work_group_id
+          WHERE aa.company_id IS NOT NULL
+          ORDER BY c.company_name ASC, wl.work_location_name ASC NULLS LAST, d.department_name ASC NULLS LAST, ar.area_name ASC NULLS LAST, ep.profile_name ASC NULLS LAST, wg.work_group_name ASC NULLS LAST
         `,
-        [tenantId]
+        assignmentParams
       ),
     ]);
 
     const companiesMap = new Map<string, { id: string; company_name: string }>();
-    const costCentersMap = new Map<string, { id: string; cost_center_name: string; company_id: string | null }>();
-    const workGroupsMap = new Map<string, { id: string; work_group_name: string; company_id: string | null; cost_center_id: string | null }>();
+    const workLocationsMap = new Map<string, { id: string; name: string; company_id: string | null }>();
+    const departmentsMap = new Map<string, { id: string; name: string; company_id: string | null; work_location_id: string | null }>();
+    const areasMap = new Map<string, { id: string; name: string; company_id: string | null; work_location_id: string | null; department_id: string | null }>();
+    const employeeProfilesMap = new Map<string, { id: string; name: string; company_id: string | null; work_location_id: string | null; department_id: string | null; area_id: string | null }>();
+    const workGroupsMap = new Map<string, { id: string; work_group_name: string; company_id: string | null; work_location_id: string | null; department_id: string | null; area_id: string | null; employee_profile_id: string | null }>();
 
     combinationsResult.rows.forEach((row) => {
       if (row.company_id && !companiesMap.has(row.company_id)) {
@@ -144,11 +310,41 @@ router.get('/catalogs', async (req: Request, res: Response) => {
         });
       }
 
-      if (row.cost_center_id && !costCentersMap.has(row.cost_center_id)) {
-        costCentersMap.set(row.cost_center_id, {
-          id: row.cost_center_id,
-          cost_center_name: row.cost_center_name || 'Centro de Costo',
+      if (row.work_location_id && !workLocationsMap.has(row.work_location_id)) {
+        workLocationsMap.set(row.work_location_id, {
+          id: row.work_location_id,
+          name: row.work_location_name || 'Localización',
           company_id: row.company_id || null,
+        });
+      }
+
+      if (row.department_id && !departmentsMap.has(row.department_id)) {
+        departmentsMap.set(row.department_id, {
+          id: row.department_id,
+          name: row.department_name || 'Departamento',
+          company_id: row.company_id || null,
+          work_location_id: row.work_location_id || null,
+        });
+      }
+
+      if (row.area_id && !areasMap.has(row.area_id)) {
+        areasMap.set(row.area_id, {
+          id: row.area_id,
+          name: row.area_name || 'Área',
+          company_id: row.company_id || null,
+          work_location_id: row.work_location_id || null,
+          department_id: row.department_id || null,
+        });
+      }
+
+      if (row.employee_profile_id && !employeeProfilesMap.has(row.employee_profile_id)) {
+        employeeProfilesMap.set(row.employee_profile_id, {
+          id: row.employee_profile_id,
+          name: row.employee_profile_name || 'Perfil',
+          company_id: row.company_id || null,
+          work_location_id: row.work_location_id || null,
+          department_id: row.department_id || null,
+          area_id: row.area_id || null,
         });
       }
 
@@ -157,7 +353,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           id: row.work_group_id,
           work_group_name: row.work_group_name || 'Grupo de Trabajo',
           company_id: row.company_id || null,
-          cost_center_id: row.cost_center_id || null,
+          work_location_id: row.work_location_id || null,
+          department_id: row.department_id || null,
+          area_id: row.area_id || null,
+          employee_profile_id: row.employee_profile_id || null,
         });
       }
     });
@@ -170,7 +369,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       shift_types: shiftTypesResult.rows,
       employee_combinations: combinationsResult.rows,
       companies: Array.from(companiesMap.values()),
-      cost_centers: Array.from(costCentersMap.values()),
+      work_locations: Array.from(workLocationsMap.values()),
+      departments: Array.from(departmentsMap.values()),
+      areas: Array.from(areasMap.values()),
+      employee_profiles: Array.from(employeeProfilesMap.values()),
       work_groups: Array.from(workGroupsMap.values()),
     });
   } catch (err: any) {
@@ -189,6 +391,25 @@ router.get('/plans', async (req: Request, res: Response) => {
     if (!isDateIso(dateFrom) || !isDateIso(dateTo)) {
       return res.status(400).json({ error: 'date_from y date_to son obligatorios en formato YYYY-MM-DD' });
     }
+
+    const userId = await resolveInternalUserId(req, tenantId);
+    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
+    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const assignedEmployeeIds = restrictByEmployeeScope ? await resolveAssignedEmployeeIds(tenantId, userId) : [];
+
+    if (restrictByEmployeeScope && assignedEmployeeIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        tenant_id: tenantId,
+        plans: [],
+        date_from: dateFrom,
+        date_to: dateTo,
+      });
+    }
+
+    const params: any[] = [tenantId, dateFrom, dateTo];
+    const employeeScopeSql = restrictByEmployeeScope ? `AND p.employee_id = ANY($4::uuid[])` : '';
+    if (restrictByEmployeeScope) params.push(assignedEmployeeIds);
 
     const plansResult = await pool.query(
       `
@@ -209,9 +430,10 @@ router.get('/plans', async (req: Request, res: Response) => {
           AND p.is_active = true
           AND p.shift_date >= $2::date
           AND p.shift_date <= $3::date
+          ${employeeScopeSql}
         ORDER BY p.shift_date ASC, p.created_at ASC
       `,
-      [tenantId, dateFrom, dateTo]
+      params
     );
 
     return res.status(200).json({
@@ -238,6 +460,11 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
     }
 
     const actor = getActor(req);
+    const userId = await resolveInternalUserId(req, tenantId);
+    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
+    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const assignedEmployeeIds = restrictByEmployeeScope ? await resolveAssignedEmployeeIds(tenantId, userId) : [];
+    const assignedEmployeeIdSet = new Set(assignedEmployeeIds);
 
     const shiftsResult = await client.query(
       `
@@ -335,6 +562,10 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
       if (!employeeId || !isDateIso(shiftDate)) {
         throw new Error('Cada cambio requiere employee_id y shift_date (YYYY-MM-DD)');
+      }
+
+      if (restrictByEmployeeScope && !assignedEmployeeIdSet.has(employeeId)) {
+        throw new Error(`El empleado ${employeeId} no está asignado al usuario autenticado`);
       }
 
       const companyId =

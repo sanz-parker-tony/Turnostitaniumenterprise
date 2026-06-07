@@ -3,7 +3,11 @@ import { publicApiToken } from '@/utils/backend/info';
 
 export type ShiftPlanningEmployeeFilter = {
   soloEmpleadosTurnosRotativos: boolean;
+  empresaId: string | null;
+  localizacionId: string | null;
+  departamentoId: string | null;
   areaId: string | null;
+  perfilId: string | null;
   grupoTrabajoId: string | null;
 };
 

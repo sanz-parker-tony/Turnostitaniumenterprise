@@ -23,7 +23,6 @@ import { formatClientDate, formatClientDateTime, formatClientTime, getClientTime
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
 const KEY_LABEL_OVERRIDES: Record<number, string> = {
   1: 'Entrada',
@@ -315,12 +314,16 @@ export default function KioskPunch() {
     return matched?.company_name || context.employee.company_name || '-';
   }, [context]);
 
-  const fixedDeviceLabel = useMemo(() => {
-    if (!context) return FIXED_DEVICE_ID;
-    const matched = context.devices.find((device) => device.id === FIXED_DEVICE_ID);
-    if (!matched) return FIXED_DEVICE_ID;
-    return `${matched.device_name || 'Dispositivo'}${matched.device_serial_number ? ` (${matched.device_serial_number})` : ''}`;
+  const activeDevice = useMemo(() => {
+    if (!context) return null;
+    const employeeCompanyId = context.employee.company_id;
+    return context.devices.find((device) => device.company_id === employeeCompanyId) || context.devices[0] || null;
   }, [context]);
+
+  const activeDeviceLabel = useMemo(() => {
+    if (!activeDevice) return 'Aplicacion Web';
+    return `${activeDevice.device_name || 'Dispositivo'}${activeDevice.device_serial_number ? ` (${activeDevice.device_serial_number})` : ''}`;
+  }, [activeDevice]);
 
   const employeePhoto = useMemo(() => {
     const raw = context?.employee?.employee_photo_path;
@@ -388,7 +391,7 @@ export default function KioskPunch() {
         method: 'POST',
         body: JSON.stringify({
           company_id: context.employee.company_id,
-          time_clock_device_id: FIXED_DEVICE_ID,
+          time_clock_device_id: activeDevice?.id || null,
           punch_key_lookup_id: punchKeyLookupId,
           time_punch_status_id: defaultPunchStatusId || null,
           punch_datetime: clientPunchDate.toISOString(),
@@ -510,7 +513,7 @@ export default function KioskPunch() {
             <div className="space-y-3 text-sm text-slate-700">
               <div className="space-y-1">
                 <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
-                <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {fixedDeviceLabel}</p>
+                <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {activeDeviceLabel}</p>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <DeviceStatusIcon

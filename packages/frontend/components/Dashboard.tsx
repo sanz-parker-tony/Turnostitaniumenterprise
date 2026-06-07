@@ -61,6 +61,8 @@ import {
   Network,
   CalendarDays,
   CircleDot,
+  Activity,
+  TrendingDown,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import SystemAdminPageHeader from './shared/SystemAdminPageHeader';
@@ -585,6 +587,223 @@ function formatMetric(value: unknown): string {
   return num.toLocaleString('es-EC');
 }
 
+function formatPercent(value: unknown): string {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return '0%';
+  return `${num.toLocaleString('es-EC', { maximumFractionDigits: 1 })}%`;
+}
+
+function formatHours(value: unknown): string {
+  const num = Number(value ?? 0);
+  if (!Number.isFinite(num)) return '0 h';
+  return `${num.toLocaleString('es-EC', { maximumFractionDigits: 1 })} h`;
+}
+
+function formatTimeOnly(value: string | null | undefined): string {
+  if (!value) return '--:--';
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return date.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
+  }
+  const match = String(value).match(/(?:T|\s)(\d{2}:\d{2})/);
+  return match?.[1] || String(value).slice(0, 5);
+}
+
+function eventLabel(eventKey: string | null | undefined): string {
+  const key = String(eventKey || '').toUpperCase();
+  if (key === 'FALTA') return 'Falta';
+  if (key === 'ATRASO') return 'Atraso';
+  if (key === 'SALIDA_ANTICIPADA') return 'Salida anticipada';
+  return 'Normal';
+}
+
+function eventPillClass(eventKey: string | null | undefined): string {
+  const key = String(eventKey || '').toUpperCase();
+  if (key === 'FALTA') return 'bg-red-100 text-red-700';
+  if (key === 'ATRASO') return 'bg-amber-100 text-amber-700';
+  if (key === 'SALIDA_ANTICIPADA') return 'bg-orange-100 text-orange-700';
+  return 'bg-emerald-100 text-emerald-700';
+}
+
+function SupervisorMiniLine({
+  data,
+  dataKey,
+  stroke,
+}: {
+  data: any[];
+  dataKey: string;
+  stroke: string;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={54}>
+      <LineChart data={data} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+        <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={2} dot={false} />
+        <RechartsTooltip />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function RankingList({
+  title,
+  rows,
+  valueKey,
+  valueFormatter,
+}: {
+  title: string;
+  rows: any[];
+  valueKey: string;
+  valueFormatter: (value: unknown) => string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin datos para el periodo.</p>
+        ) : rows.slice(0, 5).map((row, index) => (
+          <div key={`${title}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+            <div className="min-w-0">
+              <p className="truncate font-medium">{row.name || 'Sin nombre'}</p>
+              {row.employee_code ? <p className="text-xs text-muted-foreground">{row.employee_code}</p> : null}
+            </div>
+            <span className="shrink-0 font-semibold">{valueFormatter(row[valueKey])}</span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SupervisorHome({ payload }: { payload: any }) {
+  const todayIssues = Array.isArray(payload?.today_issues) ? payload.today_issues : [];
+  const latestPunches = Array.isArray(payload?.latest_punches) ? payload.latest_punches : [];
+  const last7Days = Array.isArray(payload?.trends?.last_7_days) ? payload.trends.last_7_days : [];
+  const last4Weeks = Array.isArray(payload?.trends?.last_4_weeks) ? payload.trends.last_4_weeks : [];
+  const rankings = payload?.rankings || {};
+
+  const kpis = [
+    {
+      title: 'Ausentismo 7 dias',
+      value: formatPercent(last7Days[last7Days.length - 1]?.absence_rate),
+      detail: `${formatMetric(last7Days.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
+      data: last7Days,
+      dataKey: 'absence_rate',
+      stroke: '#dc2626',
+      icon: UserX,
+    },
+    {
+      title: 'Ausentismo 4 semanas',
+      value: formatPercent(last4Weeks[last4Weeks.length - 1]?.absence_rate),
+      detail: `${formatMetric(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
+      data: last4Weeks,
+      dataKey: 'absence_rate',
+      stroke: '#f97316',
+      icon: TrendingDown,
+    },
+    {
+      title: 'Horas extra 7 dias',
+      value: formatHours(last7Days.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
+      detail: 'Acumulado semanal',
+      data: last7Days,
+      dataKey: 'overtime_hours',
+      stroke: '#2563eb',
+      icon: Clock3,
+    },
+    {
+      title: 'Horas extra 4 semanas',
+      value: formatHours(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
+      detail: 'Acumulado mensual',
+      data: last4Weeks,
+      dataKey: 'overtime_hours',
+      stroke: '#7c3aed',
+      icon: Activity,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
+            <CardDescription>Eventos del dia calculados contra turnos y marcaciones.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {todayIssues.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin novedades operativas detectadas hoy.</p>
+            ) : todayIssues.slice(0, 10).map((row: any) => (
+              <div key={`${row.employee_id}-${row.event_key}`} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{row.employee_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {row.area_name || 'Sin area'} · {row.shift_short_name || row.shift_name || 'Sin turno'} · Entrada {formatTimeOnly(row.first_entry)}
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
+                  {eventLabel(row.event_key)}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Ultimas 10 marcaciones del dia</CardTitle>
+            <CardDescription>Se refresca automaticamente para reflejar nuevas marcaciones.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {latestPunches.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin marcaciones registradas hoy.</p>
+            ) : latestPunches.map((row: any) => (
+              <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{row.employee_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatTimeOnly(row.punch_datetime)} · {row.movement_label || `Movimiento ${row.punch_key}`} · {row.area_name || 'Sin area'}
+                  </p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
+                  {eventLabel(row.event_key)}
+                </span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((kpi) => {
+          const Icon = kpi.icon;
+          return (
+            <Card key={kpi.title}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">{kpi.title}</CardTitle>
+                <Icon className="size-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{kpi.value}</div>
+                <p className="text-xs text-muted-foreground">{kpi.detail}</p>
+                <SupervisorMiniLine data={kpi.data} dataKey={kpi.dataKey} stroke={kpi.stroke} />
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        <RankingList title="Areas con mayor ausentismo" rows={rankings.area_absence || []} valueKey="absence_rate" valueFormatter={formatPercent} />
+        <RankingList title="Areas con mas horas extra" rows={rankings.area_overtime || []} valueKey="overtime_hours" valueFormatter={formatHours} />
+        <RankingList title="Empleados con mayor ausentismo" rows={rankings.employee_absence || []} valueKey="absences" valueFormatter={(v) => `${formatMetric(v)} faltas`} />
+        <RankingList title="Empleados con mas horas extra" rows={rankings.employee_overtime || []} valueKey="overtime_hours" valueFormatter={formatHours} />
+      </div>
+    </div>
+  );
+}
+
 function SystemAdminInsights({
   payload,
   selectedYear,
@@ -786,6 +1005,7 @@ export function Dashboard() {
 
   const isEmployee = profile?.role_key === 'EMPLOYEE';
   const isSystemAdmin = profile?.role_key === 'SYSTEM_ADMIN';
+  const isSupervisor = profile?.role_key === 'SUPERVISOR';
 
   const [employeeLoading, setEmployeeLoading] = useState(false);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
@@ -793,6 +1013,9 @@ export function Dashboard() {
   const [systemAdminLoading, setSystemAdminLoading] = useState(false);
   const [systemAdminError, setSystemAdminError] = useState<string | null>(null);
   const [systemAdminPayload, setSystemAdminPayload] = useState<any>(null);
+  const [supervisorLoading, setSupervisorLoading] = useState(false);
+  const [supervisorError, setSupervisorError] = useState<string | null>(null);
+  const [supervisorPayload, setSupervisorPayload] = useState<any>(null);
   const [systemAdminYear, setSystemAdminYear] = useState(new Date().getFullYear());
   const [systemAdminWeekStep, setSystemAdminWeekStep] = useState(1);
 
@@ -858,6 +1081,44 @@ export function Dashboard() {
       mounted = false;
     };
   }, [isSystemAdmin, session?.access_token, systemAdminYear, systemAdminWeekStep]);
+
+  useEffect(() => {
+    let mounted = true;
+    let intervalId: number | undefined;
+
+    const loadSupervisor = async () => {
+      if (!isSupervisor) return;
+      if (!session?.access_token) return;
+      try {
+        if (mounted) {
+          setSupervisorLoading(true);
+          setSupervisorError(null);
+        }
+        const resp = await fetch(buildApiUrl('/dashboard/supervisor-summary'), {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'No se pudo cargar el dashboard de supervisor');
+        if (mounted) setSupervisorPayload(data);
+      } catch (e: any) {
+        if (mounted) setSupervisorError(e?.message || 'Error cargando dashboard de supervisor');
+      } finally {
+        if (mounted) setSupervisorLoading(false);
+      }
+    };
+
+    void loadSupervisor();
+    if (isSupervisor && session?.access_token) {
+      intervalId = window.setInterval(() => {
+        void loadSupervisor();
+      }, 10000);
+    }
+
+    return () => {
+      mounted = false;
+      if (intervalId !== undefined) window.clearInterval(intervalId);
+    };
+  }, [isSupervisor, session?.access_token]);
 
   const defaultStats = [
     {
@@ -949,9 +1210,11 @@ export function Dashboard() {
     <div className="p-5 max-w-full space-y-4">
       <SystemAdminPageHeader
         icon={BarChart3}
-        title={`Bienvenido, ${profile?.display_name || 'Usuario'}`}
+        title={isSupervisor ? 'Dashboard de Supervisor' : `Bienvenido, ${profile?.display_name || 'Usuario'}`}
         subtitle={isSystemAdmin
           ? 'Analitica global de adopcion, crecimiento y uso operativo del sistema'
+          : isSupervisor
+            ? 'Asistencia operativa, novedades, marcaciones y tendencias del equipo asignado'
           : 'Sistema Enterprise de Control de Asistencias y Turnos de Trabajo'}
         rightSlot={isSystemAdmin ? (
           <div className="flex items-center gap-2">
@@ -980,12 +1243,37 @@ export function Dashboard() {
               </select>
             </label>
           </div>
+        ) : isSupervisor ? (
+          <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+            <div className="rounded-lg border bg-white px-3 py-2">
+              <p className="text-muted-foreground">Empleados</p>
+              <p className="text-lg font-semibold">{formatMetric(supervisorPayload?.metrics?.assigned_employees)}</p>
+            </div>
+            <div className="rounded-lg border bg-white px-3 py-2">
+              <p className="text-muted-foreground">Areas</p>
+              <p className="text-lg font-semibold">{formatMetric(supervisorPayload?.metrics?.assigned_areas)}</p>
+            </div>
+            <div className="rounded-lg border bg-white px-3 py-2">
+              <p className="text-muted-foreground">Faltas hoy</p>
+              <p className="text-lg font-semibold text-red-700">{formatMetric(supervisorPayload?.metrics?.today_absences)}</p>
+            </div>
+            <div className="rounded-lg border bg-white px-3 py-2">
+              <p className="text-muted-foreground">Actualizado</p>
+              <p className="text-sm font-semibold">{supervisorLoading ? 'Actualizando...' : formatTimeOnly(supervisorPayload?.generated_at)}</p>
+            </div>
+          </div>
         ) : undefined}
       />
 
-      {!isSystemAdmin ? <RoleInfo roleKey={profile?.role_key} /> : null}
+      {!isSystemAdmin && !isSupervisor ? <RoleInfo roleKey={profile?.role_key} /> : null}
 
-      {isEmployee ? (
+      {isSupervisor ? (
+        supervisorError ? (
+          <Card><CardContent className="pt-6"><p className="text-sm text-red-600">{supervisorError}</p></CardContent></Card>
+        ) : (
+          <SupervisorHome payload={supervisorPayload} />
+        )
+      ) : isEmployee ? (
         employeeLoading ? (
           <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">Cargando informacion del empleado...</p></CardContent></Card>
         ) : employeeError ? (
@@ -995,7 +1283,7 @@ export function Dashboard() {
         )
       ) : (
         <>
-          {!isSystemAdmin ? (
+          {!isSystemAdmin && !isSupervisor ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {stats.map((stat, index) => {
                 const Icon = stat.icon;
@@ -1031,7 +1319,7 @@ export function Dashboard() {
             )
           ) : null}
 
-          {!isSystemAdmin && (
+          {!isSystemAdmin && !isSupervisor && (
             <Card>
               <CardHeader>
                 <CardTitle>Acceso Rapido a Pantallas</CardTitle>
@@ -1058,6 +1346,7 @@ export function Dashboard() {
         </>
       )}
 
+      {!isSupervisor ? (
       <Card className="border-blue-200 bg-blue-50/50">
         <CardContent className="pt-6">
           <div className="flex items-start gap-3">
@@ -1085,6 +1374,7 @@ export function Dashboard() {
           </div>
         </CardContent>
       </Card>
+      ) : null}
     </div>
   );
 }

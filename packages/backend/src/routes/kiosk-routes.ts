@@ -16,7 +16,6 @@ const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
 const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
-const FIXED_DEVICE_ID = '432233b7-7eb8-4c3d-93fd-1593e72feda2';
 const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
 const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
 const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
@@ -1149,7 +1148,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
 
     const actor = getActor(req);
     const companyIdRequested = normalizeNullableText(req.body?.company_id);
-    const deviceId = FIXED_DEVICE_ID;
+    const deviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchKeyLookupId = normalizeNullableText(req.body?.punch_key_lookup_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
     const punchDateTimeRaw = normalizeNullableText(req.body?.punch_datetime);
