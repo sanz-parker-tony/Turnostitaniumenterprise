@@ -1505,8 +1505,12 @@ export function Dashboard() {
       }
     };
 
-    void loadSupervisor();
-    void waitForSupervisorEvent();
+    const startSupervisorDashboard = async () => {
+      await loadSupervisor();
+      if (mounted) void waitForSupervisorEvent();
+    };
+
+    void startSupervisorDashboard();
 
     return () => {
       mounted = false;
