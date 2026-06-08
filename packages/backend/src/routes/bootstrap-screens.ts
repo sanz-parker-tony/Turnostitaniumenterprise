@@ -17,21 +17,13 @@ export async function ensureSystemSettingsScreen(req: Request, res: Response) {
   try {
     console.log('🔧 [BOOTSTRAP] Iniciando ensure-system-settings-screen...');
 
-    const PostgresUrl = process.env.Postgres_URL;
-    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
-
-    if (!PostgresUrl || !PostgresServiceKey) {
-      console.error('❌ [BOOTSTRAP] Variables de entorno faltantes');
-      return res.status(500).json({
-        success: false,
-        error: 'Missing required environment variables',
-        details: 'Postgres_URL and Postgres_SERVICE_ROLE_KEY must be set',
-      });
-    }
-
-    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey, {
+    const Postgres = createDbClient(
+      process.env.Postgres_URL ?? '',
+      process.env.Postgres_SERVICE_ROLE_KEY ?? '',
+      {
       auth: { autoRefreshToken: false, persistSession: false },
-    });
+      }
+    );
 
     // PASO 1: Obtener menu_group MAINT
     const { data: menuGroup, error: menuGroupError } = await Postgres
@@ -242,16 +234,13 @@ export async function ensureMaintenanceManagementScreens(req: Request, res: Resp
   try {
     console.log('🔧 [BOOTSTRAP] Iniciando ensure-maintenance-management-screens...');
 
-    const PostgresUrl = process.env.Postgres_URL;
-    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
-
-    if (!PostgresUrl || !PostgresServiceKey) {
-      return res.status(500).json({ success: false, error: 'Missing required environment variables' });
-    }
-
-    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey, {
+    const Postgres = createDbClient(
+      process.env.Postgres_URL ?? '',
+      process.env.Postgres_SERVICE_ROLE_KEY ?? '',
+      {
       auth: { autoRefreshToken: false, persistSession: false },
-    });
+      }
+    );
 
     // Obtener menu_group MAINT
     const { data: menuGroup, error: menuGroupError } = await Postgres
@@ -414,15 +403,13 @@ export async function ensureSecurityManagementScreens(req: Request, res: Respons
   try {
     console.log('🔧 [BOOTSTRAP] Iniciando ensure-security-management-screens...');
 
-    const PostgresUrl = process.env.Postgres_URL;
-    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
-    if (!PostgresUrl || !PostgresServiceKey) {
-      return res.status(500).json({ success: false, error: 'Missing required environment variables' });
-    }
-
-    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey, {
+    const Postgres = createDbClient(
+      process.env.Postgres_URL ?? '',
+      process.env.Postgres_SERVICE_ROLE_KEY ?? '',
+      {
       auth: { autoRefreshToken: false, persistSession: false },
-    });
+      }
+    );
 
     // Obtener menu_group SECURITY
     const { data: menuGroup, error: menuGroupError } = await Postgres
@@ -555,19 +542,13 @@ export async function ensureOrgMaintenanceScreen(req: Request, res: Response) {
   try {
     console.log('🔧 [BOOTSTRAP] Iniciando ensure-org-maintenance-screen...');
 
-    const PostgresUrl = process.env.Postgres_URL;
-    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
-
-    if (!PostgresUrl || !PostgresServiceKey) {
-      return res.status(500).json({
-        success: false,
-        error: 'Missing required environment variables',
-      });
-    }
-
-    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey, {
+    const Postgres = createDbClient(
+      process.env.Postgres_URL ?? '',
+      process.env.Postgres_SERVICE_ROLE_KEY ?? '',
+      {
       auth: { autoRefreshToken: false, persistSession: false },
-    });
+      }
+    );
 
     const { data: orgMenuGroup, error: orgMenuGroupError } = await Postgres
       .from('system_menu_groups')

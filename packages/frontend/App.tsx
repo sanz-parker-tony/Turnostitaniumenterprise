@@ -58,7 +58,7 @@ function AppContent() {
     };
 
     const endpoints = [
-      'bootstrap/ensure-system-settings-screen',
+      'bootstrap-screens/ensure-system-settings',
       'bootstrap/ensure-maintenance-screens',
       'bootstrap/ensure-security-screens',
       'bootstrap/ensure-org-maintenance-screen',

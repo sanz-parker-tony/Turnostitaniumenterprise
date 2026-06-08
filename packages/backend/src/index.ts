@@ -3562,6 +3562,7 @@ router.use('/attendance-events', attendanceRouter);
 router.use('/holidays', requireAuth, holidaysRouter);
 
 // Bootstrap Screens
+router.post('/bootstrap/ensure-system-settings-screen', requireAuth, ensureSystemSettingsScreen);
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
 router.post('/bootstrap/ensure-maintenance-screens', requireAuth, ensureMaintenanceManagementScreens);
 router.post('/bootstrap/ensure-security-screens', requireAuth, ensureSecurityManagementScreens);
