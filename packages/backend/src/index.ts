@@ -1063,7 +1063,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         `;
     const scopedParams = unrestrictedTenantAdmin ? [tenantId] : [tenantId, userId];
 
-    const assignedCountResult = await pool.query(
+    const assignedCountQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql})
         SELECT
@@ -1075,7 +1075,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const todayIssuesResult = await pool.query(
+    const todayIssuesQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         today_plans AS (
@@ -1241,7 +1241,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const latestPunchesResult = await pool.query(
+    const latestPunchesQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         latest AS (
@@ -1385,7 +1385,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const surchargeSummaryResult = await pool.query(
+    const surchargeSummaryQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         today_plans AS (
@@ -1507,7 +1507,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const trendResult = await pool.query(
+    const trendQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         days AS (
@@ -1685,7 +1685,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const rankingResult = await pool.query(
+    const rankingQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         plans AS (
@@ -1842,7 +1842,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const rankingMoreResult = await pool.query(
+    const rankingMoreQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         plans AS (
@@ -2007,7 +2007,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
-    const employeeOvertimeResult = await pool.query(
+    const employeeOvertimeQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
         plans AS (
@@ -2131,6 +2131,26 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       `,
       scopedParams
     );
+
+    const [
+      assignedCountResult,
+      todayIssuesResult,
+      latestPunchesResult,
+      surchargeSummaryResult,
+      trendResult,
+      rankingResult,
+      rankingMoreResult,
+      employeeOvertimeResult,
+    ] = await Promise.all([
+      assignedCountQuery,
+      todayIssuesQuery,
+      latestPunchesQuery,
+      surchargeSummaryQuery,
+      trendQuery,
+      rankingQuery,
+      rankingMoreQuery,
+      employeeOvertimeQuery,
+    ]);
 
     const base = assignedCountResult.rows[0] || {};
     const todayIssues = todayIssuesResult.rows || [];
@@ -3564,6 +3584,7 @@ router.use('/holidays', requireAuth, holidaysRouter);
 // Bootstrap Screens
 router.post('/bootstrap/ensure-system-settings-screen', requireAuth, ensureSystemSettingsScreen);
 router.post('/bootstrap-screens/ensure-system-settings', requireAuth, ensureSystemSettingsScreen);
+router.post('/bootstrap-screens/ensure-system-settings-screens', requireAuth, ensureSystemSettingsScreen);
 router.post('/bootstrap/ensure-maintenance-screens', requireAuth, ensureMaintenanceManagementScreens);
 router.post('/bootstrap/ensure-security-screens', requireAuth, ensureSecurityManagementScreens);
 router.post('/bootstrap/ensure-org-maintenance-screen', requireAuth, ensureOrgMaintenanceScreen);
