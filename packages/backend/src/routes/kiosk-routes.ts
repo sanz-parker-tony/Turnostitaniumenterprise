@@ -1441,24 +1441,28 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       accuracyMeters: locationAccuracyMeters,
       locations: workLocationsResult.rows,
     });
+    if (workLocationsResult.rows.length === 0) {
+      return res.status(422).json({
+        error: 'No existen localizaciones activas con geocerca configurada para validar la marcacion',
+        location_validation: {
+          ...locationValidation,
+          message: 'No existen localizaciones activas con geocerca configurada',
+        },
+      });
+    }
+    if (!locationValidation.inside) {
+      return res.status(422).json({
+        error: 'La marcacion fue descartada porque la ubicacion no esta dentro de una localizacion valida',
+        location_validation: locationValidation,
+      });
+    }
     const validStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
       context.tenant_id,
       'TIME_PUNCH_STATUS',
       ['VALID']
     );
-    const invalidStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
-      context.tenant_id,
-      'TIME_PUNCH_STATUS',
-      ['NO_VALIDO_GEOFENCE', 'INVALID']
-    );
-    const normalizedStatusId = locationValidation.inside
-      ? validStatusId || requestedStatusId || null
-      : invalidStatusId || requestedStatusId || validStatusId || null;
+    const normalizedStatusId = validStatusId || requestedStatusId || null;
     const effectivePunchTimeZone = locationValidation.time_zone || clientTimeZone || 'America/Guayaquil';
-    if (!locationValidation.inside && !invalidStatusId) {
-      locationValidation.message =
-        `${locationValidation.message}. No existe estado INVALID configurado; se registró con estado alterno.`;
-    }
 
     const minMinutesBetweenValidPunches = await resolveEffectiveNumberSetting(pool, {
       tenantId: context.tenant_id,

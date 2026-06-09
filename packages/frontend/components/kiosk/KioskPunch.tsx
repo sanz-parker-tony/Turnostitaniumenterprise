@@ -24,6 +24,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 
 const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
+const LOCATION_CACHE_MAX_AGE_MS = 45_000;
+const LOCATION_REQUEST_TIMEOUT_MS = 6_000;
 const KEY_LABEL_OVERRIDES: Record<number, string> = {
   1: 'Entrada',
   2: 'Inicio Lunch',
@@ -68,7 +70,10 @@ function getFullName(employee: EmployeeContext | null): string {
   return `${employee.employee_name || ''} ${employee.employee_lastname || ''}`.trim() || employee.employee_code || 'Empleado';
 }
 
-function getBrowserPosition(timeoutMs = 10000): Promise<GeolocationPosition> {
+function getBrowserPosition(
+  timeoutMs = LOCATION_REQUEST_TIMEOUT_MS,
+  maximumAgeMs = LOCATION_CACHE_MAX_AGE_MS
+): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       reject(new Error('Este navegador no soporta geolocalizacion'));
@@ -77,7 +82,7 @@ function getBrowserPosition(timeoutMs = 10000): Promise<GeolocationPosition> {
     navigator.geolocation.getCurrentPosition(resolve, reject, {
       enableHighAccuracy: true,
       timeout: timeoutMs,
-      maximumAge: 0,
+      maximumAge: maximumAgeMs,
     });
   });
 }
@@ -111,6 +116,7 @@ function DeviceStatusIcon({
 export default function KioskPunch() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const lastPositionRef = useRef<GeolocationPosition | null>(null);
   const cameraStartRunRef = useRef(0);
   const cameraReadyRef = useRef(false);
   const [loading, setLoading] = useState(true);
@@ -234,7 +240,8 @@ export default function KioskPunch() {
 
   const refreshLocation = useCallback(async () => {
     try {
-      const position = await getBrowserPosition(12000);
+      const position = await getBrowserPosition();
+      lastPositionRef.current = position;
       setLocationReady(true);
       setLocationAccuracy(Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null);
       setLocationError(null);
@@ -246,6 +253,22 @@ export default function KioskPunch() {
       throw err;
     }
   }, []);
+
+  const getLocationForPunch = useCallback(async () => {
+    const cachedPosition = lastPositionRef.current;
+    const cachedAt = Number(cachedPosition?.timestamp || 0);
+    if (
+      cachedPosition &&
+      Number.isFinite(cachedAt) &&
+      Date.now() - cachedAt <= LOCATION_CACHE_MAX_AGE_MS &&
+      Number.isFinite(cachedPosition.coords.latitude) &&
+      Number.isFinite(cachedPosition.coords.longitude)
+    ) {
+      return cachedPosition;
+    }
+
+    return refreshLocation();
+  }, [refreshLocation]);
 
   useEffect(() => {
     const activateDevices = () => {
@@ -377,7 +400,7 @@ export default function KioskPunch() {
     let longitud: number;
     let locationAccuracyMeters: number | null = null;
     try {
-      const position = await refreshLocation();
+      const position = await getLocationForPunch();
       latitud = position.coords.latitude;
       longitud = position.coords.longitude;
       locationAccuracyMeters = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
