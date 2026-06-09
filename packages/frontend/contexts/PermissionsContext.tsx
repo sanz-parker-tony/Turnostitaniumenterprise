@@ -6,7 +6,7 @@
 'use client';
 
 import { buildApiUrl } from '../utils/api-config';
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 
 export interface MenuScreen {
@@ -37,6 +37,8 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const [menuScreens, setMenuScreens] = useState<MenuScreen[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  const hasLoadedMenuRef = useRef(false);
+  const lastMenuIdentityRef = useRef('');
 
   // Listener para evento de recarga de permisos
   useEffect(() => {
@@ -62,12 +64,19 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         if (isMounted) {
           setMenuScreens([]);
           setIsLoading(false);
+          hasLoadedMenuRef.current = false;
+          lastMenuIdentityRef.current = '';
         }
         return;
       }
 
+      const menuIdentity = `${user.id}:${profile.role_key}`;
+      const isNewMenuIdentity = lastMenuIdentityRef.current !== menuIdentity;
+      const shouldShowBlockingLoading = isNewMenuIdentity || !hasLoadedMenuRef.current;
+
       try {
-        if (isMounted) setIsLoading(true);
+        if (isMounted && shouldShowBlockingLoading) setIsLoading(true);
+        if (isMounted && isNewMenuIdentity) setMenuScreens([]);
         console.log('🔄 Cargando pantallas del menú por backend endpoint para rol:', profile.role_key);
 
         const response = await fetch(buildApiUrl('/users/menu-screens'), {
@@ -86,7 +95,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         if (!response.ok) {
           console.error('❌ Error al cargar pantallas desde backend:', payload);
           if (isMounted) {
-            setMenuScreens([]);
+            if (shouldShowBlockingLoading) setMenuScreens([]);
             setIsLoading(false);
           }
           return;
@@ -101,6 +110,8 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         });
         if (isMounted) {
           setMenuScreens(sortedScreens);
+          hasLoadedMenuRef.current = true;
+          lastMenuIdentityRef.current = menuIdentity;
           console.log('✅ Pantallas cargadas y ordenadas:', sortedScreens.length);
           console.log('📋 Pantallas:', sortedScreens);
         }
@@ -113,7 +124,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         
         console.error('❌ Error al cargar menú:', error);
         if (isMounted) {
-          setMenuScreens([]);
+          if (shouldShowBlockingLoading) setMenuScreens([]);
         }
       } finally {
         if (isMounted) {

@@ -1380,6 +1380,11 @@ export function Dashboard() {
   const [systemAdminYear, setSystemAdminYear] = useState(new Date().getFullYear());
   const [systemAdminWeekStep, setSystemAdminWeekStep] = useState(1);
 
+  const navigateWithoutReload = (path: string) => {
+    window.history.pushState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   useEffect(() => {
     let mounted = true;
 
@@ -1730,7 +1735,7 @@ export function Dashboard() {
                   {menuScreens.slice(0, 8).map((screen) => (
                     <button
                       key={screen.screen_key}
-                      onClick={() => { window.location.href = screen.route_path; }}
+                      onClick={() => navigateWithoutReload(screen.route_path)}
                       className="flex items-center gap-3 p-3 rounded-lg border bg-card text-card-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left"
                     >
                       <div className="flex-1 min-w-0">
