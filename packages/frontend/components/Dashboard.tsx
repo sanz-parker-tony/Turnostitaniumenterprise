@@ -625,6 +625,29 @@ function formatTimeOnly(value: string | null | undefined): string {
   return match?.[1] || String(value).slice(0, 5);
 }
 
+function formatLatestPunchDescription(row: any): string {
+  const movementLabel = String(row.movement_label || '').trim().toUpperCase();
+  const isWorkdayExit = Number(row.punch_key) === 4 || movementLabel === 'SALIDA';
+  const shiftTimeDetail = isWorkdayExit
+    ? `Salida turno: ${row.shift_work_end_time ? formatTimeOnly(row.shift_work_end_time) : 'Sin turno'}`
+    : `Entrada turno: ${row.shift_start_time ? formatTimeOnly(row.shift_start_time) : 'Sin turno'}`;
+  const markingLocation = row.device_work_location_name || row.device_location || 'Sin localidad de marcación';
+  const parts = [
+    `${formatTimeOnly(row.punch_datetime)} - ${row.movement_label || `Movimiento ${row.punch_key}`}`,
+    shiftTimeDetail,
+    `Localidad marcación: ${markingLocation}`,
+  ];
+
+  if (row.is_holiday) {
+    parts.push(`Feriado: ${row.holiday_name || 'Sí'}`, `Trabaja feriados: ${row.work_on_holidays ? 'Sí' : 'No'}`);
+  }
+  if (row.has_approved_leave) {
+    parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
+  }
+
+  return parts.join(' - ');
+}
+
 function eventLabel(eventKey: string | null | undefined): string {
   const key = String(eventKey || '').toUpperCase();
   if (key === 'FALTA') return 'Falta';
@@ -837,7 +860,7 @@ function SupervisorIssuesPie({
         </ResponsiveContainer>
         <div className="text-center">
           <p className="text-2xl font-bold">{formatPercent(safeTotal > 0 ? (totalAffected / safeTotal) * 100 : 0)}</p>
-          <p className="text-xs text-muted-foreground">{formatMetric(totalAffected)} incidencias / {formatMetric(safeTotal)} empleados</p>
+          <p className="text-xs text-muted-foreground">{formatMetric(totalAffected)} incidencias / {formatMetric(safeTotal)} empleados con turno</p>
         </div>
       </div>
       <div className="grid content-center gap-2">
@@ -961,6 +984,9 @@ function SupervisorHome({ payload }: { payload: any }) {
   const last4WeeksChart = withTrendLabels(last4Weeks, 'weekly');
   const rankings = payload?.rankings || {};
   const assignedEmployees = Math.max(0, Number(payload?.metrics?.assigned_employees || 0));
+  const hasScheduledEmployeesMetric = payload?.metrics?.today_scheduled_employees !== undefined && payload?.metrics?.today_scheduled_employees !== null;
+  const scheduledEmployeesToday = Math.max(0, Number(payload?.metrics?.today_scheduled_employees || 0));
+  const issuePopulation = hasScheduledEmployeesMetric ? scheduledEmployeesToday : assignedEmployees;
   const surchargeHours = payload?.surcharge_hours || {};
   const combinedIssueSources = useMemo(() => [...todayIssues, ...latestPunches], [todayIssues, latestPunches]);
 
@@ -1053,10 +1079,10 @@ function SupervisorHome({ payload }: { payload: any }) {
           <Card className="flex-1">
             <CardHeader>
               <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
-              <CardDescription>Porcentaje de empleados con novedad frente al total asignado.</CardDescription>
+              <CardDescription>Porcentaje de empleados con novedad frente a empleados con turno activo hoy.</CardDescription>
             </CardHeader>
             <CardContent>
-              <SupervisorIssuesPie rows={issuePieRows} total={assignedEmployees} />
+              <SupervisorIssuesPie rows={issuePieRows} total={issuePopulation} />
             </CardContent>
           </Card>
 
@@ -1115,9 +1141,7 @@ function SupervisorHome({ payload }: { payload: any }) {
                     <div className="min-w-0">
                       <p className="truncate font-medium">{row.employee_name}</p>
                       <p className="text-xs text-muted-foreground">
-                        {formatTimeOnly(row.punch_datetime)} - {row.movement_label || `Movimiento ${row.punch_key}`} - {row.area_name || 'Sin área'}
-                        {row.is_holiday ? ` - Feriado: ${row.holiday_name || 'Sí'} - Trabaja feriados: ${row.work_on_holidays ? 'Sí' : 'No'}` : ''}
-                        {row.has_approved_leave ? ` - Permiso: ${row.approved_leave_name || 'Aprobado'}` : ''}
+                        {formatLatestPunchDescription(row)}
                       </p>
                     </div>
                     <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
@@ -1649,22 +1673,22 @@ export function Dashboard() {
             </label>
           </div>
         ) : isSupervisor ? (
-          <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-            <div className="rounded-lg border bg-white px-3 py-2">
-              <p className="text-muted-foreground">Empleados</p>
-              <p className="text-lg font-semibold">{formatMetric(supervisorPayload?.metrics?.assigned_employees)}</p>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
+              <p className="text-[13px] leading-none text-muted-foreground">Empleados</p>
+              <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.assigned_employees)}</p>
             </div>
-            <div className="rounded-lg border bg-white px-3 py-2">
-              <p className="text-muted-foreground">Areas</p>
-              <p className="text-lg font-semibold">{formatMetric(supervisorPayload?.metrics?.assigned_areas)}</p>
+            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
+              <p className="text-[13px] leading-none text-muted-foreground">Areas</p>
+              <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.assigned_areas)}</p>
             </div>
-            <div className="rounded-lg border bg-white px-3 py-2">
-              <p className="text-muted-foreground">Faltas hoy</p>
-              <p className="text-lg font-semibold text-red-700">{formatMetric(supervisorPayload?.metrics?.today_absences)}</p>
+            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
+              <p className="text-[13px] leading-none text-muted-foreground">Faltas hoy</p>
+              <p className="mt-2 text-base font-semibold leading-none text-red-700">{formatMetric(supervisorPayload?.metrics?.today_absences)}</p>
             </div>
-            <div className="rounded-lg border bg-white px-3 py-2">
-              <p className="text-muted-foreground">Actualizado</p>
-              <p className="text-sm font-semibold">{supervisorLoading ? 'Actualizando...' : formatTimeOnly(supervisorPayload?.generated_at)}</p>
+            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
+              <p className="text-[13px] leading-none text-muted-foreground">Actualizado</p>
+              <p className="mt-2 text-base font-semibold leading-none">{supervisorLoading ? 'Actualizando...' : formatTimeOnly(supervisorPayload?.generated_at)}</p>
             </div>
           </div>
         ) : undefined}

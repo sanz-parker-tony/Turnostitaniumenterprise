@@ -131,6 +131,7 @@ export default function KioskPunch() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [locationReady, setLocationReady] = useState(false);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
+  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -243,11 +244,16 @@ export default function KioskPunch() {
       const position = await getBrowserPosition();
       lastPositionRef.current = position;
       setLocationReady(true);
+      setLocationCoords({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
       setLocationAccuracy(Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null);
       setLocationError(null);
       return position;
     } catch (err: any) {
       setLocationReady(false);
+      setLocationCoords(null);
       setLocationAccuracy(null);
       setLocationError(err?.message || 'No se pudo obtener la ubicacion geografica.');
       throw err;
@@ -403,6 +409,7 @@ export default function KioskPunch() {
       const position = await getLocationForPunch();
       latitud = position.coords.latitude;
       longitud = position.coords.longitude;
+      setLocationCoords({ latitude: latitud, longitude: longitud });
       locationAccuracyMeters = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo obtener la ubicacion geografica.');
@@ -602,6 +609,11 @@ export default function KioskPunch() {
                   ? `Ubicacion activa${locationAccuracy ? `, precision aproximada ${locationAccuracy} m` : ''}.`
                   : `Ubicacion no disponible: ${locationError || 'active la ubicacion antes de marcar.'}`}
               </p>
+              {locationCoords && (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900">
+                  Coordenadas actuales: latitud {locationCoords.latitude.toFixed(8)}, longitud {locationCoords.longitude.toFixed(8)} | GeoJSON [{locationCoords.longitude.toFixed(8)}, {locationCoords.latitude.toFixed(8)}]
+                </p>
+              )}
             </div>
 
             <div className="space-y-3">

@@ -1276,7 +1276,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
 
     const actor = getActor(req);
     const companyIdRequested = normalizeNullableText(req.body?.company_id);
-    const deviceId = normalizeNullableText(req.body?.time_clock_device_id);
+    const requestedDeviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchKeyLookupId = normalizeNullableText(req.body?.punch_key_lookup_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
     const punchDateTimeRaw = normalizeNullableText(req.body?.punch_datetime);
@@ -1403,22 +1403,6 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       requestedStatusId = statusResult.rows[0].id;
     }
 
-    if (deviceId) {
-      const deviceResult = await pool.query(
-        `
-          SELECT id
-          FROM public.time_clock_devices
-          WHERE id = $1
-            AND tenant_id = $2
-            AND company_id = $3
-            AND is_active = true
-          LIMIT 1
-        `,
-        [deviceId, context.tenant_id, companyId]
-      );
-      if (!deviceResult.rows[0]) return res.status(400).json({ error: 'time_clock_device_id no valido' });
-    }
-
     const workLocationsResult = await pool.query(
       `
         SELECT
@@ -1456,6 +1440,62 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         location_validation: locationValidation,
       });
     }
+    if (!locationValidation.work_location_id) {
+      return res.status(422).json({
+        error: 'No se pudo determinar la localizacion de la marcacion',
+        location_validation: locationValidation,
+      });
+    }
+
+    const resolvedDeviceResult = await pool.query(
+      `
+        SELECT
+          d.id,
+          d.device_name,
+          d.device_serial_number,
+          d.device_location,
+          d.work_location_id,
+          wl.work_location_name
+        FROM public.time_clock_devices d
+        LEFT JOIN public.work_locations wl
+          ON wl.id = d.work_location_id
+         AND wl.tenant_id = d.tenant_id
+        WHERE d.tenant_id = $1
+          AND d.company_id = $2
+          AND d.is_active = true
+          AND d.work_location_id = $3
+        ORDER BY
+          CASE WHEN $4::text IS NOT NULL AND d.id::text = $4::text THEN 0 ELSE 1 END,
+          CASE WHEN d.latitude IS NOT NULL AND d.longitude IS NOT NULL THEN 0 ELSE 1 END,
+          CASE
+            WHEN d.latitude IS NOT NULL AND d.longitude IS NOT NULL
+              THEN ((d.latitude - $5::double precision) * (d.latitude - $5::double precision))
+                 + ((d.longitude - $6::double precision) * (d.longitude - $6::double precision))
+            ELSE NULL
+          END ASC NULLS LAST,
+          d.device_name ASC,
+          d.device_serial_number ASC NULLS LAST,
+          d.created_at ASC
+        LIMIT 1
+      `,
+      [
+        context.tenant_id,
+        companyId,
+        locationValidation.work_location_id,
+        requestedDeviceId,
+        latitud,
+        longitud,
+      ]
+    );
+    const resolvedDevice = resolvedDeviceResult.rows[0] || null;
+    if (!resolvedDevice?.id) {
+      return res.status(422).json({
+        error: 'No existe un dispositivo activo asociado a la localizacion validada de la marcacion',
+        location_validation: locationValidation,
+      });
+    }
+    const resolvedDeviceId = String(resolvedDevice.id);
+
     const validStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
       context.tenant_id,
       'TIME_PUNCH_STATUS',
@@ -1524,7 +1564,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         context.tenant_id,
         companyId,
         context.employee_id,
-        deviceId,
+        resolvedDeviceId,
         punchDateTime.toISOString(),
         effectivePunchTimeZone,
         punchKey,
@@ -1553,6 +1593,15 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         client_time_zone: clientTimeZone || null,
         punch_time_zone: effectivePunchTimeZone,
         location_validation: locationValidation,
+        device_resolution: {
+          requested_time_clock_device_id: requestedDeviceId,
+          time_clock_device_id: resolvedDeviceId,
+          device_name: resolvedDevice.device_name || null,
+          device_serial_number: resolvedDevice.device_serial_number || null,
+          device_location: resolvedDevice.device_location || null,
+          work_location_id: resolvedDevice.work_location_id || null,
+          work_location_name: resolvedDevice.work_location_name || null,
+        },
         snapshot: {
           file_name: snapshot.fileName,
           folder: 'punches_snapshoots',

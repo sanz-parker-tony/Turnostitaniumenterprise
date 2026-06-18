@@ -1075,6 +1075,96 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
+    const todayScheduledEmployeesQuery = pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        today_plans AS (
+          SELECT
+            ae.employee_id,
+            ae.area_id,
+            CASE
+              WHEN approved_leave.id IS NOT NULL THEN 0
+              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
+              ELSE sw.work_minutes
+            END::int AS work_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.shift_date = CURRENT_DATE
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COUNT(*)::int AS active_block_count,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND (
+                (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+              )
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            ORDER BY
+              CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+              CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+              CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+              CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+              CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+              h.holiday_name ASC
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs
+              ON rs.id = r.request_status_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            ORDER BY r.start_datetime ASC, r.created_at ASC
+            LIMIT 1
+          ) approved_leave ON true
+        )
+        SELECT
+          COUNT(DISTINCT employee_id)::int AS today_scheduled_employees,
+          COUNT(DISTINCT area_id)::int AS today_scheduled_areas
+        FROM today_plans
+        WHERE work_minutes > 0
+      `,
+      scopedParams
+    );
+
     const todayIssuesQuery = pool.query(
       `
         WITH assigned_employees AS (${assignedEmployeesSql}),
@@ -1251,11 +1341,18 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime,
             p.punch_key,
             p.notes,
+            p.time_clock_device_id,
+            d.device_name,
+            d.device_serial_number,
+            d.device_location,
+            d.work_location_id AS device_work_location_id,
+            dwl.work_location_name AS device_work_location_name,
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
             ae.area_name,
             ae.company_id,
             ae.work_location_id,
+            ae.work_location_name AS employee_work_location_name,
             ae.employee_country_id,
             ae.employee_state_id,
             ae.employee_city_id,
@@ -1264,6 +1361,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
+          LEFT JOIN public.time_clock_devices d
+            ON d.id = p.time_clock_device_id
+           AND d.tenant_id = p.tenant_id
+          LEFT JOIN public.work_locations dwl
+            ON dwl.id = d.work_location_id
+           AND dwl.tenant_id = d.tenant_id
           LEFT JOIN LATERAL (
             SELECT lv.lookup_label
             FROM public.lookup_values lv
@@ -1285,6 +1388,14 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           l.*,
           s.shift_name,
           s.shift_short_name,
+          s.start_time AS shift_start_time,
+          CASE
+            WHEN p.id IS NOT NULL
+             AND s.start_time IS NOT NULL
+             AND COALESCE(sw.work_minutes, 0) > 0
+              THEN (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval)::time
+            ELSE NULL
+          END AS shift_work_end_time,
           holiday.id AS holiday_id,
           holiday.holiday_name,
           (holiday.id IS NOT NULL) AS is_holiday,
@@ -2134,6 +2245,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
 
     const [
       assignedCountResult,
+      todayScheduledEmployeesResult,
       todayIssuesResult,
       latestPunchesResult,
       surchargeSummaryResult,
@@ -2143,6 +2255,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       employeeOvertimeResult,
     ] = await Promise.all([
       assignedCountQuery,
+      todayScheduledEmployeesQuery,
       todayIssuesQuery,
       latestPunchesQuery,
       surchargeSummaryQuery,
@@ -2153,6 +2266,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     ]);
 
     const base = assignedCountResult.rows[0] || {};
+    const todayScheduled = todayScheduledEmployeesResult.rows[0] || {};
     const todayIssues = todayIssuesResult.rows || [];
     const latestPunches = latestPunchesResult.rows || [];
     const surchargeSummary = surchargeSummaryResult.rows[0] || {};
@@ -2179,6 +2293,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         assigned_employees: Number(base.assigned_employees || 0),
         assigned_areas: Number(base.assigned_areas || 0),
         assigned_departments: Number(base.assigned_departments || 0),
+        today_scheduled_employees: Number(todayScheduled.today_scheduled_employees || 0),
+        today_scheduled_areas: Number(todayScheduled.today_scheduled_areas || 0),
         today_absences: todayIssues.filter((row: any) => row.event_key === 'FALTA').length,
         today_late: todayIssues.filter((row: any) => row.event_key === 'ATRASO').length,
         today_early_departures: todayIssues.filter((row: any) => row.event_key === 'SALIDA_ANTICIPADA').length,
