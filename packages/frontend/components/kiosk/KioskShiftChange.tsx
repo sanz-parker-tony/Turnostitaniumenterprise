@@ -24,7 +24,9 @@ interface ShiftPlanRow {
   company_id: string;
   company_name: string | null;
   shift_id: string;
+  shift_company_id?: string | null;
   original_shift_id: string;
+  original_shift_company_id?: string | null;
   original_shift_name: string | null;
   original_shift_short_name: string | null;
   shift_name: string;
@@ -389,7 +391,10 @@ export default function KioskShiftChange() {
 
   const selectableShifts = useMemo(() => {
     if (!selectedPlan) return [];
-    return availableShifts.filter((row) => row.company_id === selectedPlan.company_id);
+    const validCompanyIds = new Set(
+      [selectedPlan.company_id, selectedPlan.original_shift_company_id, selectedPlan.shift_company_id].filter(Boolean)
+    );
+    return availableShifts.filter((row) => validCompanyIds.has(row.company_id));
   }, [availableShifts, selectedPlan]);
 
   const shiftChangesById = useMemo(() => {
@@ -642,13 +647,17 @@ export default function KioskShiftChange() {
     <div className="max-w-7xl mx-auto space-y-5">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ArrowLeftRight className="w-6 h-6 text-blue-600" />
-            Turnos y Solicitud de Cambio
-          </CardTitle>
-          <CardDescription>
-            Visualiza tus turnos por fecha y haz clic en una celda para solicitar cambio (incluye turno Libre).
-          </CardDescription>
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <ArrowLeftRight className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle>Turnos y Solicitud de Cambio</CardTitle>
+              <CardDescription>
+                Visualiza tus turnos por fecha y haz clic en una celda para solicitar cambio (incluye turno Libre).
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-2">

@@ -64,6 +64,13 @@ interface RequestRow {
 type PopupMode = 'create' | 'edit';
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'ALL';
 
+interface EmployeeContext {
+  id: string;
+  employee_code: string | null;
+  employee_name: string | null;
+  employee_lastname: string | null;
+}
+
 type PopupForm = {
   id: string | null;
   request_type_id: string;
@@ -99,6 +106,20 @@ function toDateTimeLocal(value: string | null | undefined, timeZone?: string | n
 
 function formatDateTime(value: string | null | undefined, timeZone?: string | null): string {
   return formatClientDateTime(value, 'es-EC', timeZone || undefined);
+}
+
+function toIsoDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getDefaultRange() {
+  const from = new Date();
+  const to = new Date(from);
+  to.setDate(to.getDate() + 6);
+  return { from: toIsoDate(from), to: toIsoDate(to) };
 }
 
 function formatPunchLabel(punch: PunchRow): string {
@@ -143,9 +164,12 @@ export default function KioskTimePunchRequests() {
   const [punchKeys, setPunchKeys] = useState<LookupItem[]>([]);
   const [punchStatuses, setPunchStatuses] = useState<LookupItem[]>([]);
   const [recentPunches, setRecentPunches] = useState<PunchRow[]>([]);
+  const [employee, setEmployee] = useState<EmployeeContext | null>(null);
 
   const [status, setStatus] = useState<StatusFilter>('PENDING');
   const [query, setQuery] = useState('');
+  const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
+  const [rangeTo, setRangeTo] = useState(getDefaultRange().to);
 
   const [popupOpen, setPopupOpen] = useState(false);
   const [popupMode, setPopupMode] = useState<PopupMode>('create');
@@ -187,10 +211,15 @@ export default function KioskTimePunchRequests() {
     setPunchKeys((payload?.punch_keys || []) as LookupItem[]);
     setPunchStatuses((payload?.punch_statuses || []) as LookupItem[]);
     setRecentPunches((payload?.recent_punches || []) as PunchRow[]);
+    setEmployee((payload?.employee || null) as EmployeeContext | null);
   };
 
   const loadRows = async () => {
-    const payload = await request(`/time-punch-requests?status=${status}`);
+    const qs = new URLSearchParams();
+    qs.set('status', status);
+    if (rangeFrom) qs.set('from', rangeFrom);
+    if (rangeTo) qs.set('to', rangeTo);
+    const payload = await request(`/time-punch-requests?${qs.toString()}`);
     setRows((payload?.requests || []) as RequestRow[]);
   };
 
@@ -459,24 +488,59 @@ export default function KioskTimePunchRequests() {
     <div className="space-y-4">
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <Clock3 className="h-5 w-5" />
+            </div>
             <div>
               <CardTitle>Solicitar cambios de marcaciones</CardTitle>
               <CardDescription>
                 Registra solicitudes para nueva marcacion, cambio de movimiento/hora o activar/desactivar una marcacion.
               </CardDescription>
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
-                <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /> Refrescar
-              </Button>
-              <Button onClick={openCreatePopup}>
-                <Plus className="mr-2 h-4 w-4" /> Nueva solicitud
-              </Button>
-            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-sm space-y-1">
+                <span className="block text-slate-700">Desde</span>
+                <input
+                  type="date"
+                  value={rangeFrom}
+                  onChange={(event) => setRangeFrom(event.target.value)}
+                  className="h-10 border rounded-md px-3"
+                />
+              </label>
+              <label className="text-sm space-y-1">
+                <span className="block text-slate-700">Hasta</span>
+                <input
+                  type="date"
+                  value={rangeTo}
+                  onChange={(event) => setRangeTo(event.target.value)}
+                  className="h-10 border rounded-md px-3"
+                />
+              </label>
+              <Button onClick={() => void refresh()} disabled={refreshing}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                Consultar
+              </Button>
+            </div>
+            <Button onClick={openCreatePopup}>
+              <Plus className="mr-2 h-4 w-4" /> Nueva solicitud
+            </Button>
+          </div>
+
+          {employee ? (
+            <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm">
+              <span className="font-semibold">
+                {(employee.employee_name || '').trim()} {(employee.employee_lastname || '').trim()}
+              </span>
+              <span className="mx-2 text-slate-400">·</span>
+              <span className="text-slate-700">Código: {employee.employee_code || '-'}</span>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant={status === 'PENDING' ? 'default' : 'outline'} onClick={() => setStatus('PENDING')}>Pendientes</Button>
             <Button size="sm" variant={status === 'APPROVED' ? 'default' : 'outline'} onClick={() => setStatus('APPROVED')}>Aprobadas</Button>

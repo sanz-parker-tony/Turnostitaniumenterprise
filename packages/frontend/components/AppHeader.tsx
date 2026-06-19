@@ -104,6 +104,7 @@ export function AppHeader() {
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const isEmployee = roleKey === 'EMPLOYEE';
   const showDevicePermissionToolbar = roleKey === 'EMPLOYEE';
   const isKioskPunchRoute = [
     '/dashboard/kiosk/timeclock',
@@ -304,39 +305,45 @@ export function AppHeader() {
         </DropdownMenu>
 
         {/* User Menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <User className="h-5 w-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel>
-              <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none">{profile?.display_name}</p>
-                <p className="text-xs leading-none text-muted-foreground">{profile?.email}</p>
-                <p className="text-xs leading-none text-muted-foreground mt-1">
-                  <Badge variant="outline" className="text-xs">
-                    {profile?.role_name}
-                  </Badge>
-                </p>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {showDevicePermissionToolbar && !isKioskPunchRoute ? (
-              <>
-                <div className="px-2 py-1.5">
-                  <DevicePermissionToolbar variant="panel" />
+        {isEmployee ? (
+          <Button variant="ghost" size="icon" onClick={() => void handleLogout()} title="Cerrar Sesion">
+            <LogOut className="h-5 w-5" />
+          </Button>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <User className="h-5 w-5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuLabel>
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium leading-none">{profile?.display_name}</p>
+                  <p className="text-xs leading-none text-muted-foreground">{profile?.email}</p>
+                  <p className="text-xs leading-none text-muted-foreground mt-1">
+                    <Badge variant="outline" className="text-xs">
+                      {profile?.role_name}
+                    </Badge>
+                  </p>
                 </div>
-                <DropdownMenuSeparator />
-              </>
-            ) : null}
-            <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
-              <LogOut className="mr-2 h-4 w-4" />
-              Cerrar Sesión
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {showDevicePermissionToolbar && !isKioskPunchRoute ? (
+                <>
+                  <div className="px-2 py-1.5">
+                    <DevicePermissionToolbar variant="panel" />
+                  </div>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
+                <LogOut className="mr-2 h-4 w-4" />
+                Cerrar Sesi?n
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </header>
   );

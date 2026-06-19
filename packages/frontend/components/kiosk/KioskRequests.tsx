@@ -54,6 +54,15 @@ interface RequestRow {
 
 type PopupMode = 'create' | 'edit' | 'view';
 
+interface EmployeeContext {
+  id: string;
+  company_id?: string | null;
+  company_name?: string | null;
+  employee_code?: string | null;
+  employee_name?: string | null;
+  employee_lastname?: string | null;
+}
+
 type PopupForm = {
   id: string | null;
   justification_type_id: string;
@@ -165,6 +174,7 @@ export default function KioskRequests() {
   const [events, setEvents] = useState<CatalogItem[]>([]);
   const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
   const [rows, setRows] = useState<RequestRow[]>([]);
+  const [employee, setEmployee] = useState<EmployeeContext | null>(null);
 
   const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
   const [rangeTo, setRangeTo] = useState(getDefaultRange().to);
@@ -268,6 +278,7 @@ export default function KioskRequests() {
     setJustifications(nextJustifications);
     setEvents(nextEvents);
     setDiscountMethods(nextDiscountMethods);
+    setEmployee((payload?.employee || null) as EmployeeContext | null);
   };
 
   const loadRows = async () => {
@@ -476,14 +487,22 @@ export default function KioskRequests() {
     <div className="max-w-7xl mx-auto space-y-5">
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+              <FileText className="h-5 w-5" />
+            </div>
             <div>
               <CardTitle>Justificar ausentismo</CardTitle>
               <CardDescription>
                 Historial de solicitudes de justificación con estado y trazabilidad de aprobación.
               </CardDescription>
             </div>
-            <div className="flex items-end gap-2">
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="flex flex-wrap items-end gap-2">
               <label className="text-sm space-y-1">
                 <span className="block text-slate-700">Desde</span>
                 <input
@@ -506,15 +525,24 @@ export default function KioskRequests() {
                 {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                 Consultar
               </Button>
+            </div>
+            <div className="flex items-end gap-2">
               <Button onClick={openCreatePopup} disabled={saving || loading}>
                 <Plus className="w-4 h-4 mr-2" />
                 Nueva justificación
               </Button>
             </div>
           </div>
-        </CardHeader>
+          {employee ? (
+            <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm">
+              <span className="font-semibold">
+                {(employee.employee_name || '').trim()} {(employee.employee_lastname || '').trim()}
+              </span>
+              <span className="mx-2 text-slate-400">·</span>
+              <span className="text-slate-700">Código: {employee.employee_code || '-'}</span>
+            </div>
+          ) : null}
 
-        <CardContent>
           {loading ? (
             <div className="py-14 flex justify-center">
               <Loader2 className="w-7 h-7 animate-spin text-blue-600" />

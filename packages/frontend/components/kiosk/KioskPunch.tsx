@@ -92,24 +92,28 @@ function DeviceStatusIcon({
   label,
   title,
   icon: Icon,
+  onClick,
 }: {
   active: boolean;
   label: string;
   title: string;
   icon: ComponentType<{ className?: string }>;
+  onClick: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
       title={title}
-      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-full border text-xs font-medium shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-200 ${
         active
-          ? 'border-amber-300 bg-amber-100 text-amber-800 shadow-[0_0_0_3px_rgba(251,191,36,0.18)]'
-          : 'border-slate-200 bg-slate-100 text-slate-400'
+          ? 'border-emerald-300 bg-emerald-100 text-emerald-700 shadow-[0_0_0_3px_rgba(16,185,129,0.14)]'
+          : 'border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100'
       }`}
     >
       <Icon className="h-4 w-4" />
-      <span>{label}</span>
-    </div>
+    </button>
   );
 }
 
@@ -131,7 +135,6 @@ export default function KioskPunch() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [locationReady, setLocationReady] = useState(false);
   const [locationAccuracy, setLocationAccuracy] = useState<number | null>(null);
-  const [locationCoords, setLocationCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -244,16 +247,11 @@ export default function KioskPunch() {
       const position = await getBrowserPosition();
       lastPositionRef.current = position;
       setLocationReady(true);
-      setLocationCoords({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-      });
       setLocationAccuracy(Number.isFinite(position.coords.accuracy) ? Math.round(position.coords.accuracy) : null);
       setLocationError(null);
       return position;
     } catch (err: any) {
       setLocationReady(false);
-      setLocationCoords(null);
       setLocationAccuracy(null);
       setLocationError(err?.message || 'No se pudo obtener la ubicacion geografica.');
       throw err;
@@ -409,7 +407,6 @@ export default function KioskPunch() {
       const position = await getLocationForPunch();
       latitud = position.coords.latitude;
       longitud = position.coords.longitude;
-      setLocationCoords({ latitude: latitud, longitude: longitud });
       locationAccuracyMeters = Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null;
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo obtener la ubicacion geografica.');
@@ -477,7 +474,7 @@ export default function KioskPunch() {
         onClick={() => item?.id && void submitPunch(item.id)}
         disabled={disabled}
         variant="outline"
-        className={`h-24 w-full rounded-2xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center shadow-sm ${toneClass}`}
+        className={`h-20 sm:h-24 w-full rounded-2xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center shadow-sm ${toneClass}`}
       >
         {isSaving ? (
           <Loader2 className="w-5 h-5 animate-spin mb-2" />
@@ -515,16 +512,16 @@ export default function KioskPunch() {
   const employeeName = getFullName(context.employee);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="mx-auto w-full max-w-6xl space-y-3 sm:space-y-5">
       <Card className="border-2 border-slate-300 shadow-lg">
-        <CardHeader className="pb-2">
+        <CardHeader className="hidden pb-2 sm:block">
           <CardTitle className="text-2xl">Marcar</CardTitle>
           <CardDescription>Interfaz de marcacion tipo reloj biometrico.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="rounded-xl border bg-slate-50 p-4 flex flex-wrap items-center justify-between gap-4">
+        <CardContent className="space-y-3 p-3 sm:space-y-5 sm:p-6">
+          <div className="rounded-xl border bg-slate-50 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
                 {employeePhoto && !photoFailed ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
@@ -534,7 +531,7 @@ export default function KioskPunch() {
                     onError={() => setPhotoFailed(true)}
                   />
                 ) : (
-                  <User className="w-7 h-7" />
+                  <User className="w-6 h-6 sm:w-7 sm:h-7" />
                 )}
               </div>
               <div>
@@ -542,17 +539,18 @@ export default function KioskPunch() {
                 <p className="text-sm text-slate-600">Codigo: {context.employee.employee_code || '-'}</p>
               </div>
             </div>
-            <div className="space-y-3 text-sm text-slate-700">
-              <div className="space-y-1">
+            <div className="flex w-full items-center justify-between gap-3 text-sm text-slate-700 sm:w-auto">
+              <div className="min-w-0 space-y-1">
                 <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
                 <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {activeDeviceLabel}</p>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <DeviceStatusIcon
                   active={cameraReady}
                   icon={Camera}
                   label="Camara"
                   title={cameraReady ? 'Camara activa' : cameraError || 'Camara no activa'}
+                  onClick={() => void startCamera()}
                 />
                 <DeviceStatusIcon
                   active={locationReady}
@@ -563,21 +561,22 @@ export default function KioskPunch() {
                       ? `Ubicacion activa${locationAccuracy ? `, precision ${locationAccuracy} m` : ''}`
                       : locationError || 'Ubicacion no activa'
                   }
+                  onClick={() => void refreshLocation().catch((err: any) => toast.error(err?.message || 'No se pudo obtener la ubicacion geografica.'))}
                 />
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[220px_440px_220px] gap-4 items-start">
-            <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-[220px_440px_220px] items-start">
+            <div className="order-2 space-y-3 lg:order-1">
               {renderKeyButton(1)}
               {renderKeyButton(2)}
               {renderKeyButton(3)}
               {renderKeyButton(4)}
             </div>
 
-            <div className="space-y-3">
-              <div className="h-[312px] overflow-hidden bg-black">
+            <div className="order-1 col-span-2 space-y-3 lg:order-2 lg:col-span-1">
+              <div className="h-[220px] overflow-hidden bg-black sm:h-[312px]">
                 <video
                   ref={videoRef}
                   autoPlay
@@ -587,12 +586,12 @@ export default function KioskPunch() {
                 />
               </div>
 
-              <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-24 px-5 py-3 flex items-center justify-between shadow-inner">
+              <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-20 sm:h-24 px-4 sm:px-5 py-3 flex items-center justify-between shadow-inner">
                 <div className="leading-tight">
                   <p className="text-slate-300 text-[11px] uppercase tracking-widest">Hora del sistema</p>
                   <p className="text-slate-300 text-[13px] capitalize">{formatClientDate(clockNow)}</p>
                 </div>
-                <p className="text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
+                <p className="text-3xl sm:text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
               </div>
               {lastMarkAt && (
                 <p className="text-xs text-slate-600">
@@ -609,21 +608,16 @@ export default function KioskPunch() {
                   ? `Ubicacion activa${locationAccuracy ? `, precision aproximada ${locationAccuracy} m` : ''}.`
                   : `Ubicacion no disponible: ${locationError || 'active la ubicacion antes de marcar.'}`}
               </p>
-              {locationCoords && (
-                <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-900">
-                  Coordenadas actuales: latitud {locationCoords.latitude.toFixed(8)}, longitud {locationCoords.longitude.toFixed(8)} | GeoJSON [{locationCoords.longitude.toFixed(8)}, {locationCoords.latitude.toFixed(8)}]
-                </p>
-              )}
             </div>
 
-            <div className="space-y-3">
+            <div className="order-3 space-y-3 lg:order-3">
               {renderKeyButton(5)}
               {renderKeyButton(6)}
-              <div className="h-[216px]" />
+              <div className="hidden h-[216px] lg:block" />
             </div>
           </div>
 
-          <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          <div className="hidden rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700 sm:block">
             <p><span className="font-medium">Fuente:</span> Aplicacion Web</p>
             <p><span className="font-medium">Notas:</span> marcacion manual via web</p>
           </div>

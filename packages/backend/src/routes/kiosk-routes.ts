@@ -1976,6 +1976,9 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
         id: context.employee_id,
         company_id: context.company_id,
         company_name: context.company_name,
+        employee_code: context.employee_code,
+        employee_name: context.employee_name,
+        employee_lastname: context.employee_lastname,
       },
       justification_types: justificationsResult.rows,
       attendance_events: attendanceEventsResult.rows,
@@ -3146,9 +3149,11 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
           p.company_id,
           c.company_name,
           p.shift_id AS original_shift_id,
+          base_shift.company_id AS original_shift_company_id,
           base_shift.shift_name AS original_shift_name,
           base_shift.shift_short_name AS original_shift_short_name,
           COALESCE(approved_req.requested_shift_id, p.shift_id) AS shift_id,
+          effective_shift.company_id AS shift_company_id,
           effective_shift.shift_name,
           effective_shift.shift_short_name,
           effective_shift.start_time,
@@ -3228,6 +3233,8 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
       new Set(
         shiftsResult.rows
           .map((row) => row.company_id as string | null)
+          .concat(shiftsResult.rows.map((row) => row.original_shift_company_id as string | null))
+          .concat(shiftsResult.rows.map((row) => row.shift_company_id as string | null))
           .filter((value): value is string => Boolean(value))
       )
     );
@@ -3527,13 +3534,20 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
 
     const planResult = await pool.query(
       `
-        SELECT id, company_id, shift_id
-        FROM public.employee_shift_plans
-        WHERE tenant_id = $1::uuid
-          AND employee_id = $2::uuid
-          AND shift_date = $3::date
-          AND is_active = true
-        ORDER BY created_at DESC
+        SELECT
+          p.id,
+          p.company_id,
+          p.shift_id,
+          s.company_id AS shift_company_id
+        FROM public.employee_shift_plans p
+        LEFT JOIN public.shifts s
+          ON s.id = p.shift_id
+         AND s.tenant_id = p.tenant_id
+        WHERE p.tenant_id = $1::uuid
+          AND p.employee_id = $2::uuid
+          AND p.shift_date = $3::date
+          AND p.is_active = true
+        ORDER BY p.created_at DESC
         LIMIT 1
       `,
       [context.tenant_id, context.employee_id, shiftDate]
@@ -3548,17 +3562,18 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'El turno solicitado debe ser diferente al turno actual' });
     }
 
+    const validRequestedShiftCompanyIds = Array.from(new Set([plan.company_id, plan.shift_company_id].filter(Boolean)));
     const requestedShiftResult = await pool.query(
       `
         SELECT id
         FROM public.shifts
         WHERE id = $1::uuid
           AND tenant_id = $2::uuid
-          AND company_id = $3::uuid
+          AND company_id = ANY($3::uuid[])
           AND is_active = true
         LIMIT 1
       `,
-      [requestedShiftId, context.tenant_id, plan.company_id]
+      [requestedShiftId, context.tenant_id, validRequestedShiftCompanyIds]
     );
     if (!requestedShiftResult.rows[0]) {
       return res.status(400).json({ error: 'requested_shift_id no valido para la empresa del empleado' });
@@ -3885,9 +3900,13 @@ router.patch('/request-shift-change/:id', async (req: Request, res: Response) =>
           r.shift_date,
           r.company_id,
           r.current_shift_id,
+          cs.company_id AS current_shift_company_id,
           r.request_status_id,
           UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
         FROM public.employee_shift_change_requests r
+        LEFT JOIN public.shifts cs
+          ON cs.id = r.current_shift_id
+         AND cs.tenant_id = r.tenant_id
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
         WHERE r.id = $1::uuid
@@ -3915,17 +3934,18 @@ router.patch('/request-shift-change/:id', async (req: Request, res: Response) =>
     }
 
     if (requestedShiftIdInput) {
+      const validRequestedShiftCompanyIds = Array.from(new Set([requestRow.company_id, requestRow.current_shift_company_id].filter(Boolean)));
       const requestedShiftResult = await pool.query(
         `
           SELECT id
           FROM public.shifts
           WHERE id = $1::uuid
             AND tenant_id = $2::uuid
-            AND company_id = $3::uuid
+            AND company_id = ANY($3::uuid[])
             AND is_active = true
           LIMIT 1
         `,
-        [requestedShiftIdInput, context.tenant_id, requestRow.company_id]
+        [requestedShiftIdInput, context.tenant_id, validRequestedShiftCompanyIds]
       );
       if (!requestedShiftResult.rows[0]) {
         return res.status(400).json({ error: 'requested_shift_id no valido para la empresa del empleado' });
@@ -4314,6 +4334,12 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
 
     return res.status(200).json({
       success: true,
+      employee: {
+        id: context.employee_id,
+        employee_code: context.employee_code,
+        employee_name: context.employee_name,
+        employee_lastname: context.employee_lastname,
+      },
       request_types: typesResult.rows,
       request_statuses: statusesResult.rows,
       punch_keys: punchKeysResult.rows,

@@ -104,11 +104,21 @@ function AppContent() {
   useEffect(() => {
     if (!user || isLoading) return;
     if (typeof window !== 'undefined' && window.location.pathname === '/login') {
-      window.history.replaceState({}, '', '/dashboard');
-      setCurrentPath('/dashboard');
+      let cachedRoleKey = '';
+      try {
+        const cachedProfile = localStorage.getItem('user_profile');
+        cachedRoleKey = cachedProfile ? String(JSON.parse(cachedProfile)?.role_key || '') : '';
+      } catch {
+        cachedRoleKey = '';
+      }
+      const roleKey = String(profile?.role_key || cachedRoleKey || '').trim().toUpperCase();
+      if (!roleKey) return;
+      const landingPath = roleKey === 'EMPLOYEE' ? '/dashboard/kiosk/timeclock' : '/dashboard';
+      window.history.replaceState({}, '', landingPath);
+      setCurrentPath(landingPath);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
-  }, [user, isLoading]);
+  }, [user, profile?.role_key, isLoading]);
 
   useEffect(() => {
     if (!user || isLoading || !session?.access_token) {
