@@ -992,6 +992,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ep.profile_name AS employee_profile_name,
             ec.work_group_id,
             wg.work_group_name,
+            ec.hire_date,
+            ec.termination_date,
             COALESCE(ec.work_on_holidays, false) AS work_on_holidays
           FROM public.employees e
           INNER JOIN public.employee_companies ec
@@ -1029,6 +1031,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ep.profile_name AS employee_profile_name,
             ec.work_group_id,
             wg.work_group_name,
+            ec.hire_date,
+            ec.termination_date,
             COALESCE(ec.work_on_holidays, false) AS work_on_holidays
           FROM public.user_roles ur
           INNER JOIN public.roles r
@@ -1082,17 +1086,15 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           SELECT
             ae.employee_id,
             ae.area_id,
-            CASE
-              WHEN approved_leave.id IS NOT NULL THEN 0
-              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
-              ELSE sw.work_minutes
-            END::int AS work_minutes
+            sw.work_minutes::int AS work_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
             ON p.employee_id = ae.employee_id
            AND p.tenant_id = $1::uuid
            AND p.is_active = true
            AND p.shift_date = CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -1175,17 +1177,16 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             s.shift_name,
             s.shift_short_name,
             s.start_time,
+            (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) AS shift_start_minutes,
             holiday.id AS holiday_id,
             holiday.holiday_name,
             (holiday.id IS NOT NULL) AS is_holiday,
             approved_leave.id AS approved_leave_id,
             approved_leave.justification_name AS approved_leave_name,
             (approved_leave.id IS NOT NULL) AS has_approved_leave,
-            CASE
-              WHEN approved_leave.id IS NOT NULL THEN 0
-              WHEN holiday.id IS NOT NULL AND ae.work_on_holidays = false THEN 0
-              ELSE sw.work_minutes
-            END::int AS work_minutes,
+            sw.work_minutes::int AS work_minutes,
+            sw.work_start_minutes,
+            sw.work_end_minutes,
             COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
             COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes
           FROM assigned_employees ae
@@ -1194,6 +1195,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND p.tenant_id = $1::uuid
            AND p.is_active = true
            AND p.shift_date = CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -1204,6 +1207,14 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           LEFT JOIN LATERAL (
             SELECT
               COUNT(*)::int AS active_block_count,
+              COALESCE(MIN(b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS work_start_minutes,
+              COALESCE(MAX(b.end_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS work_end_minutes,
               COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
                 WHERE b.is_break = false
                   AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
@@ -1214,10 +1225,19 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
               AND b.is_active = true
           ) cb ON true
           LEFT JOIN LATERAL (
-            SELECT CASE
-              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
-              ELSE COALESCE(s.work_minutes, 0)
-            END::int AS work_minutes
+            SELECT
+              CASE
+                WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+                ELSE COALESCE(s.work_minutes, 0)
+              END::int AS work_minutes,
+              CASE
+                WHEN sc.id IS NOT NULL THEN COALESCE(cb.work_start_minutes, (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int))
+                ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int)
+              END::int AS work_start_minutes,
+              CASE
+                WHEN sc.id IS NOT NULL THEN COALESCE(cb.work_end_minutes, (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) + COALESCE(s.work_minutes, 0))
+                ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) + COALESCE(s.work_minutes, 0)
+              END::int AS work_end_minutes
           ) sw ON true
           LEFT JOIN LATERAL (
             SELECT h.id, h.holiday_name
@@ -1264,8 +1284,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.employee_id,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS work_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS work_exit
           FROM public.employee_time_punches p
           WHERE p.tenant_id = $1::uuid
             AND p.is_active = true
@@ -1290,43 +1310,94 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           tp.work_on_holidays,
           tp.start_time,
           tp.work_minutes,
-          COALESCE(ps.first_entry, ps.first_punch) AS first_entry,
-          COALESCE(ps.last_exit, ps.last_punch) AS last_exit,
+          ps.work_entry AS first_entry,
+          ps.work_exit AS last_exit,
           CASE
-            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 'FALTA'
-            WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+            WHEN tp.has_approved_leave THEN 'JUSTIFICADO'
+            WHEN tp.is_holiday AND tp.work_on_holidays = false THEN 'NORMAL'
+            WHEN ps.work_entry IS NULL THEN 'FALTA'
+            WHEN ps.work_entry > (tp.shift_date + (tp.work_start_minutes || ' minutes')::interval + (tp.entry_grace_minutes || ' minutes')::interval)
+             AND approved_late.id IS NOT NULL
+              THEN 'JUSTIFICADO'
+            WHEN ps.work_entry > (tp.shift_date + (tp.work_start_minutes || ' minutes')::interval + (tp.entry_grace_minutes || ' minutes')::interval)
               THEN 'ATRASO'
-            WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
-             AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+            WHEN ps.work_exit IS NOT NULL
+             AND ps.work_exit < (tp.shift_date + (tp.work_end_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+             AND approved_early.id IS NOT NULL
+              THEN 'JUSTIFICADO'
+            WHEN ps.work_exit IS NOT NULL
+             AND ps.work_exit < (tp.shift_date + (tp.work_end_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
               THEN 'SALIDA_ANTICIPADA'
             ELSE 'NORMAL'
           END AS event_key
         FROM today_plans tp
         LEFT JOIN punch_summary ps
           ON ps.employee_id = tp.employee_id
+        LEFT JOIN LATERAL (
+          SELECT r.id
+          FROM public.employee_absence_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          INNER JOIN public.attendance_events ae
+            ON ae.id = r.attendance_event_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = tp.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            AND (
+              UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
+              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
+            )
+            AND ps.work_entry >= r.start_datetime
+            AND ps.work_entry <= COALESCE(r.end_datetime, r.start_datetime)
+          LIMIT 1
+        ) approved_late ON true
+        LEFT JOIN LATERAL (
+          SELECT r.id
+          FROM public.employee_absence_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          INNER JOIN public.attendance_events ae
+            ON ae.id = r.attendance_event_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = tp.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            AND (
+              UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
+              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
+            )
+            AND ps.work_exit >= r.start_datetime
+            AND ps.work_exit <= COALESCE(r.end_datetime, r.start_datetime)
+          LIMIT 1
+        ) approved_early ON true
         WHERE
           tp.work_minutes > 0
+          AND NOT (tp.is_holiday AND tp.work_on_holidays = false)
           AND (
-            COALESCE(ps.first_entry, ps.first_punch) IS NULL
-            OR COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
+            tp.has_approved_leave
+            OR ps.work_entry IS NULL
             OR (
-              COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
-              AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+              ps.work_entry > (tp.shift_date + (tp.work_start_minutes || ' minutes')::interval + (tp.entry_grace_minutes || ' minutes')::interval)
+            )
+            OR (
+              ps.work_exit IS NOT NULL
+              AND ps.work_exit < (tp.shift_date + (tp.work_end_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
             )
           )
         ORDER BY
           CASE
-            WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN 1
-            WHEN COALESCE(ps.first_entry, ps.first_punch)::time > (tp.start_time + (tp.entry_grace_minutes || ' minutes')::interval)
-              THEN 2
-            WHEN COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
-             AND COALESCE(ps.last_exit, ps.last_punch) < (tp.shift_date + tp.start_time + (tp.work_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
-              THEN 3
+            WHEN tp.has_approved_leave THEN 4
+            WHEN ps.work_entry IS NULL THEN 1
+            WHEN ps.work_entry > (tp.shift_date + (tp.work_start_minutes || ' minutes')::interval + (tp.entry_grace_minutes || ' minutes')::interval)
+              THEN CASE WHEN approved_late.id IS NOT NULL THEN 4 ELSE 2 END
+            WHEN ps.work_exit IS NOT NULL
+             AND ps.work_exit < (tp.shift_date + (tp.work_end_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+              THEN CASE WHEN approved_early.id IS NOT NULL THEN 4 ELSE 3 END
             ELSE 4
           END,
           tp.employee_lastname,
           tp.employee_name
-        LIMIT 50
       `,
       scopedParams
     );
@@ -1346,6 +1417,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             d.device_serial_number,
             d.device_location,
             d.work_location_id AS device_work_location_id,
+            dwl.work_location_short_name AS device_work_location_short_name,
             dwl.work_location_name AS device_work_location_name,
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
@@ -1389,6 +1461,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           s.shift_name,
           s.shift_short_name,
           s.start_time AS shift_start_time,
+          COALESCE(sw.break_minutes, 0) > 0 AS shift_supports_lunch,
           CASE
             WHEN p.id IS NOT NULL
              AND s.start_time IS NOT NULL
@@ -1402,7 +1475,38 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           approved_leave.id AS approved_leave_id,
           approved_leave.justification_name AS approved_leave_name,
           (approved_leave.id IS NOT NULL) AS has_approved_leave,
+          late_justification.id AS late_justification_id,
+          late_justification.justification_name AS late_justification_name,
+          late_justification.request_status_key AS late_justification_status_key,
+          late_justification.request_status_label AS late_justification_status_label,
+          early_departure_justification.id AS early_departure_justification_id,
+          early_departure_justification.justification_name AS early_departure_justification_name,
+          early_departure_justification.request_status_key AS early_departure_justification_status_key,
+          early_departure_justification.request_status_label AS early_departure_justification_status_label,
+          approved_punch_change.id AS approved_punch_change_request_id,
+          (approved_punch_change.id IS NOT NULL) AS has_approved_punch_change,
           CASE
+            WHEN l.punch_key IN (2, 3)
+             AND COALESCE(sw.break_minutes, 0) <= 0
+              THEN 'NO_APLICA'
+            WHEN l.punch_key IN (1, 5)
+             AND s.start_time IS NOT NULL
+             AND COALESCE(sw.work_minutes, 0) > 0
+             AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
+             AND late_justification.id IS NOT NULL
+             AND UPPER(COALESCE(late_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
+              THEN 'ATRASO_JUSTIFICADO'
+            WHEN l.punch_key IN (1, 5)
+             AND s.start_time IS NOT NULL
+             AND COALESCE(sw.work_minutes, 0) > 0
+             AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
+             AND late_justification.id IS NOT NULL
+              THEN 'ATRASO_JUSTIFICACION_PENDIENTE'
+            WHEN l.punch_key IN (4, 6)
+             AND s.start_time IS NOT NULL
+             AND COALESCE(sw.work_minutes, 0) > 0
+             AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
+              THEN 'SALIDA_ANTICIPADA'
             WHEN approved_leave.id IS NOT NULL
               THEN 'PERMISO_APROBADO'
             WHEN holiday.id IS NOT NULL AND COALESCE(l.work_on_holidays, false) = false
@@ -1440,7 +1544,10 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
               WHERE b.is_break = false
                 AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
-            ), 0)::int AS required_work_minutes
+            ), 0)::int AS required_work_minutes,
+            COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+              WHERE b.is_break = true
+            ), 0)::int AS constructor_break_minutes
           FROM public.shift_constructor_blocks b
           WHERE b.constructor_id = sc.id
             AND b.tenant_id = sc.tenant_id
@@ -1450,7 +1557,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           SELECT CASE
             WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
             ELSE COALESCE(s.work_minutes, 0)
-          END::int AS work_minutes
+          END::int AS work_minutes,
+          CASE
+            WHEN sc.id IS NOT NULL THEN COALESCE(cb.constructor_break_minutes, 0)
+            ELSE COALESCE(s.lunch_minutes, 0)
+          END::int AS break_minutes
         ) sw ON true
         LEFT JOIN LATERAL (
           SELECT h.id, h.holiday_name
@@ -1488,9 +1599,88 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
             AND r.start_datetime::date <= l.punch_datetime::date
             AND COALESCE(r.end_datetime, r.start_datetime)::date >= l.punch_datetime::date
-          ORDER BY r.start_datetime ASC, r.created_at ASC
+            ORDER BY r.start_datetime ASC, r.created_at ASC
           LIMIT 1
         ) approved_leave ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            r.id,
+            jt.justification_name,
+            rs.lookup_key AS request_status_key,
+            rs.lookup_label AS request_status_label
+          FROM public.employee_absence_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          INNER JOIN public.attendance_events ae
+            ON ae.id = r.attendance_event_id
+          LEFT JOIN public.justification_types jt
+            ON jt.id = r.justification_type_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = l.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'APPROVED', 'APROBADO')
+            AND (
+              UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
+              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
+            )
+            AND l.punch_datetime >= r.start_datetime
+            AND l.punch_datetime <= COALESCE(r.end_datetime, r.start_datetime)
+          ORDER BY
+            CASE WHEN UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO') THEN 0 ELSE 1 END,
+            r.created_at DESC
+          LIMIT 1
+        ) late_justification ON true
+        LEFT JOIN LATERAL (
+          SELECT
+            r.id,
+            jt.justification_name,
+            rs.lookup_key AS request_status_key,
+            rs.lookup_label AS request_status_label
+          FROM public.employee_absence_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          INNER JOIN public.attendance_events ae
+            ON ae.id = r.attendance_event_id
+          LEFT JOIN public.justification_types jt
+            ON jt.id = r.justification_type_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = l.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'APPROVED', 'APROBADO')
+            AND (
+              UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
+              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
+            )
+            AND l.punch_datetime >= r.start_datetime
+            AND l.punch_datetime <= COALESCE(r.end_datetime, r.start_datetime)
+          ORDER BY
+            CASE WHEN UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO') THEN 0 ELSE 1 END,
+            r.created_at DESC
+          LIMIT 1
+        ) early_departure_justification ON true
+        LEFT JOIN LATERAL (
+          SELECT r.id
+          FROM public.employee_time_punch_change_requests r
+          INNER JOIN public.lookup_values rs
+            ON rs.id = r.request_status_id
+          LEFT JOIN public.lookup_values rt
+            ON rt.id = r.request_type_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = l.employee_id
+            AND r.is_active = true
+            AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            AND (
+              r.target_punch_id = l.id
+              OR (
+                r.target_punch_id IS NULL
+                AND UPPER(COALESCE(rt.lookup_key, '')) = 'CREATE_PUNCH'
+                AND (r.requested_values->>'punch_key')::integer = l.punch_key
+                AND (r.requested_values->>'punch_datetime')::timestamptz = l.punch_datetime
+              )
+            )
+          ORDER BY r.approved_at DESC NULLS LAST, r.updated_at DESC NULLS LAST
+          LIMIT 1
+        ) approved_punch_change ON true
         ORDER BY l.punch_datetime DESC
       `,
       scopedParams
@@ -1504,13 +1694,16 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ae.employee_id,
             p.shift_date,
             sc.id AS constructor_id,
-            sc.tenant_id AS constructor_tenant_id
+            sc.tenant_id AS constructor_tenant_id,
+            sw.work_minutes
           FROM assigned_employees ae
           INNER JOIN public.employee_shift_plans p
             ON p.employee_id = ae.employee_id
            AND p.tenant_id = $1::uuid
            AND p.is_active = true
            AND p.shift_date = CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -1518,6 +1711,23 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ON sc.shift_id = s.id
            AND sc.tenant_id = s.tenant_id
            AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (
+                WHERE b.is_break = false
+                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+              ), 0)::int AS required_work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) cb ON true
+          LEFT JOIN LATERAL (
+            SELECT CASE
+              WHEN sc.id IS NOT NULL THEN COALESCE(cb.required_work_minutes, 0)
+              ELSE COALESCE(s.work_minutes, 0)
+            END::int AS work_minutes
+          ) sw ON true
           LEFT JOIN LATERAL (
             SELECT h.id
             FROM public.holidays h
@@ -1559,8 +1769,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         punch_summary AS (
           SELECT
             p.employee_id,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -1576,6 +1786,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             tp.shift_date,
             tp.constructor_id,
             tp.constructor_tenant_id,
+            tp.work_minutes,
             ps.first_entry AS work_start,
             ps.last_exit AS work_end
           FROM today_plans tp
@@ -1604,12 +1815,35 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND b.tenant_id = w.constructor_tenant_id
            AND b.is_active = true
            AND b.is_break = false
-           AND b.block_type IN ('NOCTURNA', 'EXTRA_50', 'EXTRA_100')
+           AND b.block_type IN ('ORDINARIA', 'NOCTURNA', 'EXTRA_50', 'EXTRA_100')
           WHERE w.work_end > (w.shift_date + (b.start_minutes || ' minutes')::interval)
             AND w.work_start < (w.shift_date + (b.end_minutes || ' minutes')::interval)
           GROUP BY b.block_type
+        ),
+        fallback_ordinary AS (
+          SELECT
+            SUM(
+              CASE
+                WHEN tp.constructor_id IS NULL
+                 AND ps.first_entry IS NOT NULL
+                 AND ps.last_exit IS NOT NULL
+                 AND ps.last_exit > ps.first_entry
+                  THEN LEAST(
+                    tp.work_minutes,
+                    GREATEST(0, EXTRACT(EPOCH FROM (ps.last_exit - ps.first_entry)) / 60)::int
+                  )
+                ELSE 0
+              END
+            )::int AS minutes
+          FROM today_plans tp
+          INNER JOIN punch_summary ps
+            ON ps.employee_id = tp.employee_id
         )
         SELECT
+          (
+            COALESCE((SELECT minutes FROM fallback_ordinary), 0)
+            + COALESCE(SUM(minutes) FILTER (WHERE block_type = 'ORDINARIA'), 0)
+          )::int AS ordinary_minutes,
           COALESCE(SUM(minutes) FILTER (WHERE block_type = 'NOCTURNA'), 0)::int AS night_minutes,
           COALESCE(SUM(minutes) FILTER (WHERE block_type = 'EXTRA_50'), 0)::int AS extra_50_minutes,
           COALESCE(SUM(minutes) FILTER (WHERE block_type = 'EXTRA_100'), 0)::int AS extra_100_minutes
@@ -1645,6 +1879,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND p.is_active = true
            AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
            AND p.shift_date <= CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -1820,6 +2056,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND p.is_active = true
            AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
            AND p.shift_date <= CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -1977,6 +2215,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND p.is_active = true
            AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
            AND p.shift_date <= CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -2140,6 +2380,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
            AND p.is_active = true
            AND p.shift_date >= CURRENT_DATE - INTERVAL '29 days'
            AND p.shift_date <= CURRENT_DATE
+           AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+           AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
           INNER JOIN public.shifts s
             ON s.id = p.shift_id
            AND s.tenant_id = p.tenant_id
@@ -2273,9 +2515,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     const trendRows = trendResult.rows || [];
     const areaAbsenceRanking = rankingResult.rows || [];
     const rankingMoreRows = rankingMoreResult.rows || [];
+    const ordinaryMinutes = Number(surchargeSummary.ordinary_minutes || 0);
     const nightMinutes = Number(surchargeSummary.night_minutes || 0);
     const extra50Minutes = Number(surchargeSummary.extra_50_minutes || 0);
     const extra100Minutes = Number(surchargeSummary.extra_100_minutes || 0);
+    const surchargeTotalMinutes = ordinaryMinutes + nightMinutes + extra50Minutes + extra100Minutes;
 
     return res.status(200).json({
       success: true,
@@ -2298,19 +2542,22 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         today_absences: todayIssues.filter((row: any) => row.event_key === 'FALTA').length,
         today_late: todayIssues.filter((row: any) => row.event_key === 'ATRASO').length,
         today_early_departures: todayIssues.filter((row: any) => row.event_key === 'SALIDA_ANTICIPADA').length,
+        today_justified: todayIssues.filter((row: any) => row.event_key === 'JUSTIFICADO').length,
         today_punches: latestPunches.length,
       },
       today_issues: todayIssues,
       latest_punches: latestPunches,
       surcharge_hours: {
+        ordinary_minutes: ordinaryMinutes,
         night_minutes: nightMinutes,
         extra_50_minutes: extra50Minutes,
         extra_100_minutes: extra100Minutes,
-        total_minutes: nightMinutes + extra50Minutes + extra100Minutes,
+        total_minutes: surchargeTotalMinutes,
+        ordinary_hours: Number((ordinaryMinutes / 60).toFixed(2)),
         night_hours: Number((nightMinutes / 60).toFixed(2)),
         extra_50_hours: Number((extra50Minutes / 60).toFixed(2)),
         extra_100_hours: Number((extra100Minutes / 60).toFixed(2)),
-        total_hours: Number(((nightMinutes + extra50Minutes + extra100Minutes) / 60).toFixed(2)),
+        total_hours: Number((surchargeTotalMinutes / 60).toFixed(2)),
       },
       trends: {
         last_7_days: trendRows.filter((row: any) => row.series_type === 'daily'),
@@ -2438,19 +2685,24 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           ec.work_location_id,
           wl.work_location_code,
           wl.work_location_name,
+          wl.work_location_short_name,
           wl.country_id AS work_location_country_id,
           wl.state_id AS work_location_state_id,
           wl.city_id AS work_location_city_id,
           ec.employee_profile_id,
           ep.profile_name AS employee_profile_name,
+          ep.profile_short_name AS employee_profile_short_name,
           ec.payroll_group_id,
           pg.payroll_group_name,
           ec.department_id,
           d.department_name,
+          d.department_short_name,
           ec.area_id,
           a.area_name,
+          a.area_short_name,
           ec.job_title_id,
           jt.job_title_name,
+          jt.job_title_short_name,
           ec.work_group_id,
           wg.work_group_name,
           ec.cost_center_id,
@@ -2526,6 +2778,19 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const employeeStateId = workLocationStateId || companyStateId;
     const employeeCityId = workLocationCityId || companyCityId;
 
+    const normalizeDateOnly = (value: any): string => {
+      if (!value) return '';
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.toISOString().slice(0, 10);
+      }
+      const raw = String(value);
+      const isoPrefix = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (isoPrefix?.[1]) return isoPrefix[1];
+      const parsed = new Date(raw);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+      return raw.slice(0, 10);
+    };
+
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth() + 1;
@@ -2533,6 +2798,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const monthEndExclusive = new Date(currentYear, currentMonth, 1);
     const monthStartIso = monthStart.toISOString().slice(0, 10);
     const monthEndExclusiveIso = monthEndExclusive.toISOString().slice(0, 10);
+    const employeeHireDateIso = normalizeDateOnly(context.hire_date) || null;
+    const employeeTerminationDateIso = normalizeDateOnly(context.termination_date) || null;
 
     const weekStart = new Date(now);
     const dayOffset = (weekStart.getDay() + 6) % 7; // lunes=0
@@ -2554,12 +2821,15 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
     const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
 
-    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult] = await Promise.all([
+    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult] = await Promise.all([
       pool.query(
         `
           SELECT
             p.id,
             p.punch_datetime,
+            p.punch_time_zone,
+            (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
+            TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
             p.punch_key,
             mv.lookup_label AS movement_label,
             p.time_punch_status_id,
@@ -2592,6 +2862,9 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           SELECT
             p.id,
             p.punch_datetime,
+            p.punch_time_zone,
+            (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
+            TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
             p.punch_key,
             mv.lookup_label AS movement_label,
             p.time_punch_status_id,
@@ -2687,9 +2960,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             AND p.is_active = true
             AND p.shift_date >= $3::date
             AND p.shift_date < $4::date
+            AND ($5::date IS NULL OR p.shift_date >= $5::date)
+            AND ($6::date IS NULL OR p.shift_date <= $6::date)
           ORDER BY p.shift_date ASC
         `,
-        [tenantId, context.user_id, monthStartIso, monthEndExclusiveIso]
+        [tenantId, context.user_id, monthStartIso, monthEndExclusiveIso, employeeHireDateIso, employeeTerminationDateIso]
       ),
       pool.query(
         `
@@ -2828,20 +3103,194 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         `,
         [tenantId, employeeId, currentYear, currentMonth]
       ),
+      pool.query(
+        `
+          WITH plans AS (
+            SELECT
+              p.employee_id,
+              p.shift_date,
+              s.id AS shift_id,
+              s.start_time,
+              COALESCE(s.work_minutes, 0)::int AS shift_work_minutes,
+              COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
+              COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes,
+              sc.id AS constructor_id,
+              sc.tenant_id AS constructor_tenant_id,
+              (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) AS shift_start_minutes
+            FROM public.employee_shift_plans p
+            INNER JOIN public.shifts s
+              ON s.id = p.shift_id
+             AND s.tenant_id = p.tenant_id
+            LEFT JOIN public.shift_constructors sc
+              ON sc.shift_id = s.id
+             AND sc.tenant_id = s.tenant_id
+             AND sc.is_active = true
+            WHERE p.tenant_id = $1::uuid
+              AND p.employee_id = $2::uuid
+              AND p.is_active = true
+              AND p.shift_date >= $3::date
+              AND p.shift_date < $4::date
+              AND ($5::date IS NULL OR p.shift_date >= $5::date)
+              AND ($6::date IS NULL OR p.shift_date <= $6::date)
+          ),
+          plan_bounds AS (
+            SELECT
+              pl.*,
+              COALESCE(
+                MIN(b.start_minutes) FILTER (
+                  WHERE b.is_break = false
+                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                pl.shift_start_minutes
+              )::int AS work_start_minutes,
+              COALESCE(
+                MAX(b.end_minutes) FILTER (
+                  WHERE b.is_break = false
+                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                pl.shift_start_minutes + pl.shift_work_minutes
+              )::int AS work_end_minutes,
+              COALESCE(
+                SUM(b.end_minutes - b.start_minutes) FILTER (
+                  WHERE b.is_break = false
+                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                pl.shift_work_minutes
+              )::int AS planned_work_minutes
+            FROM plans pl
+            LEFT JOIN public.shift_constructor_blocks b
+              ON b.constructor_id = pl.constructor_id
+             AND b.tenant_id = pl.constructor_tenant_id
+             AND b.is_active = true
+            GROUP BY
+              pl.employee_id,
+              pl.shift_date,
+              pl.shift_id,
+              pl.start_time,
+              pl.shift_work_minutes,
+              pl.entry_grace_minutes,
+              pl.exit_grace_minutes,
+              pl.constructor_id,
+              pl.constructor_tenant_id,
+              pl.shift_start_minutes
+          ),
+          punch_summary AS (
+            SELECT
+              p.employee_id,
+              p.punch_datetime::date AS shift_date,
+              MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS work_entry,
+              MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS work_exit
+            FROM public.employee_time_punches p
+            WHERE p.tenant_id = $1::uuid
+              AND p.employee_id = $2::uuid
+              AND p.is_active = true
+              AND p.punch_datetime >= $3::date
+              AND p.punch_datetime < $4::date
+            GROUP BY p.employee_id, p.punch_datetime::date
+          ),
+          daily AS (
+            SELECT
+              pb.*,
+              ps.work_entry,
+              ps.work_exit,
+              (pb.shift_date + (pb.work_start_minutes || ' minutes')::interval) AS expected_entry_at,
+              (pb.shift_date + (pb.work_end_minutes || ' minutes')::interval) AS expected_work_exit_at
+            FROM plan_bounds pb
+            LEFT JOIN punch_summary ps
+              ON ps.employee_id = pb.employee_id
+             AND ps.shift_date = pb.shift_date
+            WHERE pb.planned_work_minutes > 0
+          ),
+          block_minutes AS (
+            SELECT
+              b.block_type,
+              SUM(
+                GREATEST(
+                  0,
+                  EXTRACT(EPOCH FROM (
+                    LEAST(d.work_exit, d.shift_date + (b.end_minutes || ' minutes')::interval)
+                    - GREATEST(d.work_entry, d.shift_date + (b.start_minutes || ' minutes')::interval)
+                  )) / 60
+                )
+              )::int AS minutes
+            FROM daily d
+            INNER JOIN public.shift_constructor_blocks b
+              ON b.constructor_id = d.constructor_id
+             AND b.tenant_id = d.constructor_tenant_id
+             AND b.is_active = true
+             AND b.is_break = false
+             AND b.block_type IN ('ORDINARIA', 'NOCTURNA', 'EXTRA_50', 'EXTRA_100')
+            WHERE d.work_entry IS NOT NULL
+              AND d.work_exit IS NOT NULL
+              AND d.work_exit > d.work_entry
+              AND d.work_exit > (d.shift_date + (b.start_minutes || ' minutes')::interval)
+              AND d.work_entry < (d.shift_date + (b.end_minutes || ' minutes')::interval)
+            GROUP BY b.block_type
+          ),
+          fallback_ordinary AS (
+            SELECT
+              SUM(
+                CASE
+                  WHEN d.constructor_id IS NULL
+                   AND d.work_entry IS NOT NULL
+                   AND d.work_exit IS NOT NULL
+                   AND d.work_exit > d.work_entry
+                    THEN LEAST(
+                      d.planned_work_minutes,
+                      GREATEST(0, EXTRACT(EPOCH FROM (d.work_exit - d.work_entry)) / 60)::int
+                    )
+                  ELSE 0
+                END
+              )::int AS minutes
+            FROM daily d
+          ),
+          daily_minus AS (
+            SELECT
+              SUM(
+                CASE
+                  WHEN d.work_entry IS NOT NULL
+                   AND d.work_entry > d.expected_entry_at + (d.entry_grace_minutes || ' minutes')::interval
+                    THEN GREATEST(0, EXTRACT(EPOCH FROM (d.work_entry - d.expected_entry_at)) / 60)::int
+                  ELSE 0
+                END
+              )::int AS late_minutes,
+              SUM(
+                CASE
+                  WHEN d.work_exit IS NOT NULL
+                   AND d.work_exit < d.expected_work_exit_at - (d.exit_grace_minutes || ' minutes')::interval
+                    THEN GREATEST(0, EXTRACT(EPOCH FROM (d.expected_work_exit_at - d.work_exit)) / 60)::int
+                  ELSE 0
+                END
+              )::int AS early_departure_minutes,
+              SUM(
+                CASE
+                  WHEN d.work_entry IS NULL
+                   AND (
+                     d.shift_date < CURRENT_DATE
+                     OR now() > d.expected_work_exit_at
+                   )
+                    THEN d.planned_work_minutes
+                  ELSE 0
+                END
+              )::int AS absence_minutes
+            FROM daily d
+          )
+          SELECT
+            (
+              COALESCE((SELECT minutes FROM fallback_ordinary), 0)
+              + COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'ORDINARIA'), 0)
+            )::int AS ordinary_minutes,
+            COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'NOCTURNA'), 0)::int AS night_minutes,
+            COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'EXTRA_50'), 0)::int AS extra_50_minutes,
+            COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'EXTRA_100'), 0)::int AS extra_100_minutes,
+            COALESCE(dm.late_minutes, 0)::int AS late_minutes,
+            COALESCE(dm.absence_minutes, 0)::int AS absence_minutes,
+            COALESCE(dm.early_departure_minutes, 0)::int AS early_departure_minutes
+          FROM daily_minus dm
+        `,
+        [tenantId, employeeId, monthStartIso, monthEndExclusiveIso, employeeHireDateIso, employeeTerminationDateIso]
+      ),
     ]);
-
-    const normalizeDateOnly = (value: any): string => {
-      if (!value) return '';
-      if (value instanceof Date && !Number.isNaN(value.getTime())) {
-        return value.toISOString().slice(0, 10);
-      }
-      const raw = String(value);
-      const isoPrefix = raw.match(/^(\d{4}-\d{2}-\d{2})/);
-      if (isoPrefix?.[1]) return isoPrefix[1];
-      const parsed = new Date(raw);
-      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
-      return raw.slice(0, 10);
-    };
 
     const holidaysCurrentMonth = (holidaysRawResult.rows || []).flatMap((row: any) => {
       const dateRaw = normalizeDateOnly(row?.holiday_date);
@@ -2916,37 +3365,61 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       });
     }
 
-    const plusTokens = ['SUM', 'ADD', 'POS', 'ACRE', 'INC', 'CREDIT', 'ABON'];
-    const minusTokens = ['RES', 'SUB', 'NEG', 'DEC', 'DEBIT', 'DESCU', 'RESTA'];
+    const monthlyNovelty = monthlyNoveltyResult.rows?.[0] || {};
+    const impactRows = attendanceImpactResult.rows || [];
+    const sumImpactMinutes = (matcher: (row: any) => boolean): number =>
+      impactRows.reduce((sum: number, row: any) => {
+        if (!matcher(row)) return sum;
+        return sum + Math.abs(Number(row.total_value || 0));
+      }, 0);
+    const eventText = (row: any): string =>
+      `${row?.event_short_name || ''} ${row?.event_name || ''}`.toUpperCase();
+    const isEventMatch = (row: any, shortNames: string[], nameTokens: string[]): boolean => {
+      const text = eventText(row);
+      const shortName = String(row?.event_short_name || '').toUpperCase();
+      return shortNames.includes(shortName) || nameTokens.some((token) => text.includes(token));
+    };
 
-    const plusEvents: any[] = [];
-    const minusEvents: any[] = [];
+    const plusEvents = [
+      {
+        key: 'ordinary_minutes',
+        label: 'Jornada ordinaria',
+        total_value: Number(monthlyNovelty.ordinary_minutes || 0),
+      },
+      {
+        key: 'night_minutes',
+        label: 'Jornada nocturna',
+        total_value: Number(monthlyNovelty.night_minutes || 0),
+      },
+      {
+        key: 'extra_50_minutes',
+        label: 'Horas extras 50%',
+        total_value: Number(monthlyNovelty.extra_50_minutes || 0),
+      },
+      {
+        key: 'extra_100_minutes',
+        label: 'Horas extras 100%',
+        total_value: Number(monthlyNovelty.extra_100_minutes || 0),
+      },
+    ].map((row) => ({ ...row, total_hours: row.total_value / 60 }));
 
-    for (const row of attendanceImpactResult.rows || []) {
-      const directionKey = String(row.direction_key || '').toUpperCase();
-      const totalValue = Number(row.total_value || 0);
-      const normalized = {
-        attendance_event_id: row.attendance_event_id,
-        event_name: row.event_name,
-        event_short_name: row.event_short_name,
-        direction_key: row.direction_key,
-        direction_label: row.direction_label,
-        total_value: totalValue,
-        total_hours: totalValue / 60,
-      };
-
-      const isPlusByKey = plusTokens.some((token) => directionKey.includes(token));
-      const isMinusByKey = minusTokens.some((token) => directionKey.includes(token));
-      if (isPlusByKey || (!isMinusByKey && totalValue > 0)) {
-        plusEvents.push(normalized);
-      } else {
-        minusEvents.push({
-          ...normalized,
-          total_value: Math.abs(totalValue),
-          total_hours: Math.abs(totalValue) / 60,
-        });
-      }
-    }
+    const minusEvents = [
+      {
+        key: 'late_minutes',
+        label: 'Atrasos',
+        total_value: Number(monthlyNovelty.late_minutes || 0),
+      },
+      {
+        key: 'absence_minutes',
+        label: 'Faltas',
+        total_value: Number(monthlyNovelty.absence_minutes || 0),
+      },
+      {
+        key: 'early_departure_minutes',
+        label: 'Salidas anticipadas',
+        total_value: Number(monthlyNovelty.early_departure_minutes || 0),
+      },
+    ].map((row) => ({ ...row, total_hours: row.total_value / 60 }));
 
     const iconFromPunch = (punchKey: any, movementLabel: string): string => {
       const key = Number(punchKey);
@@ -2988,14 +3461,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     };
 
     const calendarPunches = (monthPunchesResult.rows || []).flatMap((row: any) => {
-      const dateKey = normalizeDateOnly(row?.punch_datetime);
+      const dateKey = normalizeDateOnly(row?.punch_date || row?.punch_datetime);
       if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
       const isStart = isStartPunch(row?.punch_key, String(row?.movement_label || ''));
       return [{
         date: dateKey,
         icon_key: iconFromPunch(row?.punch_key, String(row?.movement_label || '')),
         title: row?.movement_label || `Marcacion ${row?.punch_key ?? ''}`.trim(),
-        subtitle: String(row?.punch_datetime || '').slice(11, 16),
+        subtitle: row?.punch_time_local || String(row?.punch_datetime || '').slice(11, 16),
         bg_color: isStart ? '#DCFCE7' : '#FEE2E2',
         text_color: isStart ? '#166534' : '#991B1B',
         status_key: row?.time_punch_status_key || null,
@@ -3153,16 +3626,21 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       work_location_id: context.work_location_id,
       work_location_code: context.work_location_code,
       work_location_name: context.work_location_name,
+      work_location_short_name: context.work_location_short_name,
       employee_profile_id: context.employee_profile_id,
       employee_profile_name: context.employee_profile_name,
+      employee_profile_short_name: context.employee_profile_short_name,
       payroll_group_id: context.payroll_group_id,
       payroll_group_name: context.payroll_group_name,
       department_id: context.department_id,
       department_name: context.department_name,
+      department_short_name: context.department_short_name,
       area_id: context.area_id,
       area_name: context.area_name,
+      area_short_name: context.area_short_name,
       job_title_id: context.job_title_id,
       job_title_name: context.job_title_name,
+      job_title_short_name: context.job_title_short_name,
       work_group_id: context.work_group_id,
       work_group_name: context.work_group_name,
       cost_center_id: context.cost_center_id,
@@ -3172,6 +3650,12 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       hire_date: context.hire_date,
       termination_date: context.termination_date,
       work_on_holidays: context.work_on_holidays,
+      organization_route: [
+        context.work_location_name,
+        context.department_name,
+        context.area_name,
+        context.job_title_name,
+      ].filter(Boolean).join(' / '),
     };
 
     return res.status(200).json({

@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import {
   ResponsiveContainer,
   LineChart,
@@ -237,7 +238,7 @@ function EmployeeMonthlyEventsCalendar({
       <div className="grid grid-cols-7 gap-1">
         {cells.map((date, idx) => {
           if (!date) {
-            return <div key={`empty-${idx}`} className="h-20 rounded border border-dashed bg-muted/10" />;
+            return <div key={`empty-${idx}`} className="h-24 rounded border border-dashed bg-muted/10 sm:h-28" />;
           }
           const key = date.toISOString().slice(0, 10);
           const dayEvents = [...(eventMap.get(key) || [])].sort((a, b) => {
@@ -252,29 +253,29 @@ function EmployeeMonthlyEventsCalendar({
           return (
             <div
               key={key}
-              className={`h-20 rounded border p-1 ${isToday ? 'border-blue-400 bg-blue-50' : 'border-border bg-background'}`}
+              className={`h-24 rounded border p-1.5 sm:h-28 ${isToday ? 'border-blue-400 bg-blue-50' : 'border-border bg-background'}`}
             >
-              <div className="text-[10px] font-semibold">{date.getDate()}</div>
+              <div className="text-xs font-semibold">{date.getDate()}</div>
               <div className="mt-1 h-[calc(100%-14px)] flex items-center justify-center">
-                <div className="grid grid-cols-2 gap-1 place-items-center w-[46px]">
+                <div className="grid grid-cols-2 gap-1.5 place-items-center w-[60px]">
                 {visibleEvents.map((event, eventIndex) => {
                   const Icon = iconFromCalendarKey(event?.icon_key);
                   return (
                     <div
                       key={`${key}-${eventIndex}`}
-                      className="size-5 rounded flex items-center justify-center"
+                      className="size-[26px] rounded flex items-center justify-center"
                       style={{
                         backgroundColor: event?.bg_color || '#E5E7EB',
                         color: event?.text_color || '#111827',
                       }}
                       title={`${event?.title || 'Evento'}${event?.subtitle ? ` - ${event.subtitle}` : ''}`}
                     >
-                      <Icon className="size-3.5" />
+                      <Icon className="size-[18px]" />
                     </div>
                   );
                 })}
                 {overflowCount > 0 ? (
-                  <div className="size-5 rounded bg-muted text-muted-foreground text-[10px] flex items-center justify-center" title={`+${overflowCount} eventos`}>
+                  <div className="size-[26px] rounded bg-muted text-muted-foreground text-xs flex items-center justify-center" title={`+${overflowCount} eventos`}>
                     +{overflowCount}
                   </div>
                 ) : null}
@@ -306,9 +307,20 @@ function EmployeeHome({ payload }: { payload: any }) {
   const module5HolidayEventsRaw = (payload?.calendars?.modules?.module5_holidays || []) as EmployeeCalendarEvent[];
   const plusEvents = (payload?.attendance_impact?.plus_events || []) as any[];
   const minusEvents = (payload?.attendance_impact?.minus_events || []) as any[];
+  const plusDisplayEvents = plusEvents.length > 0 ? plusEvents : [
+    { key: 'ordinary_minutes', label: 'Jornada ordinaria', total_hours: 0 },
+    { key: 'night_minutes', label: 'Jornada nocturna', total_hours: 0 },
+    { key: 'extra_50_minutes', label: 'Horas extras 50%', total_hours: 0 },
+    { key: 'extra_100_minutes', label: 'Horas extras 100%', total_hours: 0 },
+  ];
+  const minusDisplayEvents = minusEvents.length > 0 ? minusEvents : [
+    { key: 'late_minutes', label: 'Atrasos', total_hours: 0 },
+    { key: 'absence_minutes', label: 'Faltas', total_hours: 0 },
+    { key: 'early_departure_minutes', label: 'Salidas anticipadas', total_hours: 0 },
+  ];
 
-  const maxPlusHours = plusEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
-  const maxMinusHours = minusEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
+  const maxPlusHours = plusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
+  const maxMinusHours = minusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
   const toDateKey = (value: string | null | undefined) => String(value || '').slice(0, 10);
   const toPunchHourLabel = (row: any): string => {
     const subtitle = String(row?.subtitle || '').trim();
@@ -402,12 +414,16 @@ function EmployeeHome({ payload }: { payload: any }) {
 
   const employeeCompanyTopItems = [
     { icon: Building2, value: employeeCompany.company_name || '-', title: 'Empresa', color: 'bg-slate-100 text-slate-700' },
-    { icon: BriefcaseBusiness, value: employeeCompany.job_title_name || '-', title: 'Cargo', color: 'bg-orange-100 text-orange-700' },
-    { icon: MapPin, value: employeeCompany.work_location_name || '-', title: 'Localizacion', color: 'bg-teal-100 text-teal-700' },
-    { icon: CalendarCheck, value: formatDate(employeeCompany.hire_date), title: 'Fecha Ingreso', color: 'bg-fuchsia-100 text-fuchsia-700' },
+    { icon: MapPin, value: employeeCompany.work_location_name || '-', title: 'Localidad', color: 'bg-teal-100 text-teal-700' },
+    { icon: Network, value: employeeCompany.department_name || '-', title: 'Departamento', color: 'bg-lime-100 text-lime-700' },
+    { icon: resolveProfileIcon('LayoutGrid', Network), value: employeeCompany.area_name || '-', title: 'Área', color: 'bg-sky-100 text-sky-700' },
     { icon: resolveProfileIcon('UserRoundCheck', BarChart3), value: employeeCompany.employee_profile_name || '-', title: 'Perfil', color: 'bg-amber-100 text-amber-700' },
-    { icon: Network, value: `${employeeCompany.department_name || '-'} / ${employeeCompany.area_name || '-'}`, title: 'Posicion Organizacional', color: 'bg-lime-100 text-lime-700' },
-    { icon: resolveProfileIcon('MapPinned', MapPin), value: `${employeeCompany.state_label || '-'} / ${employeeCompany.city_label || '-'}`, title: 'Alcance Geografico', color: 'bg-sky-100 text-sky-700' },
+    { icon: BriefcaseBusiness, value: employeeCompany.job_title_name || '-', title: 'Cargo', color: 'bg-orange-100 text-orange-700' },
+    { icon: CalendarCheck, value: formatDate(employeeCompany.hire_date), title: 'Fecha Ingreso', color: 'bg-fuchsia-100 text-fuchsia-700' },
+    { icon: resolveProfileIcon('Badge', FileText), value: employeeCompany.payroll_employee_code || employeeCompany.device_user_code || '-', title: 'Código nómina/dispositivo', color: 'bg-blue-100 text-blue-700' },
+    { icon: resolveProfileIcon('UsersRound', Users), value: employeeCompany.work_group_name || '-', title: 'Grupo de trabajo', color: 'bg-purple-100 text-purple-700' },
+    { icon: resolveProfileIcon('WalletCards', BriefcaseBusiness), value: employeeCompany.payroll_group_name || '-', title: 'Grupo de nómina', color: 'bg-stone-100 text-stone-700' },
+    { icon: resolveProfileIcon('Landmark', Building2), value: employeeCompany.cost_center_name || '-', title: 'Centro de costo', color: 'bg-zinc-100 text-zinc-700' },
     { icon: CalendarDays, value: employeeCompany.work_on_holidays ? 'Trabaja feriados: Si' : 'Trabaja feriados: No', title: 'Trabaja Feriados', color: employeeCompany.work_on_holidays ? 'bg-green-100 text-green-700' : 'bg-rose-100 text-rose-700' },
   ];
 
@@ -416,56 +432,66 @@ function EmployeeHome({ payload }: { payload: any }) {
       <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4">
         <Card className="2xl:col-span-2">
           <CardHeader>
-            <CardTitle>Modulo 1: Empleado y Empleado Empresa</CardTitle>
+            <CardTitle>Módulo 1: Datos del empleado</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 xl:grid-cols-2 gap-6 text-sm">
-            <div className="rounded-lg border p-4">
-              <p className="font-semibold">Empleado</p>
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-                {employeeTopItems.map((item, index) => {
-                  const Icon = item.icon;
-                  return (
-                    <div key={`emp-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={item.title}>
-                      <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
-                        <Icon className="size-4" />
-                      </span>
-                      <span className="text-sm truncate">{item.value}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="rounded-lg border p-4">
-              <p className="font-semibold">Empleado Empresa</p>
-              <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
-                {employeeCompanyTopItems.map((item, index) => {
-                  const Icon = item.icon;
-                  return (
-                    <div key={`empco-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={item.title}>
-                      <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
-                        <Icon className="size-4" />
-                      </span>
-                      <span className="text-sm truncate">{item.value}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+          <CardContent className="text-sm">
+            <Tabs defaultValue="personal" className="w-full">
+              <TabsList>
+                <TabsTrigger value="personal">Datos personales</TabsTrigger>
+                <TabsTrigger value="company">Datos de empresa</TabsTrigger>
+              </TabsList>
+              <TabsContent value="personal" className="mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {employeeTopItems.map((item, index) => {
+                    const Icon = item.icon;
+                    const tooltip = `${item.title}: ${String(item.value || '-')}`;
+                    return (
+                      <div key={`emp-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={tooltip}>
+                        <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
+                          <Icon className="size-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">{item.title}</p>
+                          <p className="truncate text-sm">{item.value}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
+              <TabsContent value="company" className="mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {employeeCompanyTopItems.map((item, index) => {
+                    const Icon = item.icon;
+                    const tooltip = `${item.title}: ${String(item.value || '-')}`;
+                    return (
+                      <div key={`empco-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={tooltip}>
+                        <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
+                          <Icon className="size-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-muted-foreground">{item.title}</p>
+                          <p className="truncate text-sm">{item.value}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Modulo 6: Tiempos por novedades que suman (mes)</CardTitle>
+            <CardTitle>Módulo 6: Novedades que suman</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {plusEvents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin novedades que suman en el mes.</p>
-            ) : plusEvents.map((row) => {
+            {plusDisplayEvents.map((row) => {
               const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxPlusHours) * 100));
               return (
-                <div key={row.attendance_event_id}>
+                <div key={row.key || row.attendance_event_id || row.label}>
                   <div className="flex items-center justify-between text-sm mb-1">
-                    <span>{row.event_short_name || row.event_name}</span>
+                    <span>{row.label || row.event_short_name || row.event_name}</span>
                     <span className="font-medium text-emerald-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
                   </div>
                   <div className="h-2 rounded bg-emerald-50 overflow-hidden">
@@ -479,17 +505,15 @@ function EmployeeHome({ payload }: { payload: any }) {
 
         <Card>
           <CardHeader>
-            <CardTitle>Modulo 7: Tiempos por novedades que restan (mes)</CardTitle>
+            <CardTitle>Módulo 7: Novedades que restan</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {minusEvents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin novedades que restan en el mes.</p>
-            ) : minusEvents.map((row) => {
+            {minusDisplayEvents.map((row) => {
               const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxMinusHours) * 100));
               return (
-                <div key={row.attendance_event_id}>
+                <div key={row.key || row.attendance_event_id || row.label}>
                   <div className="flex items-center justify-between text-sm mb-1">
-                    <span>{row.event_short_name || row.event_name}</span>
+                    <span>{row.label || row.event_short_name || row.event_name}</span>
                     <span className="font-medium text-rose-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
                   </div>
                   <div className="h-2 rounded bg-rose-50 overflow-hidden">
@@ -502,66 +526,70 @@ function EmployeeHome({ payload }: { payload: any }) {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>Modulo 2: Marcaciones</CardTitle>
-            <CardDescription>Iconos de entrada, salida y lunch por dia</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EmployeeMonthlyEventsCalendar
-              year={Number(calendarMonth?.year) || new Date().getFullYear()}
-              month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
-              events={module2PunchEvents}
-              emptyLabel="Sin marcaciones del mes."
-            />
-          </CardContent>
-        </Card>
+      <Card>
+        <CardContent className="pt-6">
+          <Tabs defaultValue="punches" className="w-full">
+            <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start">
+              <TabsTrigger value="punches">Módulo 2: Marcaciones</TabsTrigger>
+              <TabsTrigger value="shifts">Módulo 3: Turnos asignados</TabsTrigger>
+              <TabsTrigger value="requests">Módulo 4: Solicitudes</TabsTrigger>
+              <TabsTrigger value="holidays">Módulo 5: Feriados</TabsTrigger>
+            </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Modulo 3: Turnos asignados</CardTitle>
-            <CardDescription>Turnos del mes con icono y color por turno</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EmployeeMonthlyEventsCalendar
-              year={Number(calendarMonth?.year) || new Date().getFullYear()}
-              month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
-              events={module3ShiftEvents}
-              emptyLabel="Sin turnos asignados en el mes."
-            />
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Modulo 4: Solicitudes</CardTitle>
-            <CardDescription>Justificaciones, permisos y cambios de turno</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EmployeeMonthlyEventsCalendar
-              year={Number(calendarMonth?.year) || new Date().getFullYear()}
-              month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
-              events={module4RequestEvents}
-              emptyLabel="Sin solicitudes del mes."
-            />
-          </CardContent>
-        </Card>
+            <TabsContent value="punches" className="space-y-4">
+              <div>
+                <CardTitle>Modulo 2: Marcaciones</CardTitle>
+                <CardDescription>Iconos de entrada, salida y lunch por día</CardDescription>
+              </div>
+              <EmployeeMonthlyEventsCalendar
+                year={Number(calendarMonth?.year) || new Date().getFullYear()}
+                month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
+                events={module2PunchEvents}
+                emptyLabel="Sin marcaciones del mes."
+              />
+            </TabsContent>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Modulo 5: Feriados</CardTitle>
-            <CardDescription>Feriados aplicables, cumpleanos y reuniones</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <EmployeeMonthlyEventsCalendar
-              year={Number(calendarMonth?.year) || new Date().getFullYear()}
-              month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
-              events={module5HolidayEvents}
-              emptyLabel="Sin feriados del mes."
-            />
-          </CardContent>
-        </Card>
-      </div>
+            <TabsContent value="shifts" className="space-y-4">
+              <div>
+                <CardTitle>Modulo 3: Turnos asignados</CardTitle>
+                <CardDescription>Turnos del mes con icono y color por turno</CardDescription>
+              </div>
+              <EmployeeMonthlyEventsCalendar
+                year={Number(calendarMonth?.year) || new Date().getFullYear()}
+                month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
+                events={module3ShiftEvents}
+                emptyLabel="Sin turnos asignados en el mes."
+              />
+            </TabsContent>
+
+            <TabsContent value="requests" className="space-y-4">
+              <div>
+                <CardTitle>Modulo 4: Solicitudes</CardTitle>
+                <CardDescription>Justificaciones, permisos y cambios de turno</CardDescription>
+              </div>
+              <EmployeeMonthlyEventsCalendar
+                year={Number(calendarMonth?.year) || new Date().getFullYear()}
+                month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
+                events={module4RequestEvents}
+                emptyLabel="Sin solicitudes del mes."
+              />
+            </TabsContent>
+
+            <TabsContent value="holidays" className="space-y-4">
+              <div>
+                <CardTitle>Modulo 5: Feriados</CardTitle>
+                <CardDescription>Feriados aplicables, cumpleaños y reuniones</CardDescription>
+              </div>
+              <EmployeeMonthlyEventsCalendar
+                year={Number(calendarMonth?.year) || new Date().getFullYear()}
+                month={Number(calendarMonth?.month) || (new Date().getMonth() + 1)}
+                events={module5HolidayEvents}
+                emptyLabel="Sin feriados del mes."
+              />
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -585,11 +613,13 @@ const SUPERVISOR_ISSUE_PIE_CONFIG = [
   { eventKey: 'FALTA', label: 'Faltas', color: '#dc2626' },
   { eventKey: 'ATRASO', label: 'Atrasos', color: '#f59e0b' },
   { eventKey: 'SALIDA_ANTICIPADA', label: 'Salidas anticipadas', color: '#f97316' },
+  { eventKey: 'JUSTIFICADO', label: 'Justificados', color: '#22c55e' },
 ];
 
 const SUPERVISOR_NO_ISSUE_COLOR = '#e2e8f0';
 
 const SUPERVISOR_SURCHARGE_PIE_CONFIG = [
+  { key: 'ordinary_minutes', label: 'Jornada ordinaria', detail: 'Sin recargo', color: '#10b981' },
   { key: 'night_minutes', label: 'Jornada nocturna', detail: 'Recargo 25%', color: '#22c55e' },
   { key: 'extra_50_minutes', label: 'Horas extra 50%', detail: 'Recargo 50%', color: '#06b6d4' },
   { key: 'extra_100_minutes', label: 'Horas extra 100%', detail: 'Recargo 100%', color: '#7c3aed' },
@@ -625,47 +655,84 @@ function formatTimeOnly(value: string | null | undefined): string {
   return match?.[1] || String(value).slice(0, 5);
 }
 
+function formatPunchTimeCompact(value: string | null | undefined): string {
+  if (!value) return '--:--';
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    const hours = date.getHours();
+    const minutes = `${date.getMinutes()}`.padStart(2, '0');
+    const suffix = hours >= 12 ? 'pm' : 'am';
+    const hour12 = hours % 12 || 12;
+    return `${hour12}:${minutes}${suffix}`;
+  }
+  return formatTimeOnly(value);
+}
+
+function normalizeMovementLabel(row: any): string {
+  const raw = String(row.movement_label || '').trim();
+  const key = raw.toUpperCase();
+  if (key === 'ENTRADA A TRABAJO' || key === 'ENTRADA TRABAJO') return 'Entrada de trabajo';
+  if (key === 'SALIDA') return 'Salida de trabajo';
+  return raw || `Movimiento ${row.punch_key}`;
+}
+
+function isLateEvent(eventKey: string | null | undefined): boolean {
+  return String(eventKey || '').toUpperCase().startsWith('ATRASO');
+}
+
 function formatLatestPunchDescription(row: any): string {
+  if (String(row.event_key || '').toUpperCase() === 'NO_APLICA') {
+    return `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)} | No aplica en turno`;
+  }
+
   const movementLabel = String(row.movement_label || '').trim().toUpperCase();
   const isWorkdayExit = Number(row.punch_key) === 4 || movementLabel === 'SALIDA';
-  const shiftTimeDetail = isWorkdayExit
-    ? `Salida turno: ${row.shift_work_end_time ? formatTimeOnly(row.shift_work_end_time) : 'Sin turno'}`
-    : `Entrada turno: ${row.shift_start_time ? formatTimeOnly(row.shift_start_time) : 'Sin turno'}`;
-  const markingLocation = row.device_work_location_name || row.device_location || 'Sin localidad de marcación';
+  const shiftLabel = isWorkdayExit ? 'Salida turno' : 'Entrada turno';
+  const shiftTime = isWorkdayExit ? row.shift_work_end_time : row.shift_start_time;
+  const markingLocation = row.device_work_location_short_name || row.device_work_location_name || row.device_location || 'Sin localidad de marcación';
   const parts = [
-    `${formatTimeOnly(row.punch_datetime)} - ${row.movement_label || `Movimiento ${row.punch_key}`}`,
-    shiftTimeDetail,
-    `Localidad marcación: ${markingLocation}`,
+    `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)} (${formatTimeOnly(shiftTime)} ${shiftLabel})`,
+    markingLocation,
   ];
 
   if (row.is_holiday) {
     parts.push(`Feriado: ${row.holiday_name || 'Sí'}`, `Trabaja feriados: ${row.work_on_holidays ? 'Sí' : 'No'}`);
   }
-  if (row.has_approved_leave) {
+  if (isLateEvent(row.event_key)) {
+    const statusKey = String(row.late_justification_status_key || '').toUpperCase();
+    parts.push(['APPROVED', 'APROBADO'].includes(statusKey) ? 'Justificado' : 'Por justificar');
+  } else if (row.has_approved_leave) {
     parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
   }
 
-  return parts.join(' - ');
+  return `${parts.slice(0, 2).join(' - ')}${parts.length > 2 ? ` | ${parts.slice(2).join(' | ')}` : ''}`;
 }
 
-function eventLabel(eventKey: string | null | undefined): string {
+function eventLabel(eventKey: string | null | undefined, row?: any): string {
   const key = String(eventKey || '').toUpperCase();
   if (key === 'FALTA') return 'Falta';
-  if (key === 'ATRASO') return 'Atraso';
+  if (key.startsWith('ATRASO')) return 'Atraso';
   if (key === 'SALIDA_ANTICIPADA') return 'Salida anticipada';
   if (key === 'PERMISO_APROBADO') return 'Permiso aprobado';
   if (key === 'FERIADO') return 'Feriado';
+  if (key === 'NO_APLICA') return 'No aplica';
   if (key === 'NO_LABORAL') return 'No laboral';
-  return 'Normal';
+  return row?.has_approved_punch_change ? 'Justificada' : 'Ok';
 }
 
-function eventPillClass(eventKey: string | null | undefined): string {
+function eventPillClass(eventKey: string | null | undefined, row?: any): string {
   const key = String(eventKey || '').toUpperCase();
   if (key === 'FALTA') return 'bg-red-100 text-red-700';
-  if (key === 'ATRASO') return 'bg-amber-100 text-amber-700';
-  if (key === 'SALIDA_ANTICIPADA') return 'bg-orange-100 text-orange-700';
+  if (key === 'ATRASO_JUSTIFICADO') return 'bg-emerald-100 text-emerald-700';
+  if (key === 'ATRASO_JUSTIFICACION_PENDIENTE') return 'bg-red-100 text-red-700';
+  if (key === 'ATRASO') return 'bg-red-100 text-red-700';
+  if (key === 'SALIDA_ANTICIPADA') {
+    const statusKey = String(row?.early_departure_justification_status_key || '').toUpperCase();
+    return ['APPROVED', 'APROBADO'].includes(statusKey) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700';
+  }
   if (key === 'PERMISO_APROBADO') return 'bg-blue-100 text-blue-700';
   if (key === 'FERIADO') return 'bg-violet-100 text-violet-700';
+  if (key === 'NO_APLICA') return 'bg-slate-100 text-slate-700';
   if (key === 'NO_LABORAL') return 'bg-slate-100 text-slate-700';
   return 'bg-emerald-100 text-emerald-700';
 }
@@ -942,7 +1009,7 @@ function SupervisorSurchargePie({
         </ResponsiveContainer>
         <div className="text-center">
           <p className="text-2xl font-bold">{formatHours(totalMinutes / 60)}</p>
-          <p className="text-xs text-muted-foreground">Total horas con recargo</p>
+          <p className="text-xs text-muted-foreground">Total horas laboradas</p>
         </div>
       </div>
       <div className="grid content-center gap-2">
@@ -966,7 +1033,7 @@ function SupervisorSurchargePie({
           );
         })}
         {data.length === 0 ? (
-          <p className="rounded-lg border bg-white px-3 py-2 text-sm text-muted-foreground">Sin horas con recargo registradas hoy.</p>
+          <p className="rounded-lg border bg-white px-3 py-2 text-sm text-muted-foreground">Sin horas laboradas registradas hoy.</p>
         ) : null}
       </div>
     </div>
@@ -988,23 +1055,20 @@ function SupervisorHome({ payload }: { payload: any }) {
   const scheduledEmployeesToday = Math.max(0, Number(payload?.metrics?.today_scheduled_employees || 0));
   const issuePopulation = hasScheduledEmployeesMetric ? scheduledEmployeesToday : assignedEmployees;
   const surchargeHours = payload?.surcharge_hours || {};
-  const combinedIssueSources = useMemo(() => [...todayIssues, ...latestPunches], [todayIssues, latestPunches]);
 
   const issuePieRows = useMemo(() => (
-    SUPERVISOR_ISSUE_PIE_CONFIG.map((config) => {
-      const employeeIds = new Set(
-        combinedIssueSources
-          .filter((row: any) => String(row?.event_key || '').toUpperCase() === config.eventKey)
-          .map((row: any) => String(row?.employee_id || '').trim())
-          .filter(Boolean)
-      );
-
-      return {
-        ...config,
-        affected: employeeIds.size,
-      };
-    })
-  ), [combinedIssueSources]);
+    SUPERVISOR_ISSUE_PIE_CONFIG.map((config) => ({
+      ...config,
+      affected:
+        config.eventKey === 'FALTA'
+          ? Number(payload?.metrics?.today_absences || 0)
+          : config.eventKey === 'ATRASO'
+            ? Number(payload?.metrics?.today_late || 0)
+            : config.eventKey === 'SALIDA_ANTICIPADA'
+              ? Number(payload?.metrics?.today_early_departures || 0)
+              : Number(payload?.metrics?.today_justified || 0),
+    }))
+  ), [payload?.metrics?.today_absences, payload?.metrics?.today_late, payload?.metrics?.today_early_departures, payload?.metrics?.today_justified]);
 
   const surchargeRows = useMemo(() => (
     SUPERVISOR_SURCHARGE_PIE_CONFIG.map((config) => ({
@@ -1089,7 +1153,7 @@ function SupervisorHome({ payload }: { payload: any }) {
           <Card className="flex-1">
             <CardHeader>
               <CardTitle>Horas con recargo</CardTitle>
-              <CardDescription>Jornada nocturna y horas extras registradas contra turnos del día.</CardDescription>
+              <CardDescription>Jornada ordinaria, nocturna y horas extras registradas contra turnos del día.</CardDescription>
             </CardHeader>
             <CardContent>
               <SupervisorSurchargePie rows={surchargeRows} />
@@ -1144,8 +1208,8 @@ function SupervisorHome({ payload }: { payload: any }) {
                         {formatLatestPunchDescription(row)}
                       </p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key)}`}>
-                      {eventLabel(row.event_key)}
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-xs font-semibold ${eventPillClass(row.event_key, row)}`}>
+                      {eventLabel(row.event_key, row)}
                     </span>
                   </div>
                 ))}
@@ -1634,6 +1698,15 @@ export function Dashboard() {
   const expectedGroups = getMenuGroupsByRole(profile?.role_key);
   const systemAdminYearOptions = [systemAdminYear - 2, systemAdminYear - 1, systemAdminYear, systemAdminYear + 1]
     .filter((v, i, arr) => arr.indexOf(v) === i);
+  const employeeCompanySummary = employeePayload?.employee_company || {};
+  const employeeOrganizationRoute =
+    employeeCompanySummary.organization_route ||
+    [
+      employeeCompanySummary.work_location_name,
+      employeeCompanySummary.department_name,
+      employeeCompanySummary.area_name,
+      employeeCompanySummary.job_title_name,
+    ].filter(Boolean).join(' / ');
 
   return (
     <div className="p-5 max-w-full space-y-4">
@@ -1644,7 +1717,7 @@ export function Dashboard() {
           ? 'Analitica global de adopcion, crecimiento y uso operativo del sistema'
           : isSupervisor
             ? 'Asistencia operativa, novedades, marcaciones y tendencias del equipo asignado'
-          : 'Sistema Enterprise de Control de Asistencias y Turnos de Trabajo'}
+          : employeeOrganizationRoute || 'Ruta organizacional no configurada'}
         rightSlot={isSystemAdmin ? (
           <div className="flex items-center gap-2">
             <label className="text-xs text-muted-foreground flex items-center gap-2">
@@ -1676,14 +1749,14 @@ export function Dashboard() {
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
               <p className="text-[13px] leading-none text-muted-foreground">Empleados</p>
-              <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.assigned_employees)}</p>
+              <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.today_scheduled_employees ?? supervisorPayload?.metrics?.assigned_employees)}</p>
             </div>
             <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Areas</p>
-              <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.assigned_areas)}</p>
+              <p className="text-[13px] leading-none text-muted-foreground">Atrasos no just.</p>
+              <p className="mt-2 text-base font-semibold leading-none text-red-700">{formatMetric(supervisorPayload?.metrics?.today_late)}</p>
             </div>
             <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Faltas hoy</p>
+              <p className="text-[13px] leading-none text-muted-foreground">Faltas no just.</p>
               <p className="mt-2 text-base font-semibold leading-none text-red-700">{formatMetric(supervisorPayload?.metrics?.today_absences)}</p>
             </div>
             <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
@@ -1694,7 +1767,7 @@ export function Dashboard() {
         ) : undefined}
       />
 
-      {!isSystemAdmin && !isSupervisor ? <RoleInfo roleKey={profile?.role_key} /> : null}
+      {!isSystemAdmin && !isSupervisor && String(profile?.role_key || '').toUpperCase() !== 'EMPLOYEE' ? <RoleInfo roleKey={profile?.role_key} /> : null}
 
       {isSupervisor ? (
         supervisorError ? (
@@ -1775,35 +1848,9 @@ export function Dashboard() {
         </>
       )}
 
-      {!isSupervisor ? (
-      <Card className="border-blue-200 bg-blue-50/50">
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm font-medium text-blue-900 mb-2">Informacion del Sistema</p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-blue-800">
-                  <div><span className="font-medium">Usuario:</span> {profile?.email}</div>
-                  <div><span className="font-medium">Rol:</span> {profile?.role_name}</div>
-                  <div><span className="font-medium">Tenant:</span> {profile?.tenant_name}</div>
-                  <div><span className="font-medium">Pantallas:</span> {menuScreens.length}</div>
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm text-blue-900 font-medium mb-2">Grupos de Menu Asignados:</p>
-                <div className="flex flex-wrap gap-2">
-                  {expectedGroups.map((group) => (
-                    <span key={group} className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">{group}</span>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      ) : null}
+      <footer className="py-6 text-center text-sm text-muted-foreground">
+        Titanium Labs Corp.™ 2026 © | Todos los derechos reservados
+      </footer>
     </div>
   );
 }

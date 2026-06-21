@@ -571,8 +571,8 @@ export default function KioskRequests() {
                     const canViewReviewed = isReviewedStatus(row.request_status_key, row.request_status_label);
                     return (
                       <tr key={row.id} className="border-t align-top">
-                        <td className="px-3 py-2 break-words" title={formatDateTime(row.start_datetime)}>{formatDateOnly(row.start_datetime)}</td>
-                        <td className="px-3 py-2 break-words" title={formatDateTime(row.end_datetime)}>{formatDateOnly(row.end_datetime)}</td>
+                        <td className="px-3 py-2 break-words" title={formatDateTime(row.start_datetime)}>{formatDateTime(row.start_datetime)}</td>
+                        <td className="px-3 py-2 break-words" title={formatDateTime(row.end_datetime)}>{formatDateTime(row.end_datetime)}</td>
                         <td className="px-3 py-2 break-words">{row.justification_name || '-'}</td>
                         <td className="px-3 py-2 break-words">{row.event_name || '-'}</td>
                         <td className="px-3 py-2 break-words">

@@ -364,6 +364,14 @@ export default function KioskTimePunchRequests() {
     [popupForm.target_punch_id, recentPunches]
   );
 
+  useEffect(() => {
+    if (selectedRequestTypeKey !== 'TOGGLE_ACTIVE' || !selectedTargetPunch) return;
+    const requestedActive = !selectedTargetPunch.is_active;
+    if (popupForm.is_active !== requestedActive) {
+      setPopupForm((prev) => ({ ...prev, is_active: requestedActive }));
+    }
+  }, [selectedRequestTypeKey, selectedTargetPunch?.id, selectedTargetPunch?.is_active, popupForm.is_active]);
+
   const submitPopup = async () => {
     if (!popupForm.request_type_id) {
       toast.error('Debe seleccionar tipo de solicitud');
@@ -402,6 +410,10 @@ export default function KioskTimePunchRequests() {
     if (selectedRequestTypeKey === 'TOGGLE_ACTIVE') {
       if (!popupForm.target_punch_id) {
         toast.error('Debe seleccionar la marcacion objetivo');
+        return;
+      }
+      if (selectedTargetPunch && popupForm.is_active === selectedTargetPunch.is_active) {
+        toast.error('La solicitud debe cambiar el estado actual de la marcacion');
         return;
       }
       requestedValues.is_active = popupForm.is_active;
@@ -664,7 +676,15 @@ export default function KioskTimePunchRequests() {
                 <select
                   className="w-full rounded border border-slate-300 px-3 py-2"
                   value={popupForm.target_punch_id}
-                  onChange={(e) => setPopupForm((prev) => ({ ...prev, target_punch_id: e.target.value }))}
+                  onChange={(e) => {
+                    const targetPunchId = e.target.value;
+                    const punch = recentPunches.find((item) => item.id === targetPunchId) || null;
+                    setPopupForm((prev) => ({
+                      ...prev,
+                      target_punch_id: targetPunchId,
+                      is_active: selectedRequestTypeKey === 'TOGGLE_ACTIVE' && punch ? !punch.is_active : prev.is_active,
+                    }));
+                  }}
                 >
                   <option value="">Seleccione...</option>
                   {recentPunches.map((item) => (
@@ -742,8 +762,15 @@ export default function KioskTimePunchRequests() {
                 type="checkbox"
                 checked={popupForm.is_active}
                 onChange={(e) => setPopupForm((prev) => ({ ...prev, is_active: e.target.checked }))}
+                disabled={selectedRequestTypeKey === 'TOGGLE_ACTIVE'}
               />
-              <span className="text-slate-700">Marcacion activa</span>
+              <span className="text-slate-700">
+                {selectedRequestTypeKey === 'TOGGLE_ACTIVE'
+                  ? popupForm.is_active
+                    ? 'Solicitar activacion de la marcacion'
+                    : 'Solicitar inactivacion de la marcacion'
+                  : 'Marcacion activa'}
+              </span>
             </label>
 
             <label className="space-y-1 text-sm md:col-span-2">
