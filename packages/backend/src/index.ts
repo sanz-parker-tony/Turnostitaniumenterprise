@@ -2485,6 +2485,289 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       scopedParams
     );
 
+    const periodInterval = String(req.query.interval || '').trim() === 'last_4_weeks'
+      ? 'last_4_weeks'
+      : 'last_7_days';
+    const periodIntervalParameter = `$${scopedParams.length + 1}`;
+    const periodAnalyticsQuery = pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        bounds AS (
+          SELECT
+            ${periodIntervalParameter}::text AS interval_key,
+            CASE
+              WHEN ${periodIntervalParameter}::text = 'last_4_weeks'
+                THEN (date_trunc('week', CURRENT_DATE)::date - INTERVAL '3 weeks')::date
+              ELSE (CURRENT_DATE - INTERVAL '7 days')::date
+            END AS start_date,
+            (CURRENT_DATE - INTERVAL '1 day')::date AS end_date
+        ),
+        buckets AS (
+          SELECT
+            'daily'::text AS bucket_type,
+            series_day::date AS bucket_start,
+            series_day::date AS bucket_end,
+            CASE EXTRACT(ISODOW FROM series_day)::int
+              WHEN 1 THEN 'L' WHEN 2 THEN 'M' WHEN 3 THEN 'X' WHEN 4 THEN 'J'
+              WHEN 5 THEN 'V' WHEN 6 THEN 'S' ELSE 'D'
+            END AS label
+          FROM bounds b
+          CROSS JOIN LATERAL generate_series(b.start_date, b.end_date, INTERVAL '1 day') series_day
+          WHERE b.interval_key = 'last_7_days'
+          UNION ALL
+          SELECT
+            'weekly'::text AS bucket_type,
+            week_start::date AS bucket_start,
+            LEAST((week_start + INTERVAL '6 days')::date, b.end_date) AS bucket_end,
+            'S' || TO_CHAR(week_start, 'IW') AS label
+          FROM bounds b
+          CROSS JOIN LATERAL generate_series(
+            date_trunc('week', b.start_date)::date,
+            date_trunc('week', b.end_date)::date,
+            INTERVAL '1 week'
+          ) week_start
+          WHERE b.interval_key = 'last_4_weeks'
+        ),
+        scheduled AS (
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_name,
+            COALESCE(NULLIF(TRIM(ae.area_name), ''), 'Sin área') AS area_name,
+            p.shift_date,
+            sc.id AS constructor_id,
+            sc.tenant_id AS constructor_tenant_id,
+            sw.work_minutes,
+            sw.work_start_minutes,
+            sw.work_end_minutes,
+            COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
+            COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes
+          FROM assigned_employees ae
+          INNER JOIN public.employee_shift_plans p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+          CROSS JOIN bounds period
+          INNER JOIN public.shifts s
+            ON s.id = p.shift_id
+           AND s.tenant_id = p.tenant_id
+          LEFT JOIN public.shift_constructors sc
+            ON sc.shift_id = s.id
+           AND sc.tenant_id = s.tenant_id
+           AND sc.is_active = true
+          LEFT JOIN LATERAL (
+            SELECT
+              COALESCE(MIN(b.start_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_start_minutes,
+              COALESCE(MAX(b.end_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_end_minutes,
+              COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_minutes
+            FROM public.shift_constructor_blocks b
+            WHERE b.constructor_id = sc.id
+              AND b.tenant_id = sc.tenant_id
+              AND b.is_active = true
+          ) blocks ON true
+          LEFT JOIN LATERAL (
+            SELECT
+              CASE WHEN sc.id IS NOT NULL THEN blocks.work_minutes ELSE COALESCE(s.work_minutes, 0) END::int AS work_minutes,
+              CASE WHEN sc.id IS NOT NULL THEN COALESCE(blocks.work_start_minutes, 0) ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) END::int AS work_start_minutes,
+              CASE WHEN sc.id IS NOT NULL THEN COALESCE(blocks.work_end_minutes, 0) ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int + COALESCE(s.work_minutes, 0)) END::int AS work_end_minutes
+          ) sw ON true
+          LEFT JOIN LATERAL (
+            SELECT h.id
+            FROM public.holidays h
+            WHERE h.tenant_id = p.tenant_id
+              AND h.is_active = true
+              AND ((COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+                OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date))
+              AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+              AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+              AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+              AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+              AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+            LIMIT 1
+          ) holiday ON true
+          LEFT JOIN LATERAL (
+            SELECT r.id
+            FROM public.employee_absence_requests r
+            INNER JOIN public.lookup_values rs ON rs.id = r.request_status_id
+            WHERE r.tenant_id = p.tenant_id
+              AND r.employee_id = ae.employee_id
+              AND r.is_active = true
+              AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+              AND r.start_datetime::date <= p.shift_date
+              AND COALESCE(r.end_datetime, r.start_datetime)::date >= p.shift_date
+            LIMIT 1
+          ) approved_leave ON true
+          WHERE p.shift_date BETWEEN period.start_date AND period.end_date
+            AND (ae.hire_date IS NULL OR p.shift_date >= ae.hire_date::date)
+            AND (ae.termination_date IS NULL OR p.shift_date <= ae.termination_date::date)
+            AND approved_leave.id IS NULL
+            AND (holiday.id IS NULL OR ae.work_on_holidays = true)
+            AND sw.work_minutes > 0
+        ),
+        punches AS (
+          SELECT
+            p.employee_id,
+            p.punch_datetime::date AS shift_date,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch,
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae ON ae.employee_id = p.employee_id
+          CROSS JOIN bounds period
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND p.punch_datetime::date BETWEEN period.start_date AND period.end_date
+          GROUP BY p.employee_id, p.punch_datetime::date
+        ),
+        attendance AS (
+          SELECT
+            scheduled.*,
+            CASE
+              WHEN COALESCE(punches.first_entry, punches.first_punch) IS NULL THEN 'FALTA'
+              WHEN COALESCE(punches.first_entry, punches.first_punch) > (scheduled.shift_date + (scheduled.work_start_minutes || ' minutes')::interval + (scheduled.entry_grace_minutes || ' minutes')::interval) THEN 'ATRASO'
+              WHEN COALESCE(punches.last_exit, punches.last_punch) IS NOT NULL
+               AND COALESCE(punches.last_exit, punches.last_punch) < (scheduled.shift_date + (scheduled.work_end_minutes || ' minutes')::interval - (scheduled.exit_grace_minutes || ' minutes')::interval) THEN 'SALIDA_ANTICIPADA'
+              ELSE 'NORMAL'
+            END AS issue_key,
+            punches.first_entry,
+            punches.last_exit
+          FROM scheduled
+          LEFT JOIN punches
+            ON punches.employee_id = scheduled.employee_id
+           AND punches.shift_date = scheduled.shift_date
+        ),
+        constructor_surcharges AS (
+          SELECT
+            attendance.employee_id,
+            attendance.shift_date,
+            SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(attendance.last_exit, attendance.shift_date + (blocks.end_minutes || ' minutes')::interval) - GREATEST(attendance.first_entry, attendance.shift_date + (blocks.start_minutes || ' minutes')::interval))) / 60)) FILTER (WHERE blocks.block_type = 'ORDINARIA')::int AS ordinary_minutes,
+            SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(attendance.last_exit, attendance.shift_date + (blocks.end_minutes || ' minutes')::interval) - GREATEST(attendance.first_entry, attendance.shift_date + (blocks.start_minutes || ' minutes')::interval))) / 60)) FILTER (WHERE blocks.block_type = 'NOCTURNA')::int AS night_minutes,
+            SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(attendance.last_exit, attendance.shift_date + (blocks.end_minutes || ' minutes')::interval) - GREATEST(attendance.first_entry, attendance.shift_date + (blocks.start_minutes || ' minutes')::interval))) / 60)) FILTER (WHERE blocks.block_type = 'EXTRA_50')::int AS extra_50_minutes,
+            SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(attendance.last_exit, attendance.shift_date + (blocks.end_minutes || ' minutes')::interval) - GREATEST(attendance.first_entry, attendance.shift_date + (blocks.start_minutes || ' minutes')::interval))) / 60)) FILTER (WHERE blocks.block_type = 'EXTRA_100')::int AS extra_100_minutes
+          FROM attendance
+          INNER JOIN public.shift_constructor_blocks blocks
+            ON blocks.constructor_id = attendance.constructor_id
+           AND blocks.tenant_id = attendance.constructor_tenant_id
+           AND blocks.is_active = true
+           AND blocks.is_break = false
+           AND blocks.block_type IN ('ORDINARIA', 'NOCTURNA', 'EXTRA_50', 'EXTRA_100')
+          WHERE attendance.first_entry IS NOT NULL
+            AND attendance.last_exit IS NOT NULL
+            AND attendance.last_exit > attendance.first_entry
+            AND attendance.last_exit > attendance.shift_date + (blocks.start_minutes || ' minutes')::interval
+            AND attendance.first_entry < attendance.shift_date + (blocks.end_minutes || ' minutes')::interval
+          GROUP BY attendance.employee_id, attendance.shift_date
+        ),
+        fallback_surcharges AS (
+          SELECT
+            attendance.employee_id,
+            attendance.shift_date,
+            LEAST(attendance.work_minutes, GREATEST(0, EXTRACT(EPOCH FROM (attendance.last_exit - attendance.first_entry)) / 60)::int)::int AS ordinary_minutes,
+            0::int AS night_minutes,
+            GREATEST(0, (EXTRACT(EPOCH FROM (attendance.last_exit - attendance.first_entry)) / 60)::int - attendance.work_minutes)::int AS extra_50_minutes,
+            0::int AS extra_100_minutes
+          FROM attendance
+          WHERE attendance.constructor_id IS NULL
+            AND attendance.first_entry IS NOT NULL
+            AND attendance.last_exit IS NOT NULL
+            AND attendance.last_exit > attendance.first_entry
+        ),
+        surcharge_by_day AS (
+          SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM constructor_surcharges
+          UNION ALL
+          SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM fallback_surcharges
+        ),
+        metrics_by_day AS (
+          SELECT
+            attendance.employee_id,
+            attendance.employee_code,
+            attendance.employee_name,
+            attendance.area_name,
+            attendance.shift_date,
+            attendance.issue_key,
+            COALESCE(surcharge_by_day.ordinary_minutes, 0)::int AS ordinary_minutes,
+            COALESCE(surcharge_by_day.night_minutes, 0)::int AS night_minutes,
+            COALESCE(surcharge_by_day.extra_50_minutes, 0)::int AS extra_50_minutes,
+            COALESCE(surcharge_by_day.extra_100_minutes, 0)::int AS extra_100_minutes
+          FROM attendance
+          LEFT JOIN surcharge_by_day
+            ON surcharge_by_day.employee_id = attendance.employee_id
+           AND surcharge_by_day.shift_date = attendance.shift_date
+        ),
+        series AS (
+          SELECT
+            buckets.bucket_start,
+            buckets.bucket_end,
+            buckets.label,
+            COUNT(metrics_by_day.employee_id)::int AS planned,
+            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'ATRASO')::int AS late,
+            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'FALTA')::int AS absences,
+            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COALESCE(SUM(metrics_by_day.ordinary_minutes), 0)::int AS ordinary_minutes,
+            COALESCE(SUM(metrics_by_day.night_minutes), 0)::int AS night_minutes,
+            COALESCE(SUM(metrics_by_day.extra_50_minutes), 0)::int AS extra_50_minutes,
+            COALESCE(SUM(metrics_by_day.extra_100_minutes), 0)::int AS extra_100_minutes
+          FROM buckets
+          LEFT JOIN metrics_by_day ON metrics_by_day.shift_date BETWEEN buckets.bucket_start AND buckets.bucket_end
+          GROUP BY buckets.bucket_start, buckets.bucket_end, buckets.label
+          ORDER BY buckets.bucket_start
+        ),
+        summary AS (
+          SELECT
+            COALESCE(SUM(planned), 0)::int AS planned,
+            COALESCE(SUM(late), 0)::int AS late,
+            COALESCE(SUM(absences), 0)::int AS absences,
+            COALESCE(SUM(early_departures), 0)::int AS early_departures,
+            COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
+            COALESCE(SUM(night_minutes), 0)::int AS night_minutes,
+            COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
+            COALESCE(SUM(extra_100_minutes), 0)::int AS extra_100_minutes
+          FROM series
+        ),
+        area_rank AS (
+          SELECT
+            area_name AS name,
+            NULL::text AS employee_code,
+            COUNT(*) FILTER (WHERE issue_key = 'ATRASO')::int AS late,
+            COUNT(*) FILTER (WHERE issue_key = 'FALTA')::int AS absences,
+            COUNT(*) FILTER (WHERE issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
+            COALESCE(SUM(night_minutes), 0)::int AS night_minutes,
+            COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
+            COALESCE(SUM(extra_100_minutes), 0)::int AS extra_100_minutes
+          FROM metrics_by_day
+          GROUP BY area_name
+        ),
+        employee_rank AS (
+          SELECT
+            employee_name AS name,
+            employee_code,
+            COUNT(*) FILTER (WHERE issue_key = 'ATRASO')::int AS late,
+            COUNT(*) FILTER (WHERE issue_key = 'FALTA')::int AS absences,
+            COUNT(*) FILTER (WHERE issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
+            COALESCE(SUM(night_minutes), 0)::int AS night_minutes,
+            COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
+            COALESCE(SUM(extra_100_minutes), 0)::int AS extra_100_minutes
+          FROM metrics_by_day
+          GROUP BY employee_name, employee_code
+        )
+        SELECT json_build_object(
+          'interval', (SELECT interval_key FROM bounds),
+          'summary', (SELECT row_to_json(summary) FROM summary),
+          'series', COALESCE((SELECT json_agg(row_to_json(series) ORDER BY bucket_start) FROM series), '[]'::json),
+          'rankings', json_build_object(
+            'area_absence', COALESCE((SELECT json_agg(row_to_json(ranked)) FROM (SELECT * FROM area_rank ORDER BY late + absences + early_departures DESC, name ASC LIMIT 5) ranked), '[]'::json),
+            'employee_absence', COALESCE((SELECT json_agg(row_to_json(ranked)) FROM (SELECT * FROM employee_rank ORDER BY late + absences + early_departures DESC, name ASC LIMIT 5) ranked), '[]'::json),
+            'area_surcharge', COALESCE((SELECT json_agg(row_to_json(ranked)) FROM (SELECT * FROM area_rank ORDER BY ordinary_minutes + night_minutes + extra_50_minutes + extra_100_minutes DESC, name ASC LIMIT 5) ranked), '[]'::json),
+            'employee_surcharge', COALESCE((SELECT json_agg(row_to_json(ranked)) FROM (SELECT * FROM employee_rank ORDER BY ordinary_minutes + night_minutes + extra_50_minutes + extra_100_minutes DESC, name ASC LIMIT 5) ranked), '[]'::json)
+          )
+        ) AS analytics
+      `,
+      [...scopedParams, periodInterval]
+    );
+
     const [
       assignedCountResult,
       todayScheduledEmployeesResult,
@@ -2495,6 +2778,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       rankingResult,
       rankingMoreResult,
       employeeOvertimeResult,
+      periodAnalyticsResult,
     ] = await Promise.all([
       assignedCountQuery,
       todayScheduledEmployeesQuery,
@@ -2505,6 +2789,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
       rankingQuery,
       rankingMoreQuery,
       employeeOvertimeQuery,
+      periodAnalyticsQuery,
     ]);
 
     const base = assignedCountResult.rows[0] || {};
@@ -2515,6 +2800,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     const trendRows = trendResult.rows || [];
     const areaAbsenceRanking = rankingResult.rows || [];
     const rankingMoreRows = rankingMoreResult.rows || [];
+    const periodAnalytics = periodAnalyticsResult.rows?.[0]?.analytics || {
+      interval: periodInterval,
+      summary: {},
+      series: [],
+      rankings: {},
+    };
     const ordinaryMinutes = Number(surchargeSummary.ordinary_minutes || 0);
     const nightMinutes = Number(surchargeSummary.night_minutes || 0);
     const extra50Minutes = Number(surchargeSummary.extra_50_minutes || 0);
@@ -2559,6 +2850,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         extra_100_hours: Number((extra100Minutes / 60).toFixed(2)),
         total_hours: Number((surchargeTotalMinutes / 60).toFixed(2)),
       },
+      period_analytics: periodAnalytics,
       trends: {
         last_7_days: trendRows.filter((row: any) => row.series_type === 'daily'),
         last_4_weeks: trendRows.filter((row: any) => row.series_type === 'weekly'),

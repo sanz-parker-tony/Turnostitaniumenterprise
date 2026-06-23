@@ -62,8 +62,6 @@ import {
   Network,
   CalendarDays,
   CircleDot,
-  Activity,
-  TrendingDown,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import SystemAdminPageHeader from './shared/SystemAdminPageHeader';
@@ -764,116 +762,14 @@ function getDefaultLatestPunchesFromTime(): string {
   return '17:00';
 }
 
-function getWeekdayInitial(value: unknown): string {
-  const raw = String(value || '');
-  const date = raw ? new Date(raw) : null;
-  if (!date || Number.isNaN(date.getTime())) return '';
-  const labels = ['D', 'L', 'M', 'X', 'J', 'V', 'S'];
-  return labels[date.getDay()] || '';
-}
-
-function withTrendLabels(rows: any[], type: 'daily' | 'weekly'): any[] {
-  return rows.map((row, index) => ({
-    ...row,
-    axis_label: type === 'daily'
-      ? getWeekdayInitial(row.bucket_start) || row.label || ''
-      : `W${index + 1}`,
-  }));
-}
-
-function SupervisorMiniLine({
-  data,
-  dataKey,
-  stroke,
-  unitLabel,
-  axisLabel,
-}: {
-  data: any[];
-  dataKey: string;
-  stroke: string;
-  unitLabel: string;
-  axisLabel: string;
-}) {
-  const isPercent = dataKey === 'absence_rate';
-  return (
-    <div className="mt-2">
-      <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
-        <span>{unitLabel}</span>
-        <span>{data.length > 0 ? axisLabel : 'Sin datos'}</span>
-      </div>
-      <ResponsiveContainer width="100%" height={72}>
-      <LineChart data={data} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
-        <XAxis
-          dataKey="axis_label"
-          axisLine={false}
-          tickLine={false}
-          tick={{ fontSize: 10, fill: '#64748b' }}
-          interval={0}
-          height={20}
-        />
-        <YAxis
-          axisLine={false}
-          tickLine={false}
-          tick={{ fontSize: 9, fill: '#64748b' }}
-          width={30}
-          domain={isPercent ? [0, 100] : [0, 'auto']}
-          tickFormatter={(value: unknown) => isPercent ? `${Number(value)}%` : `${Number(value)}h`}
-          tickCount={3}
-        />
-        <Line type="monotone" dataKey={dataKey} stroke={stroke} strokeWidth={2} dot={false} />
-        <RechartsTooltip
-          formatter={(value: unknown) => [dataKey === 'absence_rate' ? formatPercent(value) : formatHours(value), unitLabel]}
-          labelFormatter={(_, items) => {
-            const payload = items?.[0]?.payload;
-            return payload?.label || payload?.bucket_start || 'Periodo';
-          }}
-        />
-      </LineChart>
-    </ResponsiveContainer>
-    </div>
-  );
-}
-
-function RankingList({
-  title,
-  rows,
-  valueKey,
-  valueFormatter,
-}: {
-  title: string;
-  rows: any[];
-  valueKey: string;
-  valueFormatter: (value: unknown) => string;
-}) {
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin datos para el periodo.</p>
-        ) : rows.slice(0, 5).map((row, index) => (
-          <div key={`${title}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
-            <div className="min-w-0">
-              <p className="truncate font-medium">{row.name || 'Sin nombre'}</p>
-              {row.employee_code ? <p className="text-xs text-muted-foreground">{row.employee_code}</p> : null}
-            </div>
-            <span className="shrink-0 font-semibold">{valueFormatter(row[valueKey])}</span>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
 function SupervisorIssuesPie({
   rows,
   total,
+  populationLabel = 'empleados con turno',
 }: {
   rows: Array<{ eventKey: string; label: string; color: string; affected: number }>;
   total: number;
+  populationLabel?: string;
 }) {
   const safeTotal = Math.max(0, Math.trunc(Number(total || 0)));
   const totalAffected = rows.reduce((sum, row) => sum + Math.max(0, Math.trunc(Number(row.affected || 0))), 0);
@@ -919,7 +815,7 @@ function SupervisorIssuesPie({
             </Pie>
             <RechartsTooltip
               formatter={(value: unknown, name: unknown, item: any) => [
-                `${formatMetric(value)} personas (${formatPercent(item?.payload?.percent)})`,
+                `${formatMetric(value)} (${formatPercent(item?.payload?.percent)})`,
                 String(name),
               ]}
             />
@@ -927,7 +823,7 @@ function SupervisorIssuesPie({
         </ResponsiveContainer>
         <div className="text-center">
           <p className="text-2xl font-bold">{formatPercent(safeTotal > 0 ? (totalAffected / safeTotal) * 100 : 0)}</p>
-          <p className="text-xs text-muted-foreground">{formatMetric(totalAffected)} incidencias / {formatMetric(safeTotal)} empleados con turno</p>
+          <p className="text-xs text-muted-foreground">{formatMetric(totalAffected)} incidencias / {formatMetric(safeTotal)} {populationLabel}</p>
         </div>
       </div>
       <div className="grid content-center gap-2">
@@ -1040,16 +936,131 @@ function SupervisorSurchargePie({
   );
 }
 
-function SupervisorHome({ payload }: { payload: any }) {
+function SupervisorPeriodLineChart({
+  title,
+  description,
+  rows,
+  lines,
+  valueFormatter,
+}: {
+  title: string;
+  description: string;
+  rows: any[];
+  lines: Array<{ key: string; label: string; color: string }>;
+  valueFormatter: (value: unknown) => string;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="h-[280px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={rows} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#e2e8f0" />
+            <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} interval={0} />
+            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} allowDecimals={false} />
+            <RechartsTooltip
+              formatter={(value: unknown, name: unknown) => [valueFormatter(value), String(name)]}
+              labelFormatter={(label) => `Periodo: ${label}`}
+            />
+            <Legend />
+            {lines.map((line) => (
+              <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.color} strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SupervisorBreakdownRanking({
+  title,
+  rows,
+  segments,
+  valueFormatter,
+}: {
+  title: string;
+  rows: any[];
+  segments: Array<{ key: string; label: string; color: string }>;
+  valueFormatter: (value: unknown) => string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin datos para el periodo.</p>
+        ) : rows.slice(0, 5).map((row, index) => {
+          const values = segments.map((segment) => ({
+            ...segment,
+            value: Math.max(0, Number(row?.[segment.key] || 0)),
+          }));
+          const total = values.reduce((sum, segment) => sum + segment.value, 0);
+
+          return (
+            <div key={`${title}-${index}`} className="rounded-lg border bg-white p-2.5">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{row.name || 'Sin nombre'}</p>
+                  {row.employee_code ? <p className="text-xs text-muted-foreground">{row.employee_code}</p> : null}
+                </div>
+                <span className="shrink-0 text-xs font-semibold text-slate-600">{valueFormatter(total)}</span>
+              </div>
+              <div className="flex h-7 overflow-hidden rounded-md bg-slate-100" aria-label={`Distribución de ${row.name || 'ranking'}`}>
+                {values.filter((segment) => segment.value > 0).map((segment) => {
+                  const percent = total > 0 ? (segment.value / total) * 100 : 0;
+                  return (
+                    <div
+                      key={segment.key}
+                      className="min-w-0 cursor-help transition-opacity hover:opacity-80"
+                      style={{ backgroundColor: segment.color, width: `${percent}%` }}
+                      title={`${segment.label}: ${valueFormatter(segment.value)} (${formatPercent(percent)})`}
+                      aria-label={`${segment.label}: ${valueFormatter(segment.value)}, ${formatPercent(percent)}`}
+                    />
+                  );
+                })}
+                {total === 0 ? <div className="w-full bg-slate-100" title="Sin valores para el periodo" /> : null}
+              </div>
+            </div>
+          );
+        })}
+        {rows.length > 0 ? (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 border-t pt-3 text-xs text-muted-foreground">
+            {segments.map((segment) => (
+              <div key={segment.key} className="flex items-center gap-1.5">
+                <span className="size-2.5 rounded-sm" style={{ backgroundColor: segment.color }} />
+                <span>{segment.label}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SupervisorHome({
+  payload,
+  periodInterval,
+  onPeriodIntervalChange,
+}: {
+  payload: any;
+  periodInterval: 'last_7_days' | 'last_4_weeks';
+  onPeriodIntervalChange: (interval: 'last_7_days' | 'last_4_weeks') => void;
+}) {
   const [latestPunchesFromTime, setLatestPunchesFromTime] = useState(() => getDefaultLatestPunchesFromTime());
   const [latestPunchesLimit, setLatestPunchesLimit] = useState(10);
   const todayIssues = Array.isArray(payload?.today_issues) ? payload.today_issues : [];
   const latestPunches = Array.isArray(payload?.latest_punches) ? payload.latest_punches : [];
-  const last7Days = Array.isArray(payload?.trends?.last_7_days) ? payload.trends.last_7_days : [];
-  const last4Weeks = Array.isArray(payload?.trends?.last_4_weeks) ? payload.trends.last_4_weeks : [];
-  const last7DaysChart = withTrendLabels(last7Days, 'daily');
-  const last4WeeksChart = withTrendLabels(last4Weeks, 'weekly');
-  const rankings = payload?.rankings || {};
+  const periodAnalytics = payload?.period_analytics || {};
+  const periodSummary = periodAnalytics?.summary || {};
+  const periodSeries = Array.isArray(periodAnalytics?.series) ? periodAnalytics.series : [];
+  const periodRankings = periodAnalytics?.rankings || {};
   const assignedEmployees = Math.max(0, Number(payload?.metrics?.assigned_employees || 0));
   const hasScheduledEmployeesMetric = payload?.metrics?.today_scheduled_employees !== undefined && payload?.metrics?.today_scheduled_employees !== null;
   const scheduledEmployeesToday = Math.max(0, Number(payload?.metrics?.today_scheduled_employees || 0));
@@ -1089,52 +1100,33 @@ function SupervisorHome({ payload }: { payload: any }) {
 
   const visibleLatestPunches = filteredLatestPunches.slice(0, latestPunchesLimit);
 
-  const kpis = [
-    {
-      title: 'Ausentismo 7 dias',
-      value: formatPercent(last7Days[last7Days.length - 1]?.absence_rate),
-      detail: `${formatMetric(last7Days.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
-      data: last7DaysChart,
-      dataKey: 'absence_rate',
-      unitLabel: '% ausentismo',
-      axisLabel: 'Dias',
-      stroke: '#dc2626',
-      icon: UserX,
-    },
-    {
-      title: 'Ausentismo 4 semanas',
-      value: formatPercent(last4Weeks[last4Weeks.length - 1]?.absence_rate),
-      detail: `${formatMetric(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.absences || 0), 0))} faltas`,
-      data: last4WeeksChart,
-      dataKey: 'absence_rate',
-      unitLabel: '% ausentismo',
-      axisLabel: 'Semanas',
-      stroke: '#f97316',
-      icon: TrendingDown,
-    },
-    {
-      title: 'Horas extra 7 dias',
-      value: formatHours(last7Days.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
-      detail: 'Acumulado semanal',
-      data: last7DaysChart,
-      dataKey: 'overtime_hours',
-      unitLabel: 'horas extra',
-      axisLabel: 'Dias',
-      stroke: '#2563eb',
-      icon: Clock3,
-    },
-    {
-      title: 'Horas extra 4 semanas',
-      value: formatHours(last4Weeks.reduce((sum: number, row: any) => sum + Number(row.overtime_hours || 0), 0)),
-      detail: 'Acumulado mensual',
-      data: last4WeeksChart,
-      dataKey: 'overtime_hours',
-      unitLabel: 'horas extra',
-      axisLabel: 'Semanas',
-      stroke: '#7c3aed',
-      icon: Activity,
-    },
-  ];
+  const periodIssueRows = SUPERVISOR_ISSUE_PIE_CONFIG.map((config) => ({
+    ...config,
+    affected:
+      config.eventKey === 'FALTA'
+        ? Number(periodSummary?.absences || 0)
+        : config.eventKey === 'ATRASO'
+          ? Number(periodSummary?.late || 0)
+          : Number(periodSummary?.early_departures || 0),
+  }));
+  const periodSurchargeRows = SUPERVISOR_SURCHARGE_PIE_CONFIG.map((config) => ({
+    ...config,
+    minutes: Math.max(0, Number(periodSummary?.[config.key] || 0)),
+  }));
+  const intervalLabel = periodInterval === 'last_4_weeks' ? 'Últimas 4 semanas' : 'Últimos 7 días';
+  const intervalDescription = periodInterval === 'last_4_weeks'
+    ? 'Semanas ISO acumuladas hasta el día anterior.'
+    : 'Desde hace siete días hasta el día anterior.';
+  const issueLines = SUPERVISOR_ISSUE_PIE_CONFIG.map((config) => ({
+    key: config.eventKey === 'FALTA' ? 'absences' : config.eventKey === 'ATRASO' ? 'late' : 'early_departures',
+    label: config.label,
+    color: config.color,
+  }));
+  const surchargeLines = SUPERVISOR_SURCHARGE_PIE_CONFIG.map((config) => ({
+    key: config.key,
+    label: config.label,
+    color: config.color,
+  }));
 
   return (
     <div className="space-y-4">
@@ -1224,30 +1216,93 @@ function SupervisorHome({ payload }: { payload: any }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <Card key={kpi.title}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{kpi.title}</CardTitle>
-                <Icon className="size-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{kpi.value}</div>
-                <p className="text-xs text-muted-foreground">{kpi.detail}</p>
-                <SupervisorMiniLine data={kpi.data} dataKey={kpi.dataKey} stroke={kpi.stroke} unitLabel={kpi.unitLabel} axisLabel={kpi.axisLabel} />
-              </CardContent>
-            </Card>
-          );
-        })}
+      <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border bg-white px-4 py-3">
+        <div>
+          <p className="text-sm font-semibold">Análisis histórico</p>
+          <p className="text-xs text-muted-foreground">{intervalDescription}</p>
+        </div>
+        <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+          Intervalo
+          <select
+            value={periodInterval}
+            onChange={(event) => onPeriodIntervalChange(event.target.value as 'last_7_days' | 'last_4_weeks')}
+            className="h-9 min-w-48 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+          >
+            <option value="last_7_days">Últimos 7 días</option>
+            <option value="last_4_weeks">Últimas 4 semanas</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
+            <CardDescription>{intervalLabel}: distribución sobre turnos planificados.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SupervisorIssuesPie rows={periodIssueRows} total={Number(periodSummary?.planned || 0)} populationLabel="turnos planificados" />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Horas con recargo</CardTitle>
+            <CardDescription>{intervalLabel}: jornada ordinaria, nocturna y horas extra registradas.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SupervisorSurchargePie rows={periodSurchargeRows} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <SupervisorPeriodLineChart
+          title="Ausentismo"
+          description={`${intervalLabel}: atrasos, faltas y salidas anticipadas.`}
+          rows={periodSeries}
+          lines={issueLines}
+          valueFormatter={formatMetric}
+        />
+        <SupervisorPeriodLineChart
+          title="Horas con recargo"
+          description={`${intervalLabel}: 0%, 25%, 50% y 100% de recargo.`}
+          rows={periodSeries.map((row: any) => ({
+            ...row,
+            ordinary_minutes: Number(row?.ordinary_minutes || 0) / 60,
+            night_minutes: Number(row?.night_minutes || 0) / 60,
+            extra_50_minutes: Number(row?.extra_50_minutes || 0) / 60,
+            extra_100_minutes: Number(row?.extra_100_minutes || 0) / 60,
+          }))}
+          lines={surchargeLines}
+          valueFormatter={formatHours}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        <RankingList title="Areas con mayor ausentismo" rows={rankings.area_absence || []} valueKey="absence_rate" valueFormatter={formatPercent} />
-        <RankingList title="Areas con mas horas extra" rows={rankings.area_overtime || []} valueKey="overtime_hours" valueFormatter={formatHours} />
-        <RankingList title="Empleados con mayor ausentismo" rows={rankings.employee_absence || []} valueKey="absences" valueFormatter={(v) => `${formatMetric(v)} faltas`} />
-        <RankingList title="Empleados con mas horas extra" rows={rankings.employee_overtime || []} valueKey="overtime_hours" valueFormatter={formatHours} />
+        <SupervisorBreakdownRanking
+          title="Áreas con mayor ausentismo"
+          rows={periodRankings.area_absence || []}
+          segments={issueLines}
+          valueFormatter={formatMetric}
+        />
+        <SupervisorBreakdownRanking
+          title="Áreas con más recargo"
+          rows={periodRankings.area_surcharge || []}
+          segments={surchargeLines}
+          valueFormatter={(value) => formatHours(Number(value || 0) / 60)}
+        />
+        <SupervisorBreakdownRanking
+          title="Empleados con mayor ausentismo"
+          rows={periodRankings.employee_absence || []}
+          segments={issueLines}
+          valueFormatter={formatMetric}
+        />
+        <SupervisorBreakdownRanking
+          title="Empleados con más recargo"
+          rows={periodRankings.employee_surcharge || []}
+          segments={surchargeLines}
+          valueFormatter={(value) => formatHours(Number(value || 0) / 60)}
+        />
       </div>
     </div>
   );
@@ -1465,6 +1520,7 @@ export function Dashboard() {
   const [supervisorLoading, setSupervisorLoading] = useState(false);
   const [supervisorError, setSupervisorError] = useState<string | null>(null);
   const [supervisorPayload, setSupervisorPayload] = useState<any>(null);
+  const [supervisorPeriodInterval, setSupervisorPeriodInterval] = useState<'last_7_days' | 'last_4_weeks'>('last_7_days');
   const [systemAdminYear, setSystemAdminYear] = useState(new Date().getFullYear());
   const [systemAdminWeekStep, setSystemAdminWeekStep] = useState(1);
 
@@ -1553,7 +1609,7 @@ export function Dashboard() {
           setSupervisorLoading(true);
           setSupervisorError(null);
         }
-        const resp = await fetch(buildApiUrl('/dashboard/supervisor-summary'), {
+        const resp = await fetch(buildApiUrl(`/dashboard/supervisor-summary?interval=${supervisorPeriodInterval}`), {
           headers: { Authorization: `Bearer ${session.access_token}` },
           signal: summaryAbortController.signal,
         });
@@ -1611,7 +1667,7 @@ export function Dashboard() {
       eventsAbortController?.abort();
       if (retryTimerId !== undefined) window.clearTimeout(retryTimerId);
     };
-  }, [isSupervisor, session?.access_token]);
+  }, [isSupervisor, session?.access_token, supervisorPeriodInterval]);
 
   const defaultStats = [
     {
@@ -1773,7 +1829,11 @@ export function Dashboard() {
         supervisorError ? (
           <Card><CardContent className="pt-6"><p className="text-sm text-red-600">{supervisorError}</p></CardContent></Card>
         ) : (
-          <SupervisorHome payload={supervisorPayload} />
+          <SupervisorHome
+            payload={supervisorPayload}
+            periodInterval={supervisorPeriodInterval}
+            onPeriodIntervalChange={setSupervisorPeriodInterval}
+          />
         )
       ) : isEmployee ? (
         employeeLoading ? (

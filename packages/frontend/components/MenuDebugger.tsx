@@ -1,6 +1,6 @@
 /**
  * MenuDebugger - Herramienta de debugging para verificar menú dinámico
- * Solo visible en desarrollo o para SYSTEM_ADMIN
+ * Solo visible para SYSTEM_ADMIN
  * Reorganizado por menu_group_id y ordenado por roles
  */
 
@@ -29,8 +29,9 @@ export function MenuDebugger() {
   const { menuScreens, isLoading } = usePermissions();
   const [isOpen, setIsOpen] = useState(false);
 
-  // Solo mostrar para SYSTEM_ADMIN o en desarrollo
-  const shouldShow = profile?.role_key === 'SYSTEM_ADMIN' || process.env.NODE_ENV === 'development';
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const roleName = String(profile?.role_name || '').trim().toUpperCase();
+  const shouldShow = roleKey === 'SYSTEM_ADMIN' && roleName !== 'SUPERVISOR';
 
   if (!shouldShow) return null;
 
