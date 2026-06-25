@@ -207,8 +207,32 @@ function toIsoDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function getGuayaquilNow(): { dateIso: string; minutes: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Guayaquil',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const valueByType = new Map(parts.map((part) => [part.type, part.value]));
+  const hour = Number(valueByType.get('hour'));
+  const minute = Number(valueByType.get('minute'));
+
+  return {
+    dateIso: `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}`,
+    minutes: hour * 60 + minute,
+  };
+}
+
 function isFutureDateIso(dateIso: string): boolean {
-  return dateIso > toIsoDate(new Date());
+  return dateIso > getGuayaquilNow().dateIso;
+}
+
+function isCurrentOrFutureDateIso(dateIso: string): boolean {
+  return dateIso >= getGuayaquilNow().dateIso;
 }
 
 function startOfWeek(date: Date): Date {
@@ -348,6 +372,7 @@ export function EmployeeShiftPlanningManagement() {
   const [filterCompanies, setFilterCompanies] = useState<CompanyFilterRow[]>([]);
   const [plans, setPlans] = useState<ShiftPlanRow[]>([]);
   const [changes, setChanges] = useState<Record<string, DayCellChange>>({});
+  const [cycleIndexes, setCycleIndexes] = useState<Record<string, number>>({});
 
   const [companyFilter, setCompanyFilter] = useState('ALL');
   const [workLocationFilter, setWorkLocationFilter] = useState('ALL');
@@ -532,18 +557,6 @@ export function EmployeeShiftPlanningManagement() {
     });
   }, [employees, employeeCombinations, companyFilter, workLocationFilter, departmentFilter, areaFilter, employeeProfileFilter, workGroupFilter]);
 
-  const shiftOptionsByCompany = useMemo(() => {
-    const map = new Map<string, ShiftRow[]>();
-    shifts.forEach((shift) => {
-      const key = shift.company_id || 'GLOBAL';
-      const list = map.get(key) || [];
-      list.push(shift);
-      map.set(key, list);
-    });
-    map.forEach((list) => list.sort((a, b) => classifyShift(a).localeCompare(classifyShift(b)) || a.shift_name.localeCompare(b.shift_name)));
-    return map;
-  }, [shifts]);
-
   const activePattern = useMemo(() => {
     return workPatterns.find((pattern) => pattern.id === activePatternId) || null;
   }, [workPatterns, activePatternId]);
@@ -663,11 +676,13 @@ export function EmployeeShiftPlanningManagement() {
     if (rangeDays.length === 0) {
       setPlans([]);
       setChanges({});
+      setCycleIndexes({});
       setLegendShiftIds([]);
       setHasAppliedParameters(false);
       setError('Rango de fechas inválido. Ajuste Fecha Inicio y Fecha Fin.');
       return;
     }
+    setCycleIndexes({});
     void loadAll();
   }, [rangeFrom, rangeTo, rangeDays.length]);
 
@@ -734,23 +749,37 @@ export function EmployeeShiftPlanningManagement() {
     return classifyShift(shift);
   };
 
-  const buildCycleOptions = (employee: EmployeeRow): (string | null)[] => {
-    const options = employee.company_id
-      ? (shiftOptionsByCompany.get(employee.company_id) || shifts)
-      : shifts;
+  const isShiftAssignableOnDate = (shift: ShiftRow, dateIso: string): boolean => {
+    const now = getGuayaquilNow();
+    if (dateIso > now.dateIso) return true;
+    if (dateIso < now.dateIso) return false;
 
-    const sortedByKind = [...options].sort((a, b) => {
-      const aKind = classifyShift(a);
-      const bKind = classifyShift(b);
-      return aKind.localeCompare(bKind) || a.shift_name.localeCompare(b.shift_name);
-    });
+    const shiftStart = parseTimeToMinutes(shift.start_time);
+    return shiftStart !== null && shiftStart >= now.minutes + 120;
+  };
 
-    return [null, ...sortedByKind.map((item) => item.id)];
+  const buildCycleOptions = (dateIso: string): string[] => {
+    return shifts
+      .filter((shift) => isShiftAssignableOnDate(shift, dateIso))
+      .sort((a, b) => {
+        const aStart = parseTimeToMinutes(a.start_time) ?? Number.MAX_SAFE_INTEGER;
+        const bStart = parseTimeToMinutes(b.start_time) ?? Number.MAX_SAFE_INTEGER;
+        return aStart - bStart || a.shift_name.localeCompare(b.shift_name);
+      })
+      .map((shift) => shift.id);
+  };
+
+  const canAssignShiftOnDate = (shiftId: string | null, dateIso: string): boolean => {
+    if (!isCurrentOrFutureDateIso(dateIso)) return false;
+    if (dateIso > getGuayaquilNow().dateIso) return true;
+    if (!shiftId) return false;
+
+    const shift = shiftsById.get(shiftId);
+    return Boolean(shift && isShiftAssignableOnDate(shift, dateIso));
   };
 
   const setCellShift = (employee: EmployeeRow, dateIso: string, shiftId: string | null) => {
-    if (confirmed) return;
-    if (!isFutureDateIso(dateIso)) return;
+    if (confirmed || !canAssignShiftOnDate(shiftId, dateIso)) return;
 
     const plan = plansByKey.get(keyOf(employee.id, dateIso));
     const originalShiftId = plan?.shift_id || null;
@@ -765,11 +794,13 @@ export function EmployeeShiftPlanningManagement() {
     }
 
     let shiftTypeId: string | null = null;
+    let companyId = employee.company_id;
     if (shiftId) {
       const shift = shiftsById.get(shiftId);
       if (shift) {
         const kind = classifyShift(shift);
         shiftTypeId = shiftTypeIdByKind[kind] || null;
+        companyId = shift.company_id;
       }
     }
 
@@ -780,17 +811,22 @@ export function EmployeeShiftPlanningManagement() {
         shift_date: dateIso,
         shift_id: shiftId,
         shift_type_id: shiftTypeId,
-        company_id: employee.company_id,
+        company_id: companyId,
       },
     }));
   };
 
   const cycleCell = (employee: EmployeeRow, dateIso: string) => {
-    const options = buildCycleOptions(employee);
+    const options = buildCycleOptions(dateIso);
+    if (options.length === 0) return;
+
+    const cellKey = keyOf(employee.id, dateIso);
     const current = cellShiftId(employee, dateIso);
-    const index = options.findIndex((value) => value === current);
-    const next = options[(index + 1) % options.length];
-    setCellShift(employee, dateIso, next || null);
+    const currentIndex = cycleIndexes[cellKey] ?? options.findIndex((value) => value === current);
+    const nextIndex = (Math.max(-1, currentIndex) + 1) % options.length;
+    const next = options[nextIndex];
+    setCycleIndexes((previous) => ({ ...previous, [cellKey]: nextIndex }));
+    setCellShift(employee, dateIso, next);
   };
 
   const increaseRequiredEmployees = () => {
@@ -1029,12 +1065,14 @@ export function EmployeeShiftPlanningManagement() {
     filteredEmployees.forEach((employee) => {
       rangeDays.forEach((day) => {
         const dateIso = toIsoDate(day);
-        if (!isFutureDateIso(dateIso)) return;
+        if (!isCurrentOrFutureDateIso(dateIso)) return;
 
         const cellKey = keyOf(employee.id, dateIso);
         const explicitChange = changes[cellKey];
         const existingShiftId = plansByKey.get(keyOf(employee.id, dateIso))?.shift_id || null;
         const effectiveShiftId = cellShiftId(employee, dateIso);
+
+        if (!canAssignShiftOnDate(effectiveShiftId, dateIso)) return;
 
         if (existingShiftId === effectiveShiftId && !explicitChange) return;
         if (!existingShiftId && !effectiveShiftId && !explicitChange) return;
@@ -1469,6 +1507,7 @@ export function EmployeeShiftPlanningManagement() {
                   <Clock3 className="size-4" />
                   {confirmed ? 'Confirmada' : 'Simulación - No confirmada'}
                 </div>
+                {!confirmed && <div className="mt-2 text-xs text-gray-600">Doble clic sobre un turno para recorrer los turnos disponibles. Para hoy, solo se muestran los que inician dentro de al menos dos horas.</div>}
               </div>
               <div className="rounded-full bg-gray-100 p-1 text-sm">
                 <button
@@ -1516,17 +1555,28 @@ export function EmployeeShiftPlanningManagement() {
                           const Icon = meta.Icon;
                           const label = shift?.shift_name || KIND_META[kind].label;
                           const hint = getShiftTimeHint(shift, kind);
-                          const editable = !confirmed && isFutureDateIso(dateIso);
+                          const cycleOptions = buildCycleOptions(dateIso);
+                          const isToday = dateIso === getGuayaquilNow().dateIso;
+                          const editable = !confirmed && isCurrentOrFutureDateIso(dateIso) && cycleOptions.length > 0;
+                          const title = !editable
+                            ? confirmed
+                              ? `${label} | ${hint} | La planificación está confirmada`
+                              : isToday
+                                ? `${label} | ${hint} | No hay turnos que inicien al menos dos horas después de la hora actual`
+                                : `${label} | ${hint} | Solo se pueden modificar fechas actuales o futuras`
+                            : `${label} | ${hint} | Doble clic para cambiar de turno`;
                           return (
                             <td key={dateIso} className="px-1 py-1">
                               <button
-                                onClick={() => cycleCell(employee, dateIso)}
+                                onDoubleClick={() => cycleCell(employee, dateIso)}
                                 disabled={!editable}
-                                className="flex h-10 w-full items-center justify-center rounded-md border disabled:cursor-not-allowed disabled:opacity-70"
+                                className="flex h-10 w-full flex-col items-center justify-center gap-0.5 rounded-md border disabled:cursor-not-allowed disabled:opacity-70"
                                 style={{ backgroundColor: meta.bg, borderColor: '#E5E7EB' }}
-                                title={editable ? `${label} | ${hint}` : `${label} | ${hint} | Solo se puede modificar fechas futuras`}
+                                title={title}
+                                aria-label={`${label}. ${title}`}
                               >
                                 <Icon className="size-4" style={{ color: meta.color }} />
+                                {shift?.shift_short_name && <span className="max-w-full truncate px-1 text-[9px] leading-none text-gray-600">{shift.shift_short_name}</span>}
                               </button>
                             </td>
                           );

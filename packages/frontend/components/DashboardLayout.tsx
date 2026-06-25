@@ -19,7 +19,9 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { profile } = useAuth();
-  const isEmployee = String(profile?.role_key || '').trim().toUpperCase() === 'EMPLOYEE';
+  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const isEmployee = roleKey === 'EMPLOYEE';
+  const isTenantAdmin = roleKey === 'TENANT_ADMIN';
 
   return (
     <SidebarProvider>
@@ -32,6 +34,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               {/* Si no se pasan children, usar el Router dinámico */}
               {children || <Router />}
             </div>
+            {isTenantAdmin ? (
+              <footer className="py-6 text-center text-sm text-muted-foreground">
+                Titanium Labs Corp.™ 2026 © | Todos los derechos reservados
+              </footer>
+            ) : null}
           </div>
         </SidebarInset>
       </div>

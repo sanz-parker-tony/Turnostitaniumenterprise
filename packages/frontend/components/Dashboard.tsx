@@ -757,9 +757,11 @@ function dateTimeToLocalMinutes(value: string | null | undefined): number | null
 
 function getDefaultLatestPunchesFromTime(): string {
   const hour = new Date().getHours();
-  if (hour < 12) return '08:30';
-  if (hour < 17) return '12:00';
-  return '17:00';
+  if (hour < 12) return '07:00';
+  if (hour < 15) return '12:00';
+  if (hour < 17) return '15:00';
+  if (hour < 20) return '17:00';
+  return '23:00';
 }
 
 function SupervisorIssuesPie({
@@ -1908,9 +1910,6 @@ export function Dashboard() {
         </>
       )}
 
-      <footer className="py-6 text-center text-sm text-muted-foreground">
-        Titanium Labs Corp.™ 2026 © | Todos los derechos reservados
-      </footer>
     </div>
   );
 }

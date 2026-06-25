@@ -114,15 +114,45 @@ function isDateIso(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function getTodayIsoDate(): string {
+function getGuayaquilNow(): { dateIso: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Guayaquil',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(new Date());
   const valueByType = new Map(parts.map((part) => [part.type, part.value]));
-  return `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}`;
+  const hour = Number(valueByType.get('hour'));
+  const minute = Number(valueByType.get('minute'));
+
+  return {
+    dateIso: `${valueByType.get('year')}-${valueByType.get('month')}-${valueByType.get('day')}`,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function parseTimeToMinutes(value?: string | null): number | null {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function formatMinutesAsClock(totalMinutes: number): string {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 function isFreeShiftLabel(name?: string | null, shortName?: string | null): boolean {
@@ -480,7 +510,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
     const shiftsResult = await client.query(
       `
-        SELECT id, company_id, shift_name, shift_short_name
+        SELECT id, company_id, shift_name, shift_short_name, start_time
         FROM public.shifts
         WHERE tenant_id = $1
           AND is_active = true
@@ -488,8 +518,12 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       [tenantId]
     );
     const shiftCompanyById = new Map<string, string>();
+    const shiftStartTimeById = new Map<string, string | null>();
     const freeShiftByCompany = new Map<string, string>();
-    shiftsResult.rows.forEach((row) => shiftCompanyById.set(row.id, row.company_id));
+    shiftsResult.rows.forEach((row) => {
+      shiftCompanyById.set(row.id, row.company_id);
+      shiftStartTimeById.set(row.id, row.start_time || null);
+    });
     shiftsResult.rows.forEach((row) => {
       if (isFreeShiftLabel(row.shift_name, row.shift_short_name) && row.company_id && !freeShiftByCompany.has(row.company_id)) {
         freeShiftByCompany.set(row.company_id, row.id);
@@ -525,7 +559,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
       const existing = await client.query(
         `
-          SELECT id, shift_name, shift_short_name
+          SELECT id, shift_name, shift_short_name, start_time
           FROM public.shifts
           WHERE tenant_id = $1
             AND company_id = $2
@@ -539,6 +573,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       if (found?.id) {
         freeShiftByCompany.set(companyId, found.id);
         shiftCompanyById.set(found.id, companyId);
+        shiftStartTimeById.set(found.id, found.start_time || null);
         return found.id;
       }
 
@@ -560,8 +595,11 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       const freeShiftId = created.rows[0]?.id as string;
       freeShiftByCompany.set(companyId, freeShiftId);
       shiftCompanyById.set(freeShiftId, companyId);
+      shiftStartTimeById.set(freeShiftId, '00:00');
       return freeShiftId;
     };
+
+    const nowInGuayaquil = getGuayaquilNow();
 
     for (const change of changes) {
       const employeeId = String(change?.employee_id || '').trim();
@@ -576,17 +614,17 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         throw new Error('Cada cambio requiere employee_id y shift_date (YYYY-MM-DD)');
       }
 
-      if (shiftDate <= getTodayIsoDate()) {
-        throw new Error(`Solo se pueden modificar turnos con fecha posterior a la fecha actual (${shiftDate})`);
+      if (shiftDate < nowInGuayaquil.dateIso) {
+        throw new Error(`No se pueden modificar turnos con fecha anterior a la fecha actual (${shiftDate})`);
       }
 
       if (restrictByEmployeeScope && !assignedEmployeeIdSet.has(employeeId)) {
         throw new Error(`El empleado ${employeeId} no está asignado al usuario autenticado`);
       }
 
-      const companyId =
-        (change?.company_id && String(change.company_id).trim()) ||
+      let companyId =
         (shiftId ? shiftCompanyById.get(shiftId) : null) ||
+        (change?.company_id && String(change.company_id).trim()) ||
         employeeCompanyById.get(employeeId);
 
       if (!companyId) {
@@ -596,6 +634,24 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       if (!shiftId) {
         shiftId = await ensureFreeShift(companyId);
         freeAssigned += 1;
+      }
+
+      const shiftCompanyId = shiftCompanyById.get(shiftId);
+      if (!shiftCompanyId) {
+        throw new Error(`El turno ${shiftId} no está activo o no pertenece al tenant actual`);
+      }
+      companyId = shiftCompanyId;
+
+      if (shiftDate === nowInGuayaquil.dateIso) {
+        const shiftStart = parseTimeToMinutes(shiftStartTimeById.get(shiftId));
+        const earliestAllowedStart = nowInGuayaquil.minutes + 120;
+        if (earliestAllowedStart > 1439 || shiftStart === null || shiftStart < earliestAllowedStart) {
+          throw new Error(
+            earliestAllowedStart > 1439
+              ? 'No quedan turnos elegibles para el día actual: deben iniciar al menos dos horas después de la hora actual de Ecuador'
+              : `El turno del día actual debe iniciar al menos dos horas después de la hora actual de Ecuador (${formatMinutesAsClock(earliestAllowedStart)})`
+          );
+        }
       }
 
       const existingResult = await client.query(
