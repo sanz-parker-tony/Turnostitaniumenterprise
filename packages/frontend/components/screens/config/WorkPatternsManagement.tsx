@@ -2,7 +2,7 @@
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, CircleDot, Clock3, Edit, Minus, Plus, Power, PowerOff, Save, Search, Trash2, X } from 'lucide-react';
+import { CircleDot, Clock3, Edit, Plus, Power, PowerOff, Save, Search, Trash2, X } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
@@ -91,6 +91,17 @@ function toInt(value: string, fallback = 0): number {
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
+function getSafeCycleLength(value: string): number {
+  return Math.max(0, toInt(value));
+}
+
+function syncPatternShiftsToCycleLength(
+  patternShifts: WorkPatternShiftFormRow[],
+  cycleLength: number
+): WorkPatternShiftFormRow[] {
+  return Array.from({ length: cycleLength }, (_, index) => patternShifts[index] || { shift_id: '' });
+}
+
 function resolveShiftIcon(iconKey?: string | null) {
   const raw = String(iconKey || '').trim();
   if (!raw) return CircleDot;
@@ -121,7 +132,6 @@ export function WorkPatternsManagement() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<WorkPatternFormState>(makeEmptyForm());
-  const [openShiftPickerIndex, setOpenShiftPickerIndex] = useState<number | null>(null);
 
   const request = async (path: string, init?: RequestInit) => {
     const response = await fetch(buildApiUrl(`${path}`), {
@@ -182,16 +192,32 @@ export function WorkPatternsManagement() {
   }, [filtered, page]);
 
   const availableShifts = useMemo(() => {
-    return shiftCatalog;
+    return shiftCatalog.filter((shift) => shift.is_active !== false);
   }, [shiftCatalog]);
+
+  const currentCycleLength = getSafeCycleLength(form.cycle_length_days);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
 
+  useEffect(() => {
+    setForm((prev) => {
+      const cycleLength = getSafeCycleLength(prev.cycle_length_days);
+      if (prev.pattern_shifts.length === cycleLength) return prev;
+      return {
+        ...prev,
+        pattern_shifts: syncPatternShiftsToCycleLength(prev.pattern_shifts, cycleLength),
+      };
+    });
+  }, [form.cycle_length_days]);
+
   const openCreate = () => {
-    setForm(makeEmptyForm());
-    setOpenShiftPickerIndex(null);
+    const emptyForm = makeEmptyForm();
+    setForm({
+      ...emptyForm,
+      pattern_shifts: syncPatternShiftsToCycleLength([], getSafeCycleLength(emptyForm.cycle_length_days)),
+    });
     setModalOpen(true);
     setModalError(null);
   };
@@ -214,9 +240,8 @@ export function WorkPatternsManagement() {
       weekly_work_minutes_target: String(row.weekly_work_minutes_target),
       is_flexible: row.is_flexible,
       is_active: row.is_active,
-      pattern_shifts: sortedShifts,
+      pattern_shifts: syncPatternShiftsToCycleLength(sortedShifts, Math.max(0, Number(row.cycle_length_days || 0))),
     });
-    setOpenShiftPickerIndex(null);
     setModalOpen(true);
     setModalError(null);
   };
@@ -225,39 +250,6 @@ export function WorkPatternsManagement() {
     setModalOpen(false);
     setSaving(false);
     setModalError(null);
-    setOpenShiftPickerIndex(null);
-  };
-
-  const addShiftSequence = () => {
-    setForm((prev) => ({
-      ...prev,
-      pattern_shifts: [...prev.pattern_shifts, { shift_id: '' }],
-    }));
-  };
-
-  const removeShiftSequence = (index: number) => {
-    setForm((prev) => ({
-      ...prev,
-      pattern_shifts: prev.pattern_shifts.filter((_, currentIndex) => currentIndex !== index),
-    }));
-    setOpenShiftPickerIndex((prev) => {
-      if (prev === null) return null;
-      if (prev === index) return null;
-      if (prev > index) return prev - 1;
-      return prev;
-    });
-  };
-
-  const moveShiftSequence = (index: number, direction: 'up' | 'down') => {
-    setForm((prev) => {
-      const list = [...prev.pattern_shifts];
-      const targetIndex = direction === 'up' ? index - 1 : index + 1;
-      if (targetIndex < 0 || targetIndex >= list.length) return prev;
-      const current = list[index];
-      list[index] = list[targetIndex];
-      list[targetIndex] = current;
-      return { ...prev, pattern_shifts: list };
-    });
   };
 
   const updateShiftSelection = (index: number, shiftId: string) => {
@@ -267,6 +259,17 @@ export function WorkPatternsManagement() {
         currentIndex === index ? { ...item, shift_id: shiftId } : item
       ),
     }));
+  };
+
+  const cycleShiftSelection = (index: number) => {
+    if (availableShifts.length === 0) return;
+
+    const currentShiftId = form.pattern_shifts[index]?.shift_id || '';
+    const currentIndex = availableShifts.findIndex((shift) => shift.id === currentShiftId);
+    const nextShift = availableShifts[(Math.max(-1, currentIndex) + 1) % availableShifts.length];
+    if (nextShift) {
+      updateShiftSelection(index, nextShift.id);
+    }
   };
 
   const removePattern = async (row: WorkPatternRow) => {
@@ -350,6 +353,11 @@ export function WorkPatternsManagement() {
 
     if (!payload.pattern_name || !payload.pattern_short_name) {
       setModalError('Debe ingresar nombre y código del patrón.');
+      return;
+    }
+
+    if (payload.cycle_length_days < 1) {
+      setModalError('La longitud del ciclo debe ser mayor a cero.');
       return;
     }
 
@@ -587,9 +595,9 @@ export function WorkPatternsManagement() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 p-5 md:grid-cols-2 xl:grid-cols-3">
               {modalError && (
-                <div className="md:col-span-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <div className="md:col-span-2 xl:col-span-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {modalError}
                 </div>
               )}
@@ -681,120 +689,60 @@ export function WorkPatternsManagement() {
                 </label>
               </div>
 
-              <div className="md:col-span-2 rounded-lg border p-4">
+              <div className="md:col-span-2 xl:col-span-3 rounded-lg border p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div>
                     <h4 className="text-base font-semibold">Secuencia de turnos</h4>
-                    <p className="text-xs text-gray-600">Relación padre-hijo del patrón con los turnos del ciclo.</p>
+                    <p className="text-xs text-gray-600">
+                      {currentCycleLength} casillas según la longitud del ciclo. Doble clic en una casilla para recorrer los turnos disponibles.
+                    </p>
                   </div>
+                  <span className="rounded-full border bg-gray-50 px-3 py-1 text-xs text-gray-600">
+                    Ciclo: {currentCycleLength} días
+                  </span>
                 </div>
 
-                <div className="max-h-[36vh] space-y-2 overflow-y-auto pr-1">
+                <div className="overflow-x-auto rounded-xl border bg-gray-50 p-3">
                   {form.pattern_shifts.length === 0 ? (
                     <div className="rounded-md border border-dashed px-3 py-4 text-center text-sm text-gray-500">
-                      No hay turnos agregados en la secuencia.
+                      Ingrese una longitud de ciclo mayor a cero para generar las casillas.
                     </div>
                   ) : (
-                    form.pattern_shifts.map((item, index) => {
-                      const shift = shiftById.get(item.shift_id);
-                      const Icon = resolveShiftIcon(shift?.shift_icon_key);
-                      const colors = getShiftColors(shift);
-                      const label = shift ? `${shift.shift_name} (${shift.shift_short_name})` : 'Seleccionar turno...';
-                      return (
-                        <div key={`${item.shift_id}-${index}`} className="flex flex-wrap items-center gap-2 rounded-md border px-3 py-2">
-                          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">#{index + 1}</span>
+                    <div className="flex min-w-max gap-2">
+                      {form.pattern_shifts.map((item, index) => {
+                        const shift = shiftById.get(item.shift_id);
+                        const Icon = resolveShiftIcon(shift?.shift_icon_key);
+                        const colors = getShiftColors(shift);
+                        const hasShift = Boolean(shift);
+                        const title = hasShift
+                          ? `Día ${index + 1}: ${shift?.shift_name} (${shift?.shift_short_name}). Doble clic para cambiar.`
+                          : `Día ${index + 1}: sin turno. Doble clic para asignar.`;
 
-                          <div className="relative min-w-[280px] flex-1">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setOpenShiftPickerIndex((prev) => (prev === index ? null : index))
-                              }
-                              className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm"
-                              style={{
-                                backgroundColor: item.shift_id ? colors.bg : '#FFFFFF',
-                                color: item.shift_id ? colors.text : '#334155',
-                              }}
-                            >
-                              <span className="inline-flex items-center gap-2">
-                                <Icon className="size-4" />
-                                {label}
-                              </span>
-                              <ChevronDown className="size-4 opacity-70" />
-                            </button>
-
-                            {openShiftPickerIndex === index && (
-                              <div className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-white shadow-lg">
-                                {availableShifts.map((catalogShift) => {
-                                  const CatalogIcon = resolveShiftIcon(catalogShift.shift_icon_key);
-                                  const itemColors = getShiftColors(catalogShift);
-                                  return (
-                                    <button
-                                      key={catalogShift.id}
-                                      type="button"
-                                      onClick={() => {
-                                        updateShiftSelection(index, catalogShift.id);
-                                        setOpenShiftPickerIndex(null);
-                                      }}
-                                      className="flex w-full items-center justify-between border-b px-3 py-2 text-left text-sm last:border-b-0"
-                                      style={{
-                                        backgroundColor: itemColors.bg,
-                                        color: itemColors.text,
-                                      }}
-                                    >
-                                      <span className="inline-flex items-center gap-2">
-                                        <CatalogIcon className="size-4" />
-                                        {catalogShift.shift_name} ({catalogShift.shift_short_name})
-                                      </span>
-                                      {item.shift_id === catalogShift.id ? <span className="text-xs">Seleccionado</span> : null}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-
+                        return (
                           <button
+                            key={`${item.shift_id || 'empty'}-${index}`}
                             type="button"
-                            onClick={() => moveShiftSequence(index, 'up')}
-                            disabled={index === 0}
-                            className="inline-flex items-center justify-center rounded border p-1.5 text-gray-600 disabled:opacity-40"
-                            title="Mover arriba"
+                            onDoubleClick={() => cycleShiftSelection(index)}
+                            className="flex h-20 w-24 flex-shrink-0 flex-col items-center justify-center gap-1 rounded-lg border bg-white px-2 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                            style={{
+                              backgroundColor: hasShift ? colors.bg : '#FFFFFF',
+                              color: hasShift ? colors.text : '#64748B',
+                            }}
+                            title={title}
+                            aria-label={title}
                           >
-                            <ArrowUp className="size-4" />
+                            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">
+                              #{index + 1}
+                            </span>
+                            <Icon className="size-4" />
+                            <span className="max-w-full truncate text-[11px] font-semibold leading-tight">
+                              {shift?.shift_short_name || 'Sin turno'}
+                            </span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => moveShiftSequence(index, 'down')}
-                            disabled={index === form.pattern_shifts.length - 1}
-                            className="inline-flex items-center justify-center rounded border p-1.5 text-gray-600 disabled:opacity-40"
-                            title="Mover abajo"
-                          >
-                            <ArrowDown className="size-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeShiftSequence(index)}
-                            className="inline-flex items-center justify-center rounded border border-red-200 p-1.5 text-red-600 hover:bg-red-50"
-                            title="Remove"
-                          >
-                            <Minus className="size-4" />
-                          </button>
-                        </div>
-                      );
-                    })
+                        );
+                      })}
+                    </div>
                   )}
-                </div>
-
-                <div className="mt-3 flex items-center">
-                  <button
-                    type="button"
-                    onClick={addShiftSequence}
-                    className="inline-flex items-center gap-2 rounded-md border border-green-200 px-3 py-2 text-sm text-green-700 hover:bg-green-50"
-                  >
-                    <Plus className="size-4" />
-                    Add
-                  </button>
                 </div>
               </div>
             </div>
