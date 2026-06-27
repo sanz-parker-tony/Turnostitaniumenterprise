@@ -306,7 +306,7 @@ export function AppHeader() {
 
         {/* User Menu */}
         {isEmployee ? (
-          <Button variant="ghost" size="icon" onClick={() => void handleLogout()} title="Cerrar Sesion">
+          <Button variant="ghost" size="icon" onClick={() => void handleLogout()} title="Cerrar Sesión">
             <LogOut className="h-5 w-5" />
           </Button>
         ) : (
@@ -339,7 +339,7 @@ export function AppHeader() {
               ) : null}
               <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
                 <LogOut className="mr-2 h-4 w-4" />
-                Cerrar Sesi?n
+                Cerrar Sesión
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

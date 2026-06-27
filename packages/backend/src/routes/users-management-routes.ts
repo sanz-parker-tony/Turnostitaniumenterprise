@@ -95,6 +95,196 @@ router.get('/catalogs/companies', async (req: Request, res: Response) => {
   }
 });
 
+// GET /catalogs/scope-entities - Entidades disponibles segun tipo de alcance
+router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const scopeTypeId = String(req.query.scope_type_id || '').trim();
+    const scopeTypeKeyParam = String(req.query.scope_type_key || '').trim().toUpperCase();
+    const tenantId = String(req.query.tenant_id || '').trim();
+
+    if (!scopeTypeId && !scopeTypeKeyParam) {
+      return res.status(400).json({ error: 'scope_type_id o scope_type_key es obligatorio' });
+    }
+
+    let scopeTypeKey = scopeTypeKeyParam;
+    if (!scopeTypeKey) {
+      const { data: scopeType, error: scopeTypeError } = await Postgres
+        .from('scope_types')
+        .select('scope_type_key')
+        .eq('id', scopeTypeId)
+        .maybeSingle();
+
+      if (scopeTypeError) return res.status(500).json({ error: scopeTypeError.message });
+      if (!scopeType?.scope_type_key) return res.status(404).json({ error: 'Tipo de alcance no encontrado' });
+      scopeTypeKey = String(scopeType.scope_type_key).toUpperCase();
+    }
+
+    const scopedTenantId = tenantId || null;
+    let query: any;
+    let rows: any[] = [];
+
+    switch (scopeTypeKey) {
+      case 'TENANT': {
+        query = Postgres
+          .from('tenants')
+          .select('id, tenant_key, tenant_name')
+          .order('tenant_name');
+        if (scopedTenantId) query = query.eq('id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.tenant_name || row.tenant_key || row.id,
+          description: row.tenant_key || null,
+        }));
+        break;
+      }
+      case 'COMPANY': {
+        query = Postgres
+          .from('companies')
+          .select('id, tenant_id, company_name, company_code, is_active')
+          .eq('is_active', true)
+          .order('company_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.company_code ? `${row.company_name} (${row.company_code})` : row.company_name,
+          description: row.company_code || null,
+        }));
+        break;
+      }
+      case 'WORK_LOCATION': {
+        query = Postgres
+          .from('work_locations')
+          .select('id, tenant_id, work_location_name, work_location_code, is_active')
+          .eq('is_active', true)
+          .order('work_location_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.work_location_code ? `${row.work_location_name} (${row.work_location_code})` : row.work_location_name,
+          description: row.work_location_code || null,
+        }));
+        break;
+      }
+      case 'DEPARTMENT': {
+        query = Postgres
+          .from('departments')
+          .select('id, tenant_id, department_name, department_code, is_active')
+          .eq('is_active', true)
+          .order('department_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.department_code ? `${row.department_name} (${row.department_code})` : row.department_name,
+          description: row.department_code || null,
+        }));
+        break;
+      }
+      case 'AREA': {
+        query = Postgres
+          .from('areas')
+          .select('id, tenant_id, area_name, area_code, is_active')
+          .eq('is_active', true)
+          .order('area_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.area_code ? `${row.area_name} (${row.area_code})` : row.area_name,
+          description: row.area_code || null,
+        }));
+        break;
+      }
+      case 'COST_CENTER': {
+        query = Postgres
+          .from('cost_centers')
+          .select('id, tenant_id, cost_center_name, cost_center_code, is_active')
+          .eq('is_active', true)
+          .order('cost_center_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.cost_center_code ? `${row.cost_center_name} (${row.cost_center_code})` : row.cost_center_name,
+          description: row.cost_center_code || null,
+        }));
+        break;
+      }
+      case 'WORK_GROUP': {
+        query = Postgres
+          .from('work_groups')
+          .select('id, tenant_id, work_group_name, work_group_code, is_active')
+          .eq('is_active', true)
+          .order('work_group_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.work_group_code ? `${row.work_group_name} (${row.work_group_code})` : row.work_group_name,
+          description: row.work_group_code || null,
+        }));
+        break;
+      }
+      case 'EMPLOYEE_PROFILE': {
+        query = Postgres
+          .from('employee_profiles')
+          .select('id, tenant_id, profile_name, employee_profile_code, is_active')
+          .eq('is_active', true)
+          .order('profile_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: row.employee_profile_code ? `${row.profile_name} (${row.employee_profile_code})` : row.profile_name,
+          description: row.employee_profile_code || null,
+        }));
+        break;
+      }
+      case 'EMPLOYEE':
+      case 'EMPLOYEE_EXCLUDE': {
+        query = Postgres
+          .from('employees')
+          .select('id, tenant_id, employee_code, employee_lastname, employee_name, is_active')
+          .eq('is_active', true)
+          .order('employee_lastname')
+          .order('employee_name');
+        if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ error: error.message });
+        rows = (data || []).map((row: any) => ({
+          id: row.id,
+          label: `${row.employee_code ? `${row.employee_code} - ` : ''}${row.employee_lastname || ''} ${row.employee_name || ''}`.trim(),
+          description: row.employee_code || null,
+        }));
+        break;
+      }
+      default:
+        return res.status(400).json({ error: `Tipo de alcance sin catalogo asociado: ${scopeTypeKey}` });
+    }
+
+    return res.status(200).json({
+      success: true,
+      scope_type_key: scopeTypeKey,
+      entities: rows,
+      count: rows.length,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
 // GET /catalogs/languages - Idiomas disponibles
 router.get('/catalogs/languages', async (req: Request, res: Response) => {
   try {
@@ -668,7 +858,7 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
     const body = req.body;
-    const { username, display_name, email, phone, preferred_language_code, is_active } = body;
+    const { username, display_name, email, phone, preferred_language_code, is_active, password } = body;
 
     const Postgres = getPostgres();
 
@@ -702,6 +892,10 @@ router.put('/:id', async (req: Request, res: Response) => {
       }
     }
 
+    if (password && String(password).length < 8) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+
     const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
     if (username !== undefined) updateData.username = username;
     if (display_name !== undefined) updateData.display_name = display_name || null;
@@ -722,8 +916,15 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    if (email && email !== existing.email) {
-      await Postgres.auth.admin.updateUserById(existing.auth_user_id, { email });
+    const authUpdatePayload: { email?: string; password?: string } = {};
+    if (email && email !== existing.email) authUpdatePayload.email = email;
+    if (password) authUpdatePayload.password = String(password);
+
+    if (Object.keys(authUpdatePayload).length > 0) {
+      const { error: authUpdateError } = await Postgres.auth.admin.updateUserById(existing.auth_user_id, authUpdatePayload);
+      if (authUpdateError) {
+        return res.status(500).json({ error: 'Error al sincronizar usuario de autenticación', details: authUpdateError.message });
+      }
     }
 
     return res.status(200).json({ success: true, user: updatedUser, message: 'Usuario actualizado exitosamente' });

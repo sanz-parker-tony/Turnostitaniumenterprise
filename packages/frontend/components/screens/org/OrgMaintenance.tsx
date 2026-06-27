@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -31,6 +31,9 @@ interface OrgMaintenanceProps {
   hideTopHeader?: boolean;
   pageTitle?: string;
   pageDescription?: string;
+  createRequestKey?: number;
+  createInitialValues?: Record<string, any>;
+  onSaveSuccess?: (event: { entity: EntityKey; item: any; isEdit: boolean }) => void;
 }
 
 type FieldType = 'text' | 'number' | 'date' | 'time' | 'boolean' | 'select';
@@ -42,6 +45,7 @@ interface FieldConfig {
   required?: boolean;
   optionsKey?: string;
   defaultValue?: any;
+  hidden?: boolean;
 }
 
 interface EntityConfig {
@@ -571,7 +575,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'cost-centers',
-    title: 'Cost Centers',
+    title: 'Centro de Costo',
     description: 'Centros de costo',
     fields: [
       { key: 'cost_center_name', label: 'Nombre', type: 'text', required: true },
@@ -585,7 +589,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'payroll-groups',
-    title: 'Payroll Groups',
+    title: 'Grupo de Nómina',
     description: 'Grupos de nómina',
     fields: [
       { key: 'payroll_group_name', label: 'Nombre', type: 'text', required: true },
@@ -597,24 +601,25 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'employees',
-    title: 'Employees',
+    title: 'Empleado',
     description: 'Datos personales de empleados',
     fields: [
-      { key: 'employee_code', label: 'Codigo empleado', type: 'text', required: true },
       { key: 'employee_lastname', label: 'Apellidos', type: 'text', required: true },
       { key: 'employee_name', label: 'Nombres', type: 'text', required: true },
+      { key: 'employee_code', label: 'Código empleado', type: 'text', required: true },
       { key: 'employee_birthday', label: 'Fecha nacimiento', type: 'date' },
-      { key: 'employee_gender_id', label: 'Genero', type: 'select', optionsKey: 'genders' },
+      { key: 'employee_gender_id', label: 'Género', type: 'select', optionsKey: 'genders' },
       { key: 'employee_is_model', label: 'Empleado modelo', type: 'boolean', defaultValue: false },
       { key: 'employee_observations', label: 'Observaciones', type: 'text' },
       { key: 'employee_photo_path', label: 'Ruta foto', type: 'text' },
       { key: 'is_active', label: 'Activo', type: 'boolean', defaultValue: true },
+      { key: 'user_id', label: 'Usuario', type: 'text', hidden: true },
     ],
     tableColumns: ['employee_code', 'employee_lastname', 'employee_name', 'employee_birthday', 'employee_gender_id', 'employee_is_model', 'is_active'],
   },
   {
     key: 'employee-profiles',
-    title: 'Employee Profiles',
+    title: 'Perfil de Empleado',
     description: 'Perfiles de empleado',
     fields: [
       { key: 'profile_name', label: 'Nombre', type: 'text', required: true },
@@ -626,7 +631,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'job-titles',
-    title: 'Job Titles',
+    title: 'Cargo',
     description: 'Cargos organizacionales',
     fields: [
       { key: 'job_title_name', label: 'Nombre', type: 'text', required: true },
@@ -638,7 +643,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'work-groups',
-    title: 'Work Groups',
+    title: 'Grupo de Trabajo',
     description: 'Grupos de trabajo',
     fields: [
       { key: 'work_group_name', label: 'Nombre', type: 'text', required: true },
@@ -670,19 +675,23 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'employee-companies',
-    title: 'Employee Companies',
+    title: 'Empleado por Empresa',
     description: 'Asignaciones laborales por compañía',
     fields: [
       { key: 'employee_id', label: 'Empleado', type: 'select', required: true, optionsKey: 'employees' },
+      { key: 'device_user_code', label: 'Código dispositivo', type: 'text' },
+      { key: 'payroll_employee_code', label: 'Código empleado nómina', type: 'text' },
+      { key: 'accounting_account_code', label: 'Cuenta contable', type: 'text' },
+      { key: 'contract_type_id', label: 'Tipo contrato', type: 'select', optionsKey: 'contract_types' },
       { key: 'company_id', label: 'Empresa', type: 'select', required: true, optionsKey: 'companies' },
-      { key: 'employee_profile_id', label: 'Perfil', type: 'select', optionsKey: 'employee_profiles' },
-      { key: 'work_group_id', label: 'Grupo trabajo', type: 'select', optionsKey: 'work_groups' },
       { key: 'work_location_id', label: 'Localización', type: 'select', optionsKey: 'work_locations' },
       { key: 'department_id', label: 'Departamento', type: 'select', optionsKey: 'departments' },
       { key: 'area_id', label: 'Área', type: 'select', optionsKey: 'areas' },
+      { key: 'employee_profile_id', label: 'Perfil', type: 'select', optionsKey: 'employee_profiles' },
       { key: 'cost_center_id', label: 'Centro costo', type: 'select', optionsKey: 'cost_centers' },
       { key: 'payroll_group_id', label: 'Grupo nómina', type: 'select', optionsKey: 'payroll_groups' },
-      { key: 'contract_type_id', label: 'Tipo contrato', type: 'select', optionsKey: 'contract_types' },
+      { key: 'job_title_id', label: 'Cargo', type: 'select', optionsKey: 'job_titles' },
+      { key: 'work_group_id', label: 'Grupo trabajo', type: 'select', optionsKey: 'work_groups' },
       { key: 'salary_amount', label: 'Salario', type: 'number' },
       { key: 'hire_date', label: 'Fecha ingreso', type: 'date' },
       { key: 'termination_date', label: 'Fecha salida', type: 'date' },
@@ -699,6 +708,9 @@ export function OrgMaintenance({
   hideTopHeader = false,
   pageTitle,
   pageDescription,
+  createRequestKey,
+  createInitialValues,
+  onSaveSuccess,
 }: OrgMaintenanceProps) {
   const [entity, setEntity] = useState<EntityKey>(initialEntity);
   const [items, setItems] = useState<any[]>([]);
@@ -1145,13 +1157,65 @@ export function OrgMaintenance({
     };
   }, []);
 
+  const effectiveItems = useMemo(() => {
+    if (entity !== 'employee-companies') return items;
+
+    const assignedEmployeeIds = new Set(
+      items
+        .map((item) => String(item?.employee_id || ''))
+        .filter(Boolean)
+    );
+
+    const unassignedEmployees = (catalogs.employees || [])
+      .filter((employee: any) => employee?.is_active !== false)
+      .filter((employee: any) => !assignedEmployeeIds.has(String(employee?.id || '')))
+      .map((employee: any) => ({
+        id: `unassigned-employee-${employee.id}`,
+        employee_id: employee.id,
+        is_active: null,
+        __is_unassigned_employee: true,
+      }));
+
+    return [...unassignedEmployees, ...items];
+  }, [entity, items, catalogs.employees]);
+
+  const getSearchableCellValue = (item: any, column: string) => {
+    const rawValue = item[column];
+    const field = config.fields.find((entry) => entry.key === column);
+    if (field?.type === 'select' && field.optionsKey) {
+      const options = catalogs[field.optionsKey] || [];
+      const selected = options.find((option: any) => String(option?.id || '') === String(rawValue || ''));
+      if (selected) {
+        const label =
+          selected.label ||
+          selected.lookup_label ||
+          selected.company_name ||
+          selected.department_name ||
+          selected.area_name ||
+          selected.cost_center_name ||
+          selected.payroll_group_name ||
+          selected.profile_name ||
+          selected.work_group_name ||
+          selected.work_location_name ||
+          selected.job_title_name ||
+          (selected.employee_code
+            ? `${selected.employee_code} - ${selected.employee_lastname || ''} ${selected.employee_name || ''}`.trim()
+            : null) ||
+          selected.lookup_key ||
+          selected.id;
+        return `${rawValue || ''} ${label || ''}`;
+      }
+    }
+    return String(rawValue ?? '');
+  };
+
   const filteredItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    return items.filter((item) => {
+    return effectiveItems.filter((item) => {
       const searchOk =
         !q ||
         config.tableColumns.some((column) =>
-          String(item[column] ?? '').toLowerCase().includes(q)
+          getSearchableCellValue(item, column).toLowerCase().includes(q)
         );
 
       const statusOk =
@@ -1162,7 +1226,7 @@ export function OrgMaintenance({
 
       return searchOk && statusOk;
     });
-  }, [items, config.tableColumns, searchTerm, statusFilter]);
+  }, [effectiveItems, config.tableColumns, searchTerm, statusFilter, catalogs]);
 
   const getColumnHeaderLabel = (column: string) => {
     if (column === 'is_active') return 'Estado';
@@ -1183,7 +1247,9 @@ export function OrgMaintenance({
       'payroll-groups': 'Nuevo Grupo de Nómina',
       'job-titles': 'Nuevo Cargo',
       'cost-centers': 'Nuevo Centro de Costo',
-      'employee-profiles': 'Nuevo Perfil',
+      'employee-profiles': 'Nuevo Perfil de Empleado',
+      employees: 'Nuevo Empleado',
+      'employee-companies': 'Nuevo Empleado por Empresa',
     };
     return labelsByEntity[entity] || 'Nuevo';
   };
@@ -1204,10 +1270,12 @@ export function OrgMaintenance({
     ? 'w-full max-w-full space-y-2'
     : 'p-6 max-w-full space-y-6';
 
-  const openCreate = () => {
+  const openCreate = (initialValues: Record<string, any> = {}) => {
     const initial: Record<string, any> = {};
     config.fields.forEach((field) => {
-      if (field.defaultValue !== undefined) {
+      if (Object.prototype.hasOwnProperty.call(initialValues, field.key)) {
+        initial[field.key] = initialValues[field.key];
+      } else if (field.defaultValue !== undefined) {
         initial[field.key] = field.defaultValue;
       } else if (field.type === 'boolean') {
         initial[field.key] = true;
@@ -1223,7 +1291,17 @@ export function OrgMaintenance({
     clearPhotoPreview();
   };
 
+  useEffect(() => {
+    if (!createRequestKey) return;
+    openCreate(createInitialValues || {});
+  }, [createRequestKey]);
+
   const openEdit = (item: any) => {
+    if (entity === 'employee-companies' && item.__is_unassigned_employee) {
+      openCreate({ employee_id: item.employee_id });
+      return;
+    }
+
     const initial: Record<string, any> = {};
     config.fields.forEach((field) => {
       const value = item[field.key];
@@ -1272,6 +1350,9 @@ export function OrgMaintenance({
     setError(null);
     try {
       for (const field of config.fields) {
+        if (field.hidden) {
+          continue;
+        }
         if (field.required) {
           const value = formData[field.key];
           if (value === undefined || value === null || String(value).trim() === '') {
@@ -1282,6 +1363,10 @@ export function OrgMaintenance({
 
       const payload = { ...formData };
       config.fields.forEach((field) => {
+        if (field.hidden && (payload[field.key] === '' || payload[field.key] === undefined)) {
+          delete payload[field.key];
+          return;
+        }
         if (field.type === 'number' && payload[field.key] !== '' && payload[field.key] !== null) {
           payload[field.key] = Number(payload[field.key]);
         }
@@ -1315,13 +1400,15 @@ export function OrgMaintenance({
         }
       }
 
+      const wasEdit = Boolean(editingId);
+      let savedPayload: any;
       if (editingId) {
-        await request(`/organization/${entity}/${editingId}`, {
+        savedPayload = await request(`/organization/${entity}/${editingId}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         });
       } else {
-        await request(`/organization/${entity}`, {
+        savedPayload = await request(`/organization/${entity}`, {
           method: 'POST',
           body: JSON.stringify(payload),
         });
@@ -1331,6 +1418,11 @@ export function OrgMaintenance({
       setEditingId(null);
       setFormData({});
       await Promise.all([loadItems(), loadCatalogs()]);
+      onSaveSuccess?.({
+        entity,
+        item: savedPayload?.item || savedPayload?.items?.[0] || null,
+        isEdit: wasEdit,
+      });
     } catch (err: any) {
       setError(formatPhotoUploadError(err));
     } finally {
@@ -1594,6 +1686,12 @@ export function OrgMaintenance({
     if (isSimpleMaintenanceEntity) {
       return 'relative w-full max-w-xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
     }
+    if (entity === 'employees') {
+      return 'relative w-full max-w-3xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
+    }
+    if (entity === 'employee-companies') {
+      return 'relative w-full max-w-4xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
+    }
     if (entity === 'companies') {
       return 'relative w-full max-w-5xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
     }
@@ -1605,6 +1703,9 @@ export function OrgMaintenance({
       return 'grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start';
     }
     if (entity === 'companies') {
+      return 'grid grid-cols-1 md:grid-cols-2 gap-3';
+    }
+    if (entity === 'employees' || entity === 'employee-companies') {
       return 'grid grid-cols-1 md:grid-cols-2 gap-3';
     }
     if (
@@ -1619,6 +1720,20 @@ export function OrgMaintenance({
       return 'grid grid-cols-1 gap-3';
     }
     return 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3';
+  };
+
+  const getFormBodyClassName = () => {
+    if (entity === 'employees' || entity === 'employee-companies') {
+      return 'overflow-y-auto p-4 bg-gray-50 space-y-3';
+    }
+    return 'flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3';
+  };
+
+  const getFormFooterClassName = () => {
+    if (entity === 'employees' || entity === 'employee-companies') {
+      return '-mx-4 -mb-4 flex items-center gap-2 border-t bg-white px-4 py-3';
+    }
+    return 'sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center gap-2 border-t bg-white px-4 py-3';
   };
 
   const isDependentGeoSelectDisabled = (fieldKey: string) => {
@@ -1640,10 +1755,31 @@ export function OrgMaintenance({
     if (entity === 'areas') {
       return editingId ? 'Editar Área' : 'Nueva Área';
     }
+    if (entity === 'work-groups') {
+      return editingId ? 'Editar Grupo de Trabajo' : 'Nuevo Grupo de Trabajo';
+    }
+    if (entity === 'payroll-groups') {
+      return editingId ? 'Editar Grupo de Nómina' : 'Nuevo Grupo de Nómina';
+    }
+    if (entity === 'job-titles') {
+      return editingId ? 'Editar Cargo' : 'Nuevo Cargo';
+    }
+    if (entity === 'cost-centers') {
+      return editingId ? 'Editar Centro de Costo' : 'Nuevo Centro de Costo';
+    }
+    if (entity === 'employee-profiles') {
+      return editingId ? 'Editar Perfil de Empleado' : 'Nuevo Perfil de Empleado';
+    }
+    if (entity === 'employees') {
+      return editingId ? 'Editar Empleado' : 'Nuevo Empleado';
+    }
+    if (entity === 'employee-companies') {
+      return editingId ? 'Editar Empleado por Empresa' : 'Nuevo Empleado por Empresa';
+    }
     return editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`;
   };
 
-  const formatCellValue = (column: string, rawValue: any) => {
+  const formatCellValue = (column: string, rawValue: any, item?: any) => {
     const field = getFieldByKey(column);
 
     if (!field) {
@@ -1651,6 +1787,14 @@ export function OrgMaintenance({
     }
 
     if (column === 'is_active') {
+      if (item?.__is_unassigned_employee) {
+        return (
+          <span className="inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+            Pendiente
+          </span>
+        );
+      }
+
       const isActive = rawValue === true;
       return (
         <span
@@ -1711,7 +1855,7 @@ export function OrgMaintenance({
               />
               <HeaderRefreshButton onClick={() => void loadItems()} loading={loading} label="Recargar" />
               <button
-                onClick={openCreate}
+                onClick={() => openCreate()}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0074D9] text-white text-sm font-medium hover:bg-[#0066C0]"
               >
                 <Plus className="size-4" />
@@ -1773,9 +1917,9 @@ export function OrgMaintenance({
                 <X className="size-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
+            <div className={getFormBodyClassName()}>
               <div className={getFormGridClassName()}>
-              {config.fields.map((field) => (
+              {config.fields.filter((field) => !field.hidden).map((field) => (
                 <div
                   key={field.key}
                   className={`space-y-1 ${
@@ -1783,6 +1927,8 @@ export function OrgMaintenance({
                       ? field.key === 'geofence_polygon'
                         ? 'min-w-0 xl:col-start-2 xl:row-start-1 xl:row-span-12'
                         : 'xl:col-start-1'
+                      : entity === 'employee-companies' && field.key === 'employee_id'
+                        ? 'md:col-span-2'
                       : ''
                   }`}
                 >
@@ -1947,7 +2093,7 @@ export function OrgMaintenance({
               ))}
             </div>
 
-            <div className="sticky bottom-0 z-10 -mx-4 -mb-4 flex items-center gap-2 border-t bg-white px-4 py-3">
+            <div className={getFormFooterClassName()}>
               <button
                 onClick={handleSave}
                 disabled={saving}
@@ -1998,7 +2144,7 @@ export function OrgMaintenance({
                 </select>
               </div>
               <span className="text-sm text-gray-500">
-                {filteredItems.length} de {items.length}
+                {filteredItems.length} de {effectiveItems.length}
               </span>
             </div>
           </div>
@@ -2034,7 +2180,7 @@ export function OrgMaintenance({
                       <tr key={item.id} className="hover:bg-gray-50">
                         {config.tableColumns.map((column) => (
                           <td key={column} className="px-3 py-2 border-b text-gray-700">
-                            {formatCellValue(column, item[column])}
+                            {formatCellValue(column, item[column], item)}
                           </td>
                         ))}
                         <td className="px-3 py-2 border-b">
@@ -2045,7 +2191,7 @@ export function OrgMaintenance({
                               label="Editar"
                               tone="blue"
                             />
-                            {config.tableColumns.includes('is_active') && 'is_active' in item && (
+                            {config.tableColumns.includes('is_active') && 'is_active' in item && !item.__is_unassigned_employee && (
                               <GridActionIconButton
                                 onClick={() => handleToggleStatus(item)}
                                 icon={<Power className="size-3" />}
@@ -2053,12 +2199,14 @@ export function OrgMaintenance({
                                 tone={item.is_active ? 'red' : 'green'}
                               />
                             )}
-                            <GridActionIconButton
-                              onClick={() => handleDelete(item)}
-                              icon={<Trash2 className="size-3" />}
-                              label="Eliminar"
-                              tone="red"
-                            />
+                            {!item.__is_unassigned_employee && (
+                              <GridActionIconButton
+                                onClick={() => handleDelete(item)}
+                                icon={<Trash2 className="size-3" />}
+                                label="Eliminar"
+                                tone="red"
+                              />
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -2093,7 +2241,7 @@ export function OrgMaintenance({
               </select>
             </div>
             <span className="text-sm text-gray-500">
-              {filteredItems.length} de {items.length}
+              {filteredItems.length} de {effectiveItems.length}
             </span>
           </div>
 
@@ -2127,7 +2275,7 @@ export function OrgMaintenance({
                     <tr key={item.id} className="hover:bg-gray-50">
                       {config.tableColumns.map((column) => (
                         <td key={column} className="px-3 py-2 border-b text-gray-700">
-                          {formatCellValue(column, item[column])}
+                          {formatCellValue(column, item[column], item)}
                         </td>
                       ))}
                       <td className="px-3 py-2 border-b">
@@ -2138,7 +2286,7 @@ export function OrgMaintenance({
                             label="Editar"
                             tone="blue"
                           />
-                          {config.tableColumns.includes('is_active') && 'is_active' in item && (
+                          {config.tableColumns.includes('is_active') && 'is_active' in item && !item.__is_unassigned_employee && (
                             <GridActionIconButton
                               onClick={() => handleToggleStatus(item)}
                               icon={<Power className="size-3" />}
@@ -2146,12 +2294,14 @@ export function OrgMaintenance({
                               tone={item.is_active ? 'red' : 'green'}
                             />
                           )}
-                          <GridActionIconButton
-                            onClick={() => handleDelete(item)}
-                            icon={<Trash2 className="size-3" />}
-                            label="Eliminar"
-                            tone="red"
-                          />
+                          {!item.__is_unassigned_employee && (
+                            <GridActionIconButton
+                              onClick={() => handleDelete(item)}
+                              icon={<Trash2 className="size-3" />}
+                              label="Eliminar"
+                              tone="red"
+                            />
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2165,8 +2315,3 @@ export function OrgMaintenance({
     </div>
   );
 }
-
-
-
-
-

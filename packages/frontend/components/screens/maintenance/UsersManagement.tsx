@@ -96,6 +96,7 @@ interface Role { id: string; role_key: string; role_name: string; role_scope: st
 interface ScopeType { id: string; scope_type_key: string; scope_type_name: string; }
 interface Company { id: string; company_name: string; tenant_id: string; }
 interface Language { code: string; language_name: string; }
+interface ScopeEntityOption { id: string; label: string; description?: string | null; }
 
 type MainTab = 'users' | 'all-roles' | 'all-scopes';
 type UserDetailTab = 'info' | 'roles';
@@ -193,6 +194,8 @@ export function UsersManagement() {
   const [scopeForm, setScopeForm] = useState({ tenant_id: '', scope_type_id: '', scope_entity_id: '', is_active: true });
   const [scopeFormErrors, setScopeFormErrors] = useState<Record<string, string>>({});
   const [scopeSaving, setScopeSaving] = useState(false);
+  const [scopeEntityOptions, setScopeEntityOptions] = useState<ScopeEntityOption[]>([]);
+  const [scopeEntitiesLoading, setScopeEntitiesLoading] = useState(false);
 
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [passwordTarget, setPasswordTarget] = useState<AppUser | null>(null);
@@ -204,6 +207,7 @@ export function UsersManagement() {
   const tenantsById = new Map(tenants.map((t) => [t.id, t.tenant_name]));
   const companiesById = new Map(companies.map((c) => [c.id, c.company_name]));
   const scopeTypesById = new Map(scopeTypes.map((st) => [st.id, st]));
+  const selectedScopeType = scopeTypesById.get(scopeForm.scope_type_id) || null;
 
   const resolveScopeEntityLabel = (scope: UserRoleScope): string => {
     const key = String(scope.scope_type_key || '').toUpperCase();
@@ -247,6 +251,14 @@ export function UsersManagement() {
   useEffect(() => {
     loadAll();
   }, []);
+
+  useEffect(() => {
+    if (!isScopeModalOpen || !scopeForm.scope_type_id || !scopeForm.tenant_id) {
+      setScopeEntityOptions([]);
+      return;
+    }
+    void loadScopeEntityOptions(scopeForm.scope_type_id, scopeForm.tenant_id);
+  }, [isScopeModalOpen, scopeForm.scope_type_id, scopeForm.tenant_id]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -299,6 +311,27 @@ export function UsersManagement() {
     if (!res.ok) return;
     const data = await res.json();
     setCompanies(data.companies || []);
+  };
+
+  const loadScopeEntityOptions = async (scopeTypeId: string, tenantId: string) => {
+    setScopeEntitiesLoading(true);
+    try {
+      const params = new URLSearchParams({ scope_type_id: scopeTypeId, tenant_id: tenantId });
+      const res = await fetch(`${API_BASE}/catalogs/scope-entities?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+      setScopeEntityOptions(data.entities || []);
+    } catch (err: any) {
+      setScopeEntityOptions([]);
+      setScopeFormErrors((prev) => ({
+        ...prev,
+        scope_entity_id: err.message || 'No se pudo cargar el catalogo de entidades',
+      }));
+    } finally {
+      setScopeEntitiesLoading(false);
+    }
   };
 
   const loadLanguages = async () => {
@@ -444,7 +477,8 @@ export function UsersManagement() {
     } else if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(userForm.email)) {
       errors.email = 'El formato del email no es válido';
     }
-    if (!editingUser) {
+    const passwordProvided = Boolean(userForm.password || userForm.confirm_password);
+    if (!editingUser || passwordProvided) {
       if (!userForm.password) errors.password = 'La contraseña es obligatoria';
       else if (userForm.password.length < 8) errors.password = 'Mínimo 8 caracteres';
       else if (userForm.password !== userForm.confirm_password) errors.confirm_password = 'Las contraseñas no coinciden';
@@ -465,7 +499,7 @@ export function UsersManagement() {
         phone: userForm.phone || null, preferred_language_code: userForm.preferred_language_code || null,
         is_active: userForm.is_active,
       };
-      if (!editingUser) body.password = userForm.password;
+      if (!editingUser || userForm.password) body.password = userForm.password;
 
       const res = await fetch(url, {
         method,
@@ -632,6 +666,7 @@ export function UsersManagement() {
     setEditingScope(null);
     setScopeTargetUserRoleId(ur?.id || selectedUserRole?.id || '');
     setScopeForm({ tenant_id: selectedUser?.tenant_id || '', scope_type_id: '', scope_entity_id: '', is_active: true });
+    setScopeEntityOptions([]);
     setScopeFormErrors({});
     setIsScopeModalOpen(true);
   };
@@ -646,6 +681,7 @@ export function UsersManagement() {
       scope_entity_id: scope.scope_entity_id,
       is_active: scope.is_active,
     });
+    setScopeEntityOptions([]);
     setScopeFormErrors({});
     setIsScopeModalOpen(true);
   };
@@ -1203,22 +1239,24 @@ export function UsersManagement() {
                     {languages.map(l => <option key={l.code} value={l.code}>{l.language_name}</option>)}
                   </select>
                 </div>
-                {!editingUser && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Contraseña <span className="text-red-500">*</span></label>
-                      <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
-                        placeholder="Mínimo 8 caracteres" className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
-                      {userFormErrors.password && <p className="text-xs text-red-500 mt-1">{userFormErrors.password}</p>}
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Contraseña <span className="text-red-500">*</span></label>
-                      <input type="password" value={userForm.confirm_password} onChange={e => setUserForm(f => ({ ...f, confirm_password: e.target.value }))}
-                        placeholder="Repetir contraseña" className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.confirm_password ? 'border-red-400' : 'border-gray-300'}`} />
-                      {userFormErrors.confirm_password && <p className="text-xs text-red-500 mt-1">{userFormErrors.confirm_password}</p>}
-                    </div>
-                  </>
-                )}
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Contraseña {!editingUser && <span className="text-red-500">*</span>}
+                    </label>
+                    <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
+                      placeholder={editingUser ? 'Dejar vacío para no cambiar' : 'Mínimo 8 caracteres'} className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
+                    {userFormErrors.password && <p className="text-xs text-red-500 mt-1">{userFormErrors.password}</p>}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Confirmar Contraseña {!editingUser && <span className="text-red-500">*</span>}
+                    </label>
+                    <input type="password" value={userForm.confirm_password} onChange={e => setUserForm(f => ({ ...f, confirm_password: e.target.value }))}
+                      placeholder="Repetir contraseña" className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.confirm_password ? 'border-red-400' : 'border-gray-300'}`} />
+                    {userFormErrors.confirm_password && <p className="text-xs text-red-500 mt-1">{userFormErrors.confirm_password}</p>}
+                  </div>
+                </>
                 <div className="col-span-2 flex items-center gap-3">
                   <label className="text-sm font-medium text-gray-700">Estado</label>
                   <button type="button" onClick={() => setUserForm(f => ({ ...f, is_active: !f.is_active }))}
@@ -1335,7 +1373,11 @@ export function UsersManagement() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Alcance <span className="text-red-500">*</span></label>
-                <select value={scopeForm.scope_type_id} onChange={e => setScopeForm(f => ({ ...f, scope_type_id: e.target.value }))}
+                <select value={scopeForm.scope_type_id} onChange={e => {
+                  setScopeForm(f => ({ ...f, scope_type_id: e.target.value, scope_entity_id: '' }));
+                  setScopeEntityOptions([]);
+                  setScopeFormErrors(prev => ({ ...prev, scope_type_id: '', scope_entity_id: '' }));
+                }}
                   className={`w-full px-3 py-2 border rounded-lg text-sm ${scopeFormErrors.scope_type_id ? 'border-red-400' : 'border-gray-300'}`}>
                   <option value="">Seleccionar tipo de alcance...</option>
                   {scopeTypes.map(st => <option key={st.id} value={st.id}>{st.scope_type_name} ({st.scope_type_key})</option>)}
@@ -1343,12 +1385,35 @@ export function UsersManagement() {
                 {scopeFormErrors.scope_type_id && <p className="text-xs text-red-500 mt-1">{scopeFormErrors.scope_type_id}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">ID de Entidad <span className="text-red-500">*</span></label>
-                <input type="text" value={scopeForm.scope_entity_id} onChange={e => setScopeForm(f => ({ ...f, scope_entity_id: e.target.value }))}
-                  placeholder="UUID de la entidad (empresa, sucursal, etc.)"
-                  className={`w-full px-3 py-2 border rounded-lg text-sm font-mono ${scopeFormErrors.scope_entity_id ? 'border-red-400' : 'border-gray-300'}`} />
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {selectedScopeType ? selectedScopeType.scope_type_name : 'Entidad'} <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={scopeForm.scope_entity_id}
+                  disabled={!scopeForm.scope_type_id || scopeEntitiesLoading}
+                  onChange={e => {
+                    setScopeForm(f => ({ ...f, scope_entity_id: e.target.value }));
+                    setScopeFormErrors(prev => ({ ...prev, scope_entity_id: '' }));
+                  }}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm disabled:bg-gray-100 disabled:text-gray-500 ${scopeFormErrors.scope_entity_id ? 'border-red-400' : 'border-gray-300'}`}
+                >
+                  <option value="">
+                    {!scopeForm.scope_type_id
+                      ? 'Seleccione primero el tipo de alcance'
+                      : scopeEntitiesLoading
+                        ? 'Cargando opciones...'
+                        : 'Seleccionar entidad...'}
+                  </option>
+                  {scopeEntityOptions.map(option => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 {scopeFormErrors.scope_entity_id && <p className="text-xs text-red-500 mt-1">{scopeFormErrors.scope_entity_id}</p>}
-                <p className="text-xs text-gray-400 mt-1">UUID del registro en la entidad correspondiente al tipo de alcance.</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Se guardara internamente el UUID de la entidad seleccionada.
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-sm font-medium text-gray-700">Estado</label>
