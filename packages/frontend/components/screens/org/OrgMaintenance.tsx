@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { buildApiUrl } from '../../../utils/api-config';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
@@ -200,10 +200,14 @@ function PolygonEditorField({
   value,
   onChange,
   large = false,
+  locationSearchQuery = '',
+  locationSearchCountryCode = '',
 }: {
   value: any;
   onChange: (next: any) => void;
   large?: boolean;
+  locationSearchQuery?: string;
+  locationSearchCountryCode?: string;
 }) {
   const [points, setPoints] = useState<GeoPoint[]>(() => parseGeofencePoints(value));
   const [center, setCenter] = useState<LatLngExpression>([-2.17, -79.92]);
@@ -215,6 +219,7 @@ function PolygonEditorField({
     Array<{ display_name: string; lat: string; lon: string }>
   >([]);
   const [showMapSearchResults, setShowMapSearchResults] = useState(false);
+  const lastAutoCenterQueryRef = useRef('');
 
   useEffect(() => {
     const nextPoints = parseGeofencePoints(value);
@@ -231,6 +236,41 @@ function PolygonEditorField({
     onChange(toGeofenceGeoJson(nextPoints));
   };
 
+  const centerFromSearchResult = (
+    row: { display_name: string; lat: string; lon: string },
+    nextZoom = 18
+  ) => {
+    const lat = Number(row.lat);
+    const lng = Number(row.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    setCenter([lat, lng]);
+    setZoom(nextZoom);
+    return true;
+  };
+
+  const searchMapLocation = async (query: string, limit = 8) => {
+    const params = new URLSearchParams({
+      format: 'json',
+      limit: String(limit),
+      q: query,
+    });
+    const countryCode = locationSearchCountryCode.trim().toLowerCase();
+    if (countryCode) {
+      params.set('countrycodes', countryCode);
+    }
+
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    return Array.isArray(payload) ? payload : [];
+  };
+
   const handleMapSearch = async () => {
     const query = mapSearchTerm.trim();
     if (!query) {
@@ -242,28 +282,12 @@ function PolygonEditorField({
     setMapSearchLoading(true);
     setMapSearchError('');
     try {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(query)}`;
-      const response = await fetch(url, {
-        headers: {
-          Accept: 'application/json',
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      const payload = await response.json();
-      const rows = Array.isArray(payload) ? payload : [];
+      const rows = await searchMapLocation(query);
       setMapSearchResults(rows);
       setShowMapSearchResults(rows.length > 0);
 
       if (rows.length > 0) {
-        const first = rows[0];
-        const lat = Number(first.lat);
-        const lng = Number(first.lon);
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          setCenter([lat, lng]);
-          setZoom(18);
-        }
+        centerFromSearchResult(rows[0], 18);
       }
     } catch (error: any) {
       setMapSearchResults([]);
@@ -274,13 +298,46 @@ function PolygonEditorField({
   };
 
   const applySearchResult = (row: { display_name: string; lat: string; lon: string }) => {
-    const lat = Number(row.lat);
-    const lng = Number(row.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    setCenter([lat, lng]);
-    setZoom(19);
+    if (!centerFromSearchResult(row, 19)) return;
     setShowMapSearchResults(false);
   };
+
+  const centerOnLocationContext = async () => {
+    const query = locationSearchQuery.trim();
+    if (!query) {
+      setMapSearchError('Seleccione país, provincia, ciudad o ingrese una dirección');
+      return;
+    }
+
+    setMapSearchTerm(query);
+    setMapSearchLoading(true);
+    setMapSearchError('');
+    try {
+      const rows = await searchMapLocation(query, 5);
+      setMapSearchResults(rows);
+      setShowMapSearchResults(rows.length > 1);
+      if (rows.length === 0 || !centerFromSearchResult(rows[0], 18)) {
+        setMapSearchError('No se encontró una ubicación cercana con esos datos');
+      }
+    } catch (error: any) {
+      setMapSearchResults([]);
+      setMapSearchError(error?.message || 'No se pudo consultar el mapa');
+    } finally {
+      setMapSearchLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const query = locationSearchQuery.trim();
+    if (!query || points.length > 0 || lastAutoCenterQueryRef.current === query) return;
+
+    const timer = window.setTimeout(() => {
+      lastAutoCenterQueryRef.current = query;
+      void centerOnLocationContext();
+    }, 700);
+
+    return () => window.clearTimeout(timer);
+  }, [locationSearchQuery, points.length]);
 
   const polygonPositions = points.map((point) => [point.lat, point.lng] as [number, number]);
 
@@ -360,15 +417,10 @@ function PolygonEditorField({
         <button
           type="button"
           className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
-          onClick={() => {
-            if (!navigator.geolocation) return;
-            navigator.geolocation.getCurrentPosition((pos) => {
-              setCenter([Number(pos.coords.latitude), Number(pos.coords.longitude)]);
-              setZoom(18);
-            });
-          }}
+          onClick={() => void centerOnLocationContext()}
+          disabled={mapSearchLoading || !locationSearchQuery.trim()}
         >
-          Centrar en mi ubicacion
+          Centrar en direccion
         </button>
       </div>
 
@@ -456,7 +508,7 @@ function getAlternateToken(currentToken: string) {
 const ENTITY_CONFIGS: EntityConfig[] = [
   {
     key: 'companies',
-    title: 'Companies',
+    title: 'Empresa',
     description: 'Gestión de empresas del tenant',
     fields: [
       { key: 'company_name', label: 'Nombre', type: 'text', required: true },
@@ -486,7 +538,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
-      { key: 'time_zone', label: 'Zona horaria', type: 'text' },
+      { key: 'time_zone', label: 'Zona horaria', type: 'select', optionsKey: 'attendance_timezones' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
@@ -840,6 +892,7 @@ export function OrgMaintenance({
   const LOOKUP_GROUP_BY_OPTIONS_KEY: Record<string, string> = {
     contract_types: 'CONTRACT_TYPE',
     genders: 'GENDER',
+    attendance_timezones: 'ATTENDANCE_TIMEZONE',
     countries: 'COUNTRY',
     states: 'STATE',
     cities: 'CITY',
@@ -855,10 +908,16 @@ export function OrgMaintenance({
     );
   };
 
+  const isGeoCatalogKey = (key: string) => key === 'countries' || key === 'states' || key === 'cities';
+
+  const shouldUseTableGeoCatalogs = entity === 'companies' || entity === 'work-locations';
+
   const loadCatalogsByEntityFallback = async () => {
     const keys = getRequiredCatalogKeys();
     const entityKeys = keys.filter((key) => key in CATALOG_ENTITY_PATHS);
-    const lookupKeys = keys.filter((key) => key in LOOKUP_GROUP_BY_OPTIONS_KEY);
+    const lookupKeys = keys.filter((key) =>
+      key in LOOKUP_GROUP_BY_OPTIONS_KEY && !(shouldUseTableGeoCatalogs && isGeoCatalogKey(key))
+    );
 
     if (entityKeys.length === 0 && lookupKeys.length === 0) return;
 
@@ -961,7 +1020,7 @@ export function OrgMaintenance({
         await loadCatalogsByEntityFallback();
       }
 
-      if (entity === 'work-locations') {
+      if (shouldUseTableGeoCatalogs) {
         const geoEmpty =
           !Array.isArray(catalogs.countries) || catalogs.countries.length === 0 ||
           !Array.isArray(catalogs.states) || catalogs.states.length === 0 ||
@@ -974,7 +1033,7 @@ export function OrgMaintenance({
       console.error('Error cargando catálogos ORG:', err);
       try {
         await loadCatalogsByEntityFallback();
-        if (entity === 'work-locations') {
+        if (shouldUseTableGeoCatalogs) {
           await loadGeoCatalogsFallback();
         }
       } catch (fallbackErr) {
@@ -1366,6 +1425,69 @@ export function OrgMaintenance({
     ];
   };
 
+  const normalizeLookupText = (value: any) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+
+  const TIMEZONE_COUNTRY_KEY_PREFIXES: Record<string, string[]> = {
+    AR: ['ARGENTINA'],
+    CL: ['CHILE'],
+    CO: ['COLOMBIA'],
+    EC: ['ECUADOR'],
+    PE: ['PERU'],
+    US: ['USA', 'UNITED_STATES', 'ESTADOS_UNIDOS'],
+  };
+
+  const getFilteredTimezoneOptions = (baseOptions: any[]) => {
+    if (entity !== 'work-locations') return baseOptions;
+
+    const selectedCountryId = String(formData.country_id || '');
+    if (!selectedCountryId) return [];
+
+    const selectedCountry = (catalogs.countries || []).find(
+      (country: any) => String(country?.id || '') === selectedCountryId
+    );
+    if (!selectedCountry) return [];
+
+    const countryShortLabel = normalizeLookupText(selectedCountry.lookup_short_label);
+    const countryTokens = new Set(
+      [
+        selectedCountry.lookup_label,
+        selectedCountry.lookup_short_label,
+        selectedCountry.lookup_key,
+        ...(TIMEZONE_COUNTRY_KEY_PREFIXES[countryShortLabel] || []),
+      ]
+        .map((token) => normalizeLookupText(token))
+        .filter(Boolean)
+    );
+
+    const filtered = baseOptions.filter((option: any) => {
+      const timezoneKey = normalizeLookupText(option.lookup_key);
+      const timezoneCountryLabel = normalizeLookupText(String(option.lookup_label || '').split('-')[0]);
+      return (
+        countryTokens.has(timezoneCountryLabel) ||
+        Array.from(countryTokens).some((token) => timezoneKey === token || timezoneKey.startsWith(`${token}_`))
+      );
+    });
+
+    const uniqueByTimezone = new Map<string, any>();
+    filtered.forEach((option: any) => {
+      const timezoneValue = String(option.lookup_short_label || option.lookup_key || option.id || '');
+      if (!timezoneValue || uniqueByTimezone.has(timezoneValue)) return;
+      uniqueByTimezone.set(timezoneValue, {
+        ...option,
+        label: timezoneValue,
+      });
+    });
+
+    return Array.from(uniqueByTimezone.values());
+  };
+
   const getSelectOptions = (key?: string) => {
     if (!key) return [];
 
@@ -1379,22 +1501,22 @@ export function OrgMaintenance({
 
     const baseOptions = catalogs[key] || [];
 
+    if (key === 'attendance_timezones') {
+      return getFilteredTimezoneOptions(baseOptions);
+    }
+
     if (key === 'states') {
       const selectedCountryId = String(formData.company_country_id || formData.country_id || '');
-      if (!selectedCountryId) return baseOptions;
+      if (!selectedCountryId) return [];
       return baseOptions.filter((option: any) => String(option?.country_id || '') === selectedCountryId);
     }
 
     if (key === 'cities') {
-      const selectedCountryId = String(formData.company_country_id || formData.country_id || '');
       const selectedStateId = String(formData.company_state_id || formData.state_id || '');
       if (selectedStateId) {
         return baseOptions.filter((option: any) => String(option?.state_id || '') === selectedStateId);
       }
-      if (selectedCountryId) {
-        return baseOptions.filter((option: any) => String(option?.country_id || '') === selectedCountryId);
-      }
-      return baseOptions;
+      return [];
     }
 
     return baseOptions;
@@ -1425,6 +1547,102 @@ export function OrgMaintenance({
     );
   };
 
+  const getOptionValue = (field: FieldConfig, option: any) => {
+    if (field.key === 'time_zone') {
+      return String(option.lookup_short_label || option.lookup_key || option.value || option.id || '');
+    }
+    return String(option.id || '');
+  };
+
+  const findOptionById = (optionsKey: string, value: any) => {
+    const selectedValue = String(value || '');
+    if (!selectedValue) return null;
+    return (catalogs[optionsKey] || []).find((option: any) => String(option?.id || '') === selectedValue) || null;
+  };
+
+  const getWorkLocationMapSearchContext = () => {
+    const country = findOptionById('countries', formData.country_id);
+    const state = findOptionById('states', formData.state_id);
+    const city = findOptionById('cities', formData.city_id);
+    const parts = [
+      formData.address_line1,
+      city ? getOptionLabel(city) : '',
+      state ? getOptionLabel(state) : '',
+      country ? getOptionLabel(country) : '',
+    ]
+      .map((part) => String(part || '').trim())
+      .filter(Boolean);
+
+    const countryCode = String(country?.lookup_short_label || '').trim().toLowerCase();
+
+    return {
+      query: parts.join(', '),
+      countryCode: /^[a-z]{2}$/i.test(countryCode) ? countryCode : '',
+    };
+  };
+
+  const getFormModalClassName = () => {
+    const isSimpleMaintenanceEntity =
+      entity === 'departments' ||
+      entity === 'areas' ||
+      entity === 'work-groups' ||
+      entity === 'payroll-groups' ||
+      entity === 'job-titles' ||
+      entity === 'cost-centers' ||
+      entity === 'employee-profiles';
+
+    if (isSimpleMaintenanceEntity) {
+      return 'relative w-full max-w-xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
+    }
+    if (entity === 'companies') {
+      return 'relative w-full max-w-5xl max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
+    }
+    return 'relative w-full max-w-[96vw] max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col';
+  };
+
+  const getFormGridClassName = () => {
+    if (entity === 'work-locations') {
+      return 'grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start';
+    }
+    if (entity === 'companies') {
+      return 'grid grid-cols-1 md:grid-cols-2 gap-3';
+    }
+    if (
+      entity === 'departments' ||
+      entity === 'areas' ||
+      entity === 'work-groups' ||
+      entity === 'payroll-groups' ||
+      entity === 'job-titles' ||
+      entity === 'cost-centers' ||
+      entity === 'employee-profiles'
+    ) {
+      return 'grid grid-cols-1 gap-3';
+    }
+    return 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3';
+  };
+
+  const isDependentGeoSelectDisabled = (fieldKey: string) => {
+    if (fieldKey === 'company_state_id') return !formData.company_country_id;
+    if (fieldKey === 'company_city_id') return !formData.company_state_id;
+    if (fieldKey === 'state_id') return !formData.country_id;
+    if (fieldKey === 'city_id') return !formData.state_id;
+    if (fieldKey === 'time_zone' && entity === 'work-locations') return !formData.country_id;
+    return false;
+  };
+
+  const getFormTitle = () => {
+    if (entity === 'companies') {
+      return editingId ? 'Editar Empresa' : 'Nueva Empresa';
+    }
+    if (entity === 'departments') {
+      return editingId ? 'Editar Departamento' : 'Nuevo Departamento';
+    }
+    if (entity === 'areas') {
+      return editingId ? 'Editar Área' : 'Nueva Área';
+    }
+    return editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`;
+  };
+
   const formatCellValue = (column: string, rawValue: any) => {
     const field = getFieldByKey(column);
 
@@ -1451,8 +1669,8 @@ export function OrgMaintenance({
 
     if (field.type === 'select') {
       if (!rawValue) return '';
-      const options = getSelectOptions(field.optionsKey);
-      const selected = options.find((option: any) => option.id === rawValue);
+      const options = field.optionsKey ? (catalogs[field.optionsKey] || []) : [];
+      const selected = options.find((option: any) => getOptionValue(field, option) === String(rawValue));
       return selected ? String(getOptionLabel(selected)) : String(rawValue);
     }
 
@@ -1538,10 +1756,10 @@ export function OrgMaintenance({
               clearPhotoPreview();
             }}
           />
-          <div className="relative w-full max-w-[96vw] max-h-[96vh] overflow-hidden rounded-lg border bg-white shadow-2xl flex flex-col">
+          <div className={getFormModalClassName()}>
             <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
               <h3 className="text-base font-semibold text-gray-900">
-                {editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`}
+                {getFormTitle()}
               </h3>
               <button
                 onClick={() => {
@@ -1556,13 +1774,7 @@ export function OrgMaintenance({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-3">
-              <div
-                className={
-                  entity === 'work-locations'
-                    ? 'grid grid-cols-1 xl:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start'
-                    : 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3'
-                }
-              >
+              <div className={getFormGridClassName()}>
               {config.fields.map((field) => (
                 <div
                   key={field.key}
@@ -1636,12 +1848,15 @@ export function OrgMaintenance({
                       onChange={(nextValue) =>
                         setFormData((prev) => ({ ...prev, [field.key]: nextValue }))
                       }
+                      locationSearchQuery={getWorkLocationMapSearchContext().query}
+                      locationSearchCountryCode={getWorkLocationMapSearchContext().countryCode}
                       large
                     />
                   ) : field.type === 'select' ? (
 
                     <select
                       value={formData[field.key] ?? ''}
+                      disabled={isDependentGeoSelectDisabled(field.key)}
                       onChange={(event) => {
                         const value = event.target.value;
                         if (entity === 'shifts' && field.key === 'company_id') {
@@ -1675,6 +1890,7 @@ export function OrgMaintenance({
                             country_id: value,
                             state_id: '',
                             city_id: '',
+                            time_zone: '',
                           }));
                           return;
                         }
@@ -1688,11 +1904,11 @@ export function OrgMaintenance({
                         }
                         setFormData((prev) => ({ ...prev, [field.key]: value }));
                       }}
-                      className="w-full border rounded px-2 py-1.5 text-sm"
+                      className="w-full border rounded px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
                     >
                       <option value="">-- Seleccionar --</option>
                       {getSelectOptions(field.optionsKey).map((option: any) => (
-                        <option key={option.id} value={option.id}>
+                        <option key={option.id} value={getOptionValue(field, option)}>
                           {getOptionLabel(option)}
                         </option>
                       ))}

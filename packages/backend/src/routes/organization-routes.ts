@@ -971,49 +971,6 @@ function sanitizeEmail(value: any): string | null {
   return normalized;
 }
 
-function normalizeLookupMatchKey(value: any): string {
-  return String(value ?? '')
-    .trim()
-    .toUpperCase();
-}
-
-function resolveCompanyLookupGeoId(
-  source: { id: string; lookup_key?: string | null; lookup_label?: string | null; lookup_short_label?: string | null }[],
-  rawCode: any,
-  rawLabel: any,
-  rawShortLabel: any
-): string | null {
-  const code = normalizeText(rawCode);
-  const label = normalizeText(rawLabel);
-  const shortLabel = normalizeText(rawShortLabel);
-
-  if (!code && !label && !shortLabel) return null;
-
-  const byId = new Set(source.map((row) => String(row.id)));
-  if (code && byId.has(code)) return code;
-
-  const keyCandidates = [
-    code ? normalizeLookupMatchKey(code) : '',
-    label ? normalizeLookupMatchKey(label) : '',
-    shortLabel ? normalizeLookupMatchKey(shortLabel) : '',
-  ].filter(Boolean);
-
-  if (keyCandidates.length === 0) return null;
-
-  for (const row of source) {
-    const rowKeys = [
-      normalizeLookupMatchKey(row.lookup_key),
-      normalizeLookupMatchKey(row.lookup_label),
-      normalizeLookupMatchKey(row.lookup_short_label),
-    ].filter(Boolean);
-    if (rowKeys.some((entry) => keyCandidates.includes(entry))) {
-      return String(row.id);
-    }
-  }
-
-  return null;
-}
-
 async function findByTenantAndCode(
   Postgres: any,
   table: string,
@@ -1214,20 +1171,6 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
     const events: ImportLogEvent[] = [];
     pushImportEvent(events, 'structure', 'info', `Inicio de importacion de estructura (${rows.length} filas)`, 5);
 
-    const { data: activeLookupValues, error: activeLookupValuesError } = await Postgres
-      .from('lookup_values')
-      .select('id, lookup_key, lookup_label, lookup_short_label')
-      .eq('is_active', true);
-    if (activeLookupValuesError) {
-      throw new Error(activeLookupValuesError.message || 'Error consultando lookup_values para geografia de companies');
-    }
-    const lookupValues = (activeLookupValues || []) as Array<{
-      id: string;
-      lookup_key?: string | null;
-      lookup_label?: string | null;
-      lookup_short_label?: string | null;
-    }>;
-
     const counters: Record<string, { created: number; updated: number }> = {
       countries: { created: 0, updated: 0 },
       states: { created: 0, updated: 0 },
@@ -1376,7 +1319,7 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
         row.company_state_short_label
       );
       announceTable('cities', 'cities', index);
-      await ensureCityCached(
+      const companyCityId = await ensureCityCached(
         companyCountryId,
         companyStateId,
         row.company_city_id,
@@ -1392,24 +1335,9 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
         company_address: normalizeText(row.company_address),
         company_address_line1: normalizeText(row.company_address_line1),
         company_address_line2: normalizeText(row.company_address_line2),
-        company_country_id: resolveCompanyLookupGeoId(
-          lookupValues,
-          row.company_country_id,
-          row.company_country_label,
-          row.company_country_short_label
-        ),
-        company_state_id: resolveCompanyLookupGeoId(
-          lookupValues,
-          row.company_state_id,
-          row.company_state_label,
-          row.company_state_short_label
-        ),
-        company_city_id: resolveCompanyLookupGeoId(
-          lookupValues,
-          row.company_city_id,
-          row.company_city_label,
-          row.company_city_short_label
-        ),
+        company_country_id: companyCountryId,
+        company_state_id: companyStateId,
+        company_city_id: companyCityId,
         company_postal_code: normalizeText(row.company_postal_code),
         company_phone: normalizeText(row.company_phone),
         is_active: normalizeBool(row.is_active, true),
@@ -2933,6 +2861,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       jobTitles,
       contractTypes,
       genders,
+      attendanceTimezones,
       countries,
       states,
       cities,
@@ -2948,8 +2877,9 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       Postgres.from('work_groups').select('id, work_group_code, work_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_group_name'),
       Postgres.from('work_locations').select('id, work_location_code, work_location_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_location_name'),
       Postgres.from('job_titles').select('id, job_title_code, job_title_name').eq('tenant_id', tenantId).eq('is_active', true).order('job_title_name'),
-      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'CONTRACT_TYPE').eq('is_active', true).order('lookup_label'),
-      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'GENDER').eq('is_active', true).order('lookup_label'),
+      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'CONTRACT_TYPE').eq('is_active', true).order('lookup_label'),
+      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'GENDER').eq('is_active', true).order('lookup_label'),
+      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'ATTENDANCE_TIMEZONE').eq('is_active', true).order('lookup_label'),
       Postgres.from('countries').select('*').eq('is_active', true),
       Postgres.from('states').select('*').eq('is_active', true),
       Postgres.from('cities').select('*').eq('is_active', true),
@@ -2974,6 +2904,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       jobTitles.error,
       contractTypes.error,
       genders.error,
+      attendanceTimezones.error,
       countries.error,
       states.error,
       cities.error,
@@ -3040,6 +2971,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
         job_titles: jobTitles.data || [],
         contract_types: contractTypes.data || [],
         genders: genders.data || [],
+        attendance_timezones: attendanceTimezones.data || [],
         countries: countryOptions,
         states: stateOptions,
         cities: cityOptions,

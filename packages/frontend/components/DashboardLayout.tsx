@@ -27,15 +27,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     <SidebarProvider>
       <div className="flex w-full h-screen">
         <AppSidebar />
-        <SidebarInset className="flex flex-col flex-1 overflow-auto">
+        <SidebarInset className="flex min-h-0 flex-1 flex-col overflow-auto">
           <AppHeader />
-          <div className={`flex-1 ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
-            <div className={`rounded-xl bg-muted/50 min-h-full ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
+          <div className={`flex flex-1 flex-col ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
+            <div className={`flex-1 rounded-xl bg-muted/50 ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
               {/* Si no se pasan children, usar el Router dinámico */}
               {children || <Router />}
             </div>
             {isTenantAdmin ? (
-              <footer className="py-6 text-center text-sm text-muted-foreground">
+              <footer className="shrink-0 pt-3 text-center text-sm text-muted-foreground">
                 Titanium Labs Corp.™ 2026 © | Todos los derechos reservados
               </footer>
             ) : null}
