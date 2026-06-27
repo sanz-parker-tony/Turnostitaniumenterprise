@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { buildApiUrl } from '../../../utils/api-config';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -67,6 +67,60 @@ function keyOf(type: ScopeTypeKey, id: string): string {
   return `${type}:${id}`;
 }
 
+function countSelectedScopes(selection: Record<ScopeTypeKey, Set<string>>): number {
+  return Object.values(selection).reduce((total, values) => total + values.size, 0);
+}
+
+function filterTreeBySelection(
+  tree: TreeCompanyNode[],
+  selection: Record<ScopeTypeKey, Set<string>>
+): TreeCompanyNode[] {
+  return tree
+    .map((company) => {
+      if (selection.COMPANY.has(company.id)) return company;
+
+      const workLocations = company.work_locations
+        .map((workLocation) => {
+          if (selection.WORK_LOCATION.has(workLocation.id)) return workLocation;
+
+          const departments = workLocation.departments
+            .map((department) => {
+              if (selection.DEPARTMENT.has(department.id)) return department;
+
+              const areas = department.areas
+                .map((area) => {
+                  if (selection.AREA.has(area.id)) return area;
+
+                  const costCenters = area.cost_centers.filter((row) => selection.COST_CENTER.has(row.id));
+                  const workGroups = area.work_groups.filter((row) => selection.WORK_GROUP.has(row.id));
+                  const employeeProfiles = area.employee_profiles.filter((row) => selection.EMPLOYEE_PROFILE.has(row.id));
+
+                  if (costCenters.length === 0 && workGroups.length === 0 && employeeProfiles.length === 0) {
+                    return null;
+                  }
+
+                  return {
+                    ...area,
+                    cost_centers: costCenters,
+                    work_groups: workGroups,
+                    employee_profiles: employeeProfiles,
+                  };
+                })
+                .filter((area): area is TreeAreaNode => Boolean(area));
+
+              return areas.length > 0 ? { ...department, areas } : null;
+            })
+            .filter((department): department is TreeDepartmentNode => Boolean(department));
+
+          return departments.length > 0 ? { ...workLocation, departments } : null;
+        })
+        .filter((workLocation): workLocation is TreeWorkLocationNode => Boolean(workLocation));
+
+      return workLocations.length > 0 ? { ...company, work_locations: workLocations } : null;
+    })
+    .filter((company): company is TreeCompanyNode => Boolean(company));
+}
+
 export default function SecurityUserScopesManagement() {
   const { session } = useAuth();
 
@@ -80,6 +134,7 @@ export default function SecurityUserScopesManagement() {
   const [tree, setTree] = useState<TreeCompanyNode[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedArea, setSelectedArea] = useState<AreaContext | null>(null);
+  const [showFullCatalog, setShowFullCatalog] = useState(false);
 
   const [selection, setSelection] = useState<Record<ScopeTypeKey, Set<string>>>({
     COMPANY: new Set<string>(),
@@ -92,6 +147,11 @@ export default function SecurityUserScopesManagement() {
   });
 
   const token = session?.access_token || '';
+  const selectedScopeCount = useMemo(() => countSelectedScopes(selection), [selection]);
+  const visibleTree = useMemo(
+    () => (showFullCatalog || selectedScopeCount === 0 ? tree : filterTreeBySelection(tree, selection)),
+    [tree, selection, selectedScopeCount, showFullCatalog]
+  );
 
   useEffect(() => {
     void loadTargets();
@@ -101,6 +161,22 @@ export default function SecurityUserScopesManagement() {
     if (!selectedUserRoleId) return;
     void Promise.all([loadScopes(selectedUserRoleId), loadTree()]);
   }, [selectedUserRoleId]);
+
+  useEffect(() => {
+    if (showFullCatalog || selectedScopeCount === 0) return;
+
+    const nextExpanded = new Set<string>();
+    for (const company of visibleTree) {
+      nextExpanded.add(keyOf('COMPANY', company.id));
+      for (const workLocation of company.work_locations) {
+        nextExpanded.add(keyOf('WORK_LOCATION', workLocation.id));
+        for (const department of workLocation.departments) {
+          nextExpanded.add(keyOf('DEPARTMENT', department.id));
+        }
+      }
+    }
+    setExpanded(nextExpanded);
+  }, [showFullCatalog, selectedScopeCount, visibleTree]);
 
   async function authorizedFetch(path: string, init?: RequestInit): Promise<Response> {
     if (!token) throw new Error('Sesion no disponible');
@@ -327,18 +403,30 @@ export default function SecurityUserScopesManagement() {
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="grid min-h-full grid-cols-1 items-stretch gap-4 xl:grid-cols-[1.35fr_1fr]">
           <div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Arbol organizacional de alcances</div>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-slate-800">Arbol organizacional de alcances</div>
+            <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={showFullCatalog}
+                onChange={(event) => setShowFullCatalog(event.target.checked)}
+              />
+              Mostrar catálogo completo
+            </label>
+          </div>
           <div className="mb-3 text-xs text-slate-500">
-            Estructura: Empresa {'>'} Localizacion {'>'} Departamento {'>'} Area. Selecciona nodos segun el alcance requerido.
+            {showFullCatalog || selectedScopeCount === 0
+              ? 'Estructura completa disponible para asignar nuevos alcances.'
+              : 'Mostrando solo los alcances habilitados para el usuario seleccionado.'}
           </div>
 
           <div className="min-h-0 flex-1 pr-1">
             <div className="h-full min-h-0 overflow-auto">
-              {tree.length === 0 ? (
+              {visibleTree.length === 0 ? (
                 <div className="text-xs text-slate-500">No hay estructura organizacional disponible.</div>
               ) : (
                 <div className="h-full space-y-2">
-                  {tree.map((company) => {
+                  {visibleTree.map((company) => {
                     const companyExpanded = expanded.has(keyOf('COMPANY', company.id));
                     return (
                       <div key={company.id} className="p-1">
