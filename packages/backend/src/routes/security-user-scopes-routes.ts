@@ -7,6 +7,16 @@ type AuthContext = {
   authUserId: string;
 };
 
+type ScopeRulePayload = {
+  company_id: string | null;
+  work_location_id: string | null;
+  department_id: string | null;
+  area_id: string | null;
+  cost_center_id: string | null;
+  work_group_id: string | null;
+  employee_profile_id: string | null;
+};
+
 const router = Router();
 
 async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
@@ -155,6 +165,40 @@ async function validateScopeEntityBelongsTenant(
     [scopeEntityId, tenantId]
   );
   return result.rows.length > 0;
+}
+
+async function validateRuleReferencesBelongTenant(
+  tenantId: string,
+  rule: ScopeRulePayload
+): Promise<{ ok: boolean; field?: string }> {
+  const tableByField: Record<keyof ScopeRulePayload, string> = {
+    company_id: 'companies',
+    work_location_id: 'work_locations',
+    department_id: 'departments',
+    area_id: 'areas',
+    cost_center_id: 'cost_centers',
+    work_group_id: 'work_groups',
+    employee_profile_id: 'employee_profiles',
+  };
+
+  for (const [field, table] of Object.entries(tableByField) as Array<[keyof ScopeRulePayload, string]>) {
+    const value = normalizeUuid(rule[field]);
+    if (!value) continue;
+
+    const result = await pool.query(
+      `SELECT 1 FROM ${table} WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [value, tenantId]
+    );
+    if (result.rows.length === 0) return { ok: false, field };
+  }
+
+  return { ok: true };
+}
+
+function normalizeRuleId(raw: unknown): string | null {
+  const value = String(raw || '').trim();
+  if (!value || value === '0' || value.toLowerCase() === 'null' || value.toLowerCase() === 'undefined') return null;
+  return value;
 }
 
 router.get('/targets', async (req: Request, res: Response) => {
@@ -561,6 +605,215 @@ router.get('/employee-access/capabilities', async (req: Request, res: Response) 
   } catch (error: any) {
     console.error('[SECURITY-SCOPES] GET /employee-access/capabilities error:', error);
     return res.status(500).json({ error: 'Error interno del servidor', details: error.message });
+  }
+});
+
+router.get('/:user_role_id/scope-rules', async (req: Request, res: Response) => {
+  try {
+    const ctx = await resolveAuthContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+
+    const isTenantAdmin = await ensureTenantAdmin(ctx);
+    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+
+    const userRoleId = String(req.params.user_role_id || '').trim();
+    if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
+
+    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
+    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+
+    const result = await pool.query(
+      `
+        SELECT
+          r.id,
+          r.tenant_id,
+          r.user_role_id,
+          r.company_id,
+          c.company_name,
+          r.work_location_id,
+          wl.work_location_name,
+          r.department_id,
+          d.department_name,
+          r.area_id,
+          a.area_name,
+          r.cost_center_id,
+          cc.cost_center_name,
+          r.work_group_id,
+          wg.work_group_name,
+          r.employee_profile_id,
+          ep.profile_name AS employee_profile_name,
+          r.is_active,
+          r.created_by,
+          r.created_at,
+          r.updated_by,
+          r.updated_at
+        FROM user_role_scope_rules r
+        JOIN companies c ON c.id = r.company_id
+        LEFT JOIN work_locations wl ON wl.id = r.work_location_id
+        LEFT JOIN departments d ON d.id = r.department_id
+        LEFT JOIN areas a ON a.id = r.area_id
+        LEFT JOIN cost_centers cc ON cc.id = r.cost_center_id
+        LEFT JOIN work_groups wg ON wg.id = r.work_group_id
+        LEFT JOIN employee_profiles ep ON ep.id = r.employee_profile_id
+        WHERE r.tenant_id = $1
+          AND r.user_role_id = $2
+          AND r.is_active = true
+        ORDER BY
+          c.company_name,
+          wl.work_location_name NULLS FIRST,
+          d.department_name NULLS FIRST,
+          a.area_name NULLS FIRST,
+          cc.cost_center_name NULLS FIRST,
+          wg.work_group_name NULLS FIRST,
+          ep.profile_name NULLS FIRST
+      `,
+      [ctx.tenantId, userRoleId]
+    );
+
+    return res.status(200).json({ success: true, rules: result.rows, count: result.rows.length });
+  } catch (error: any) {
+    console.error('[SECURITY-SCOPES] GET /:user_role_id/scope-rules error:', error);
+    return res.status(500).json({ error: 'Error interno del servidor', details: error.message });
+  }
+});
+
+router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => {
+  const client = await pool.connect();
+  try {
+    const ctx = await resolveAuthContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+
+    const isTenantAdmin = await ensureTenantAdmin(ctx);
+    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+
+    const userRoleId = String(req.params.user_role_id || '').trim();
+    if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
+
+    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
+    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+
+    const rules = Array.isArray(req.body?.rules) ? req.body.rules : null;
+    if (rules === null) {
+      return res.status(400).json({ error: 'Body invalido: rules debe ser un arreglo' });
+    }
+
+    const parsedRules: ScopeRulePayload[] = rules.map((raw: any) => ({
+      company_id: normalizeRuleId(raw?.company_id),
+      work_location_id: normalizeRuleId(raw?.work_location_id),
+      department_id: normalizeRuleId(raw?.department_id),
+      area_id: normalizeRuleId(raw?.area_id),
+      cost_center_id: normalizeRuleId(raw?.cost_center_id),
+      work_group_id: normalizeRuleId(raw?.work_group_id),
+      employee_profile_id: normalizeRuleId(raw?.employee_profile_id),
+    }));
+
+    for (const rule of parsedRules) {
+      if (!rule.company_id) {
+        return res.status(400).json({ error: 'Cada regla requiere company_id' });
+      }
+
+      const validation = await validateRuleReferencesBelongTenant(ctx.tenantId, rule);
+      if (!validation.ok) {
+        return res.status(400).json({
+          error: `La referencia ${validation.field} no pertenece al tenant o no existe`,
+          field: validation.field,
+        });
+      }
+    }
+
+    const dedupedRules = Array.from(
+      parsedRules
+        .reduce((acc: Map<string, ScopeRulePayload>, rule: ScopeRulePayload) => {
+          const key = [
+            rule.company_id,
+            rule.work_location_id || '',
+            rule.department_id || '',
+            rule.area_id || '',
+            rule.cost_center_id || '',
+            rule.work_group_id || '',
+            rule.employee_profile_id || '',
+          ].join('::');
+          acc.set(key, rule);
+          return acc;
+        }, new Map<string, ScopeRulePayload>())
+        .values()
+    );
+
+    await client.query('BEGIN');
+
+    await client.query(
+      `
+        UPDATE user_role_scope_rules
+           SET is_active = false,
+               updated_by = $3,
+               updated_at = now()
+         WHERE tenant_id = $1
+           AND user_role_id = $2
+           AND is_active = true
+      `,
+      [ctx.tenantId, userRoleId, 'TENANT_ADMIN']
+    );
+
+    for (const rule of dedupedRules) {
+      await client.query(
+        `
+          INSERT INTO user_role_scope_rules (
+            id,
+            tenant_id,
+            user_role_id,
+            company_id,
+            work_location_id,
+            department_id,
+            area_id,
+            cost_center_id,
+            work_group_id,
+            employee_profile_id,
+            is_active,
+            created_by
+          )
+          VALUES (
+            gen_random_uuid(),
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            true,
+            $10
+          )
+        `,
+        [
+          ctx.tenantId,
+          userRoleId,
+          rule.company_id,
+          rule.work_location_id,
+          rule.department_id,
+          rule.area_id,
+          rule.cost_center_id,
+          rule.work_group_id,
+          rule.employee_profile_id,
+          'TENANT_ADMIN',
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reglas de alcance actualizadas exitosamente',
+      applied_count: dedupedRules.length,
+    });
+  } catch (error: any) {
+    await client.query('ROLLBACK');
+    console.error('[SECURITY-SCOPES] PUT /:user_role_id/scope-rules error:', error);
+    return res.status(500).json({ error: 'Error interno del servidor', details: error.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -1054,92 +1307,99 @@ router.get('/:user_role_id/employee-access/filters', async (req: Request, res: R
     const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
     if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
 
-    const baseParams = [ctx.tenantId];
-    const baseWhere = 'ec.tenant_id = $1 AND ec.is_active = true AND e.is_active = true';
+    const optionParams: any[] = [ctx.tenantId, userRoleId];
+    const optionWhere: string[] = [
+      'a.tenant_id = $1',
+      'a.user_role_id = $2',
+      'e.is_active = true',
+    ];
+    optionWhere.push(...buildEmployeeFilters(optionParams, req.query, 'a'));
 
     const [companies, workLocations, departments, areas, costCenters, workGroups, profiles] = await Promise.all([
       pool.query(
         `
           SELECT DISTINCT c.id, c.company_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN companies c ON c.id = ec.company_id
-          WHERE ${baseWhere}
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN companies c ON c.id = a.company_id
+          WHERE a.tenant_id = $1
+            AND a.user_role_id = $2
+            AND e.is_active = true
           ORDER BY c.company_name
         `,
-        baseParams
+        [ctx.tenantId, userRoleId]
       ),
       pool.query(
         `
           SELECT DISTINCT wl.id, wl.work_location_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN work_locations wl ON wl.id = ec.work_location_id
-          WHERE ${baseWhere}
-            AND ec.work_location_id IS NOT NULL
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN work_locations wl ON wl.id = a.work_location_id
+          WHERE ${optionWhere.join(' AND ')}
+            AND a.work_location_id IS NOT NULL
           ORDER BY wl.work_location_name
         `,
-        baseParams
+        optionParams
       ),
       pool.query(
         `
           SELECT DISTINCT d.id, d.department_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN departments d ON d.id = ec.department_id
-          WHERE ${baseWhere}
-            AND ec.department_id IS NOT NULL
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN departments d ON d.id = a.department_id
+          WHERE ${optionWhere.join(' AND ')}
+            AND a.department_id IS NOT NULL
           ORDER BY d.department_name
         `,
-        baseParams
+        optionParams
       ),
       pool.query(
         `
           SELECT DISTINCT a.id, a.area_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN areas a ON a.id = ec.area_id
-          WHERE ${baseWhere}
-            AND ec.area_id IS NOT NULL
+          FROM v_user_role_authorized_employees auth
+          JOIN employees e ON e.id = auth.employee_id
+          JOIN areas a ON a.id = auth.area_id
+          WHERE ${optionWhere.join(' AND ').replace(/\ba\./g, 'auth.')}
+            AND auth.area_id IS NOT NULL
           ORDER BY a.area_name
         `,
-        baseParams
+        optionParams
       ),
       pool.query(
         `
           SELECT DISTINCT cc.id, cc.cost_center_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN cost_centers cc ON cc.id = ec.cost_center_id
-          WHERE ${baseWhere}
-            AND ec.cost_center_id IS NOT NULL
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN cost_centers cc ON cc.id = a.cost_center_id
+          WHERE ${optionWhere.join(' AND ')}
+            AND a.cost_center_id IS NOT NULL
           ORDER BY cc.cost_center_name
         `,
-        baseParams
+        optionParams
       ),
       pool.query(
         `
           SELECT DISTINCT wg.id, wg.work_group_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN work_groups wg ON wg.id = ec.work_group_id
-          WHERE ${baseWhere}
-            AND ec.work_group_id IS NOT NULL
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN work_groups wg ON wg.id = a.work_group_id
+          WHERE ${optionWhere.join(' AND ')}
+            AND a.work_group_id IS NOT NULL
           ORDER BY wg.work_group_name
         `,
-        baseParams
+        optionParams
       ),
       pool.query(
         `
           SELECT DISTINCT ep.id, ep.profile_name AS name
-          FROM employee_companies ec
-          JOIN employees e ON e.id = ec.employee_id
-          JOIN employee_profiles ep ON ep.id = ec.employee_profile_id
-          WHERE ${baseWhere}
-            AND ec.employee_profile_id IS NOT NULL
+          FROM v_user_role_authorized_employees a
+          JOIN employees e ON e.id = a.employee_id
+          JOIN employee_profiles ep ON ep.id = a.employee_profile_id
+          WHERE ${optionWhere.join(' AND ')}
+            AND a.employee_profile_id IS NOT NULL
           ORDER BY ep.profile_name
         `,
-        baseParams
+        optionParams
       ),
     ]);
 
@@ -1227,6 +1487,11 @@ router.get('/:user_role_id/employee-access/authorized', async (req: Request, res
         JOIN employee_companies ec
           ON ec.employee_id = e.id
          AND ec.tenant_id = ura.tenant_id
+        JOIN v_user_role_authorized_employees scope
+          ON scope.tenant_id = ura.tenant_id
+         AND scope.user_role_id = ura.user_role_id
+         AND scope.employee_id = e.id
+         AND scope.company_id = ec.company_id
         LEFT JOIN companies c ON c.id = ec.company_id
         LEFT JOIN work_locations wl ON wl.id = ec.work_location_id
         LEFT JOIN departments d ON d.id = ec.department_id
@@ -1251,6 +1516,11 @@ router.get('/:user_role_id/employee-access/authorized', async (req: Request, res
         JOIN employee_companies ec
           ON ec.employee_id = e.id
          AND ec.tenant_id = ura.tenant_id
+        JOIN v_user_role_authorized_employees scope
+          ON scope.tenant_id = ura.tenant_id
+         AND scope.user_role_id = ura.user_role_id
+         AND scope.employee_id = e.id
+         AND scope.company_id = ec.company_id
         WHERE ${where.join(' AND ')}
       `,
       params.slice(0, params.length - 2)
@@ -1289,15 +1559,15 @@ router.get('/:user_role_id/employee-access/unauthorized', async (req: Request, r
 
     const params: any[] = [ctx.tenantId, userRoleId];
     const where: string[] = [
-      'ec.tenant_id = $1',
-      'ec.is_active = true',
+      'scope.tenant_id = $1',
+      'scope.user_role_id = $2',
       'e.is_active = true',
       `NOT EXISTS (
         SELECT 1
         FROM user_role_employee_assignments ura
         WHERE ura.tenant_id = $1
           AND ura.user_role_id = $2
-          AND ura.employee_id = ec.employee_id
+          AND ura.employee_id = scope.employee_id
           AND ura.is_active = true
       )`,
     ];
@@ -1307,7 +1577,7 @@ router.get('/:user_role_id/employee-access/unauthorized', async (req: Request, r
       where.push(`(e.employee_name ILIKE $${params.length} OR e.employee_lastname ILIKE $${params.length} OR COALESCE(e.employee_code,'') ILIKE $${params.length})`);
     }
 
-    where.push(...buildEmployeeFilters(params, req.query, 'ec'));
+    where.push(...buildEmployeeFilters(params, req.query, 'scope'));
 
     params.push(limit);
     const limitParam = params.length;
@@ -1316,33 +1586,33 @@ router.get('/:user_role_id/employee-access/unauthorized', async (req: Request, r
 
     const listResult = await pool.query(
       `
-        SELECT DISTINCT ON (ec.employee_id)
-          ec.employee_id,
+        SELECT DISTINCT ON (scope.employee_id)
+          scope.employee_id,
           e.employee_code,
           e.employee_name,
           e.employee_lastname,
-          ec.company_id,
+          scope.company_id,
           c.company_name,
-          ec.work_location_id,
+          scope.work_location_id,
           wl.work_location_name,
-          ec.department_id,
+          scope.department_id,
           d.department_name,
-          ec.area_id,
+          scope.area_id,
           ar.area_name,
-          ec.cost_center_id,
+          scope.cost_center_id,
           cc.cost_center_name,
-          ec.work_group_id,
+          scope.work_group_id,
           wg.work_group_name
-        FROM employee_companies ec
-        JOIN employees e ON e.id = ec.employee_id
-        LEFT JOIN companies c ON c.id = ec.company_id
-        LEFT JOIN work_locations wl ON wl.id = ec.work_location_id
-        LEFT JOIN departments d ON d.id = ec.department_id
-        LEFT JOIN areas ar ON ar.id = ec.area_id
-        LEFT JOIN cost_centers cc ON cc.id = ec.cost_center_id
-        LEFT JOIN work_groups wg ON wg.id = ec.work_group_id
+        FROM v_user_role_authorized_employees scope
+        JOIN employees e ON e.id = scope.employee_id
+        LEFT JOIN companies c ON c.id = scope.company_id
+        LEFT JOIN work_locations wl ON wl.id = scope.work_location_id
+        LEFT JOIN departments d ON d.id = scope.department_id
+        LEFT JOIN areas ar ON ar.id = scope.area_id
+        LEFT JOIN cost_centers cc ON cc.id = scope.cost_center_id
+        LEFT JOIN work_groups wg ON wg.id = scope.work_group_id
         WHERE ${where.join(' AND ')}
-        ORDER BY ec.employee_id, e.employee_lastname, e.employee_name
+        ORDER BY scope.employee_id, e.employee_lastname, e.employee_name
         LIMIT $${limitParam}
         OFFSET $${offsetParam}
       `,
@@ -1351,9 +1621,9 @@ router.get('/:user_role_id/employee-access/unauthorized', async (req: Request, r
 
     const countResult = await pool.query(
       `
-        SELECT COUNT(DISTINCT ec.employee_id) AS total
-        FROM employee_companies ec
-        JOIN employees e ON e.id = ec.employee_id
+        SELECT COUNT(DISTINCT scope.employee_id) AS total
+        FROM v_user_role_authorized_employees scope
+        JOIN employees e ON e.id = scope.employee_id
         WHERE ${where.join(' AND ')}
       `,
       params.slice(0, params.length - 2)
@@ -1403,15 +1673,19 @@ router.post('/:user_role_id/employee-access/authorize', async (req: Request, res
     const check = await pool.query(
       `
         SELECT COUNT(*)::int AS total
-        FROM employees
-        WHERE tenant_id = $1
-          AND is_active = true
-          AND id = ANY($2::uuid[])
+        FROM v_user_role_authorized_employees scope
+        JOIN employees e
+          ON e.id = scope.employee_id
+         AND e.tenant_id = scope.tenant_id
+        WHERE scope.tenant_id = $1
+          AND scope.user_role_id = $2
+          AND e.is_active = true
+          AND scope.employee_id = ANY($3::uuid[])
       `,
-      [ctx.tenantId, employeeIds]
+      [ctx.tenantId, userRoleId, employeeIds]
     );
     if (Number(check.rows[0]?.total || 0) !== employeeIds.length) {
-      return res.status(400).json({ error: 'Uno o mas employee_ids no pertenecen al tenant o no existen' });
+      return res.status(400).json({ error: 'Uno o mas employee_ids no pertenecen al alcance autorizado del usuario' });
     }
 
     await client.query('BEGIN');

@@ -20,12 +20,6 @@ type Target = {
   role_name: string;
 };
 
-type ScopeRow = {
-  scope_type_key: string;
-  scope_entity_id: string;
-  scope_entity_name?: string | null;
-};
-
 type EmployeeRow = {
   employee_id: string;
   employee_code: string | null;
@@ -71,13 +65,23 @@ const SCOPE_FILTER_CONFIG: Array<{ key: ScopeFilterKey; label: string }> = [
 ];
 
 const SCOPE_FILTER_DEFAULT_LABELS: Record<ScopeFilterKey, string> = {
-  company_id: 'Todas las empresas',
+  company_id: 'Seleccione empresa autorizada',
   work_location_id: 'Todas las localizaciones',
   department_id: 'Todos los departamentos',
   area_id: 'Todas las áreas',
   cost_center_id: 'Todos los centros de costo',
   work_group_id: 'Todos los grupos de trabajo',
   employee_profile_id: 'Todos los perfiles',
+};
+
+const EMPTY_FILTERS: Record<ScopeFilterKey, string> = {
+  company_id: '',
+  work_location_id: '',
+  department_id: '',
+  area_id: '',
+  cost_center_id: '',
+  work_group_id: '',
+  employee_profile_id: '',
 };
 
 function employeeLabel(e: EmployeeRow): string {
@@ -113,15 +117,7 @@ export default function SecurityUserEmployeeAccessManagement() {
     work_group_id: [],
     employee_profile_id: [],
   });
-  const [activeFilters, setActiveFilters] = useState<Record<ScopeFilterKey, string>>({
-    company_id: '',
-    work_location_id: '',
-    department_id: '',
-    area_id: '',
-    cost_center_id: '',
-    work_group_id: '',
-    employee_profile_id: '',
-  });
+  const [activeFilters, setActiveFilters] = useState<Record<ScopeFilterKey, string>>(EMPTY_FILTERS);
 
   const token = session?.access_token || '';
 
@@ -137,7 +133,14 @@ export default function SecurityUserEmployeeAccessManagement() {
   useEffect(() => {
     if (!selectedUserRoleId) return;
     const h = setTimeout(() => {
-      void loadEmployeeLists(selectedUserRoleId);
+      if (!activeFilters.company_id) {
+        setAuthorizedEmployees([]);
+        setUnauthorizedEmployees([]);
+        return;
+      }
+      void loadEmployeeAccessData(selectedUserRoleId, activeFilters).catch((error: any) => {
+        toast.error(error?.message || 'Error cargando acceso de empleados');
+      });
     }, 300);
     return () => clearTimeout(h);
   }, [activeFilters, selectedUserRoleId]);
@@ -182,32 +185,16 @@ export default function SecurityUserEmployeeAccessManagement() {
     try {
       setSelectedAuthorized(new Set());
       setSelectedUnauthorized(new Set());
-      setActiveFilters({
-        company_id: '',
-        work_location_id: '',
-        department_id: '',
-        area_id: '',
-        cost_center_id: '',
-        work_group_id: '',
-        employee_profile_id: '',
-      });
+      setActiveFilters(EMPTY_FILTERS);
 
-      const scopeResponse = await authorizedFetch(`/${userRoleId}/employee-access/filters`);
-      const scopePayload = await scopeResponse.json();
-      if (!scopeResponse.ok) throw new Error(scopePayload?.error || 'No se pudieron cargar filtros');
-
-      const filters = scopePayload.filters || {};
-      setScopeFilterOptions({
-        company_id: (filters.companies || []) as ScopeFilterOption[],
-        work_location_id: (filters.work_locations || []) as ScopeFilterOption[],
-        department_id: (filters.departments || []) as ScopeFilterOption[],
-        area_id: (filters.areas || []) as ScopeFilterOption[],
-        cost_center_id: (filters.cost_centers || []) as ScopeFilterOption[],
-        work_group_id: (filters.work_groups || []) as ScopeFilterOption[],
-        employee_profile_id: (filters.employee_profiles || []) as ScopeFilterOption[],
-      });
-
-      await loadEmployeeLists(userRoleId);
+      const options = await loadScopeFilterOptions(userRoleId, EMPTY_FILTERS);
+      const firstCompanyId = options.company_id[0]?.id || '';
+      if (!firstCompanyId) {
+        setAuthorizedEmployees([]);
+        setUnauthorizedEmployees([]);
+        return;
+      }
+      setActiveFilters({ ...EMPTY_FILTERS, company_id: firstCompanyId });
     } catch (error: any) {
       toast.error(error?.message || 'Error inicializando acceso de empleados');
     } finally {
@@ -215,10 +202,42 @@ export default function SecurityUserEmployeeAccessManagement() {
     }
   }
 
-  async function loadEmployeeLists(userRoleId: string) {
+  async function loadScopeFilterOptions(userRoleId: string, filtersToUse: Record<ScopeFilterKey, string>) {
     const query = new URLSearchParams();
     for (const cfg of SCOPE_FILTER_CONFIG) {
-      const value = activeFilters[cfg.key];
+      const value = filtersToUse[cfg.key];
+      if (value) query.set(cfg.key, value);
+    }
+
+    const scopeResponse = await authorizedFetch(`/${userRoleId}/employee-access/filters?${query.toString()}`);
+    const scopePayload = await scopeResponse.json();
+    if (!scopeResponse.ok) throw new Error(scopePayload?.error || 'No se pudieron cargar filtros');
+
+    const filters = scopePayload.filters || {};
+    const nextOptions = {
+      company_id: (filters.companies || []) as ScopeFilterOption[],
+      work_location_id: (filters.work_locations || []) as ScopeFilterOption[],
+      department_id: (filters.departments || []) as ScopeFilterOption[],
+      area_id: (filters.areas || []) as ScopeFilterOption[],
+      cost_center_id: (filters.cost_centers || []) as ScopeFilterOption[],
+      work_group_id: (filters.work_groups || []) as ScopeFilterOption[],
+      employee_profile_id: (filters.employee_profiles || []) as ScopeFilterOption[],
+    };
+    setScopeFilterOptions(nextOptions);
+    return nextOptions;
+  }
+
+  async function loadEmployeeAccessData(userRoleId: string, filtersToUse: Record<ScopeFilterKey, string>) {
+    await Promise.all([
+      loadScopeFilterOptions(userRoleId, filtersToUse),
+      loadEmployeeLists(userRoleId, filtersToUse),
+    ]);
+  }
+
+  async function loadEmployeeLists(userRoleId: string, filtersToUse: Record<ScopeFilterKey, string>) {
+    const query = new URLSearchParams();
+    for (const cfg of SCOPE_FILTER_CONFIG) {
+      const value = filtersToUse[cfg.key];
       if (value) query.set(cfg.key, value);
     }
     query.set('limit', '200');
@@ -251,7 +270,7 @@ export default function SecurityUserEmployeeAccessManagement() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'No se pudo guardar la actualización de accesos');
-      await loadEmployeeLists(selectedUserRoleId);
+      await loadEmployeeLists(selectedUserRoleId, activeFilters);
       setSelectedAuthorized(new Set());
       setSelectedUnauthorized(new Set());
       toast.success('Accesos de empleados actualizados');
@@ -293,6 +312,47 @@ export default function SecurityUserEmployeeAccessManagement() {
     if (next.has(id)) next.delete(id);
     else next.add(id);
     return next;
+  }
+
+  function handleFilterChange(key: ScopeFilterKey, value: string) {
+    setSelectedAuthorized(new Set());
+    setSelectedUnauthorized(new Set());
+    setActiveFilters((prev) => {
+      if (key === 'company_id') {
+        return { ...EMPTY_FILTERS, company_id: value };
+      }
+      if (key === 'work_location_id') {
+        return {
+          ...prev,
+          work_location_id: value,
+          department_id: '',
+          area_id: '',
+          cost_center_id: '',
+          work_group_id: '',
+          employee_profile_id: '',
+        };
+      }
+      if (key === 'department_id') {
+        return {
+          ...prev,
+          department_id: value,
+          area_id: '',
+          cost_center_id: '',
+          work_group_id: '',
+          employee_profile_id: '',
+        };
+      }
+      if (key === 'area_id') {
+        return {
+          ...prev,
+          area_id: value,
+          cost_center_id: '',
+          work_group_id: '',
+          employee_profile_id: '',
+        };
+      }
+      return { ...prev, [key]: value };
+    });
   }
 
   return (
@@ -352,7 +412,7 @@ export default function SecurityUserEmployeeAccessManagement() {
                 <select
                   className="w-full rounded-md border border-slate-300 p-2 text-sm"
                   value={activeFilters[cfg.key]}
-                  onChange={(e) => setActiveFilters((prev) => ({ ...prev, [cfg.key]: e.target.value }))}
+                  onChange={(e) => handleFilterChange(cfg.key, e.target.value)}
                   disabled={isLoading || isSaving || options.length === 0}
                 >
                   <option value="">{SCOPE_FILTER_DEFAULT_LABELS[cfg.key]}</option>

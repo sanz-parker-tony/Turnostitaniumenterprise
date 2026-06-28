@@ -1,11 +1,11 @@
-﻿'use client';
+'use client';
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import { Plus, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 
@@ -21,15 +21,6 @@ type Target = {
   role_name: string;
 };
 
-type ScopeTypeKey = 'COMPANY' | 'WORK_LOCATION' | 'DEPARTMENT' | 'AREA' | 'COST_CENTER' | 'WORK_GROUP' | 'EMPLOYEE_PROFILE';
-
-type ScopeRow = {
-  id: string;
-  user_role_id: string;
-  scope_type_key: ScopeTypeKey;
-  scope_entity_id: string;
-};
-
 type TreeLeafNode = { id: string; name: string };
 type TreeAreaNode = {
   id: string;
@@ -42,116 +33,159 @@ type TreeDepartmentNode = { id: string; name: string; areas: TreeAreaNode[] };
 type TreeWorkLocationNode = { id: string; name: string; departments: TreeDepartmentNode[] };
 type TreeCompanyNode = { id: string; name: string; work_locations: TreeWorkLocationNode[] };
 
-type AreaContext = {
+type ScopeRule = {
+  id?: string;
   company_id: string;
-  company_name: string;
+  company_name?: string | null;
+  work_location_id: string | null;
+  work_location_name?: string | null;
+  department_id: string | null;
+  department_name?: string | null;
+  area_id: string | null;
+  area_name?: string | null;
+  cost_center_id: string | null;
+  cost_center_name?: string | null;
+  work_group_id: string | null;
+  work_group_name?: string | null;
+  employee_profile_id: string | null;
+  employee_profile_name?: string | null;
+};
+
+type ScopeRuleForm = {
+  company_id: string;
   work_location_id: string;
-  work_location_name: string;
   department_id: string;
-  department_name: string;
   area_id: string;
-  area_name: string;
-  cost_centers: TreeLeafNode[];
-  work_groups: TreeLeafNode[];
-  employee_profiles: TreeLeafNode[];
+  cost_center_id: string;
+  work_group_id: string;
+  employee_profile_id: string;
 };
 
 const API_BASE = buildApiUrl('/security-user-scopes');
 
-function labelTarget(t: Target): string {
-  const name = t.display_name?.trim() || t.username;
-  return `${name} (${t.role_key})`;
+const emptyRuleForm: ScopeRuleForm = {
+  company_id: '',
+  work_location_id: '',
+  department_id: '',
+  area_id: '',
+  cost_center_id: '',
+  work_group_id: '',
+  employee_profile_id: '',
+};
+
+function labelTarget(target: Target): string {
+  const name = target.display_name?.trim() || target.username;
+  return `${name} (${target.role_key})`;
 }
 
-function keyOf(type: ScopeTypeKey, id: string): string {
-  return `${type}:${id}`;
+function normalizeId(value: string | null | undefined): string {
+  return String(value || '').trim();
 }
 
-function countSelectedScopes(selection: Record<ScopeTypeKey, Set<string>>): number {
-  return Object.values(selection).reduce((total, values) => total + values.size, 0);
+function uniqueById<T extends { id: string }>(rows: T[]): T[] {
+  return Array.from(new Map(rows.filter((row) => row.id).map((row) => [row.id, row])).values());
 }
 
-function filterTreeBySelection(
-  tree: TreeCompanyNode[],
-  selection: Record<ScopeTypeKey, Set<string>>
-): TreeCompanyNode[] {
-  return tree
-    .map((company) => {
-      if (selection.COMPANY.has(company.id)) return company;
+function optionLabel(row: TreeLeafNode | null | undefined): string {
+  return row?.name || row?.id || '-';
+}
 
-      const workLocations = company.work_locations
-        .map((workLocation) => {
-          if (selection.WORK_LOCATION.has(workLocation.id)) return workLocation;
+function toRulePayload(rule: ScopeRuleForm) {
+  return {
+    company_id: normalizeId(rule.company_id),
+    work_location_id: normalizeId(rule.work_location_id) || null,
+    department_id: normalizeId(rule.department_id) || null,
+    area_id: normalizeId(rule.area_id) || null,
+    cost_center_id: normalizeId(rule.cost_center_id) || null,
+    work_group_id: normalizeId(rule.work_group_id) || null,
+    employee_profile_id: normalizeId(rule.employee_profile_id) || null,
+  };
+}
 
-          const departments = workLocation.departments
-            .map((department) => {
-              if (selection.DEPARTMENT.has(department.id)) return department;
+function ruleKey(rule: ScopeRuleForm | ScopeRule): string {
+  return [
+    rule.company_id,
+    rule.work_location_id || '',
+    rule.department_id || '',
+    rule.area_id || '',
+    rule.cost_center_id || '',
+    rule.work_group_id || '',
+    rule.employee_profile_id || '',
+  ].join('::');
+}
 
-              const areas = department.areas
-                .map((area) => {
-                  if (selection.AREA.has(area.id)) return area;
+function displayRule(rule: ScopeRule): string {
+  const parts = [
+    rule.company_name || 'Empresa',
+    rule.work_location_name || 'Todas las localizaciones',
+    rule.department_name || 'Todos los departamentos',
+    rule.area_name || 'Todas las áreas',
+  ];
 
-                  const costCenters = area.cost_centers.filter((row) => selection.COST_CENTER.has(row.id));
-                  const workGroups = area.work_groups.filter((row) => selection.WORK_GROUP.has(row.id));
-                  const employeeProfiles = area.employee_profiles.filter((row) => selection.EMPLOYEE_PROFILE.has(row.id));
+  const extra = [
+    rule.cost_center_name ? `CC: ${rule.cost_center_name}` : '',
+    rule.work_group_name ? `GT: ${rule.work_group_name}` : '',
+    rule.employee_profile_name ? `Perfil: ${rule.employee_profile_name}` : '',
+  ].filter(Boolean);
 
-                  if (costCenters.length === 0 && workGroups.length === 0 && employeeProfiles.length === 0) {
-                    return null;
-                  }
+  return extra.length > 0 ? `${parts.join(' > ')} · ${extra.join(' · ')}` : parts.join(' > ');
+}
 
-                  return {
-                    ...area,
-                    cost_centers: costCenters,
-                    work_groups: workGroups,
-                    employee_profiles: employeeProfiles,
-                  };
-                })
-                .filter((area): area is TreeAreaNode => Boolean(area));
+function findCompany(tree: TreeCompanyNode[], companyId: string): TreeCompanyNode | null {
+  return tree.find((company) => company.id === companyId) || null;
+}
 
-              return areas.length > 0 ? { ...department, areas } : null;
-            })
-            .filter((department): department is TreeDepartmentNode => Boolean(department));
+function getWorkLocations(tree: TreeCompanyNode[], form: ScopeRuleForm): TreeWorkLocationNode[] {
+  const company = findCompany(tree, form.company_id);
+  return company?.work_locations || [];
+}
 
-          return departments.length > 0 ? { ...workLocation, departments } : null;
-        })
-        .filter((workLocation): workLocation is TreeWorkLocationNode => Boolean(workLocation));
+function getDepartments(tree: TreeCompanyNode[], form: ScopeRuleForm): TreeDepartmentNode[] {
+  const company = findCompany(tree, form.company_id);
+  if (!company) return [];
 
-      return workLocations.length > 0 ? { ...company, work_locations: workLocations } : null;
-    })
-    .filter((company): company is TreeCompanyNode => Boolean(company));
+  const workLocations = form.work_location_id
+    ? company.work_locations.filter((workLocation) => workLocation.id === form.work_location_id)
+    : company.work_locations;
+
+  return uniqueById(workLocations.flatMap((workLocation) => workLocation.departments));
+}
+
+function getAreas(tree: TreeCompanyNode[], form: ScopeRuleForm): TreeAreaNode[] {
+  const departments = getDepartments(tree, form).filter((department) =>
+    form.department_id ? department.id === form.department_id : true
+  );
+  return uniqueById(departments.flatMap((department) => department.areas));
+}
+
+function getSelectedArea(tree: TreeCompanyNode[], form: ScopeRuleForm): TreeAreaNode | null {
+  if (!form.area_id) return null;
+  return getAreas(tree, form).find((area) => area.id === form.area_id) || null;
 }
 
 export default function SecurityUserScopesManagement() {
   const { session } = useAuth();
+  const token = session?.access_token || '';
 
   const [targets, setTargets] = useState<Target[]>([]);
   const [selectedUserRoleId, setSelectedUserRoleId] = useState('');
-
+  const [tree, setTree] = useState<TreeCompanyNode[]>([]);
+  const [rules, setRules] = useState<ScopeRule[]>([]);
+  const [draftRules, setDraftRules] = useState<ScopeRuleForm[]>([]);
+  const [form, setForm] = useState<ScopeRuleForm>(emptyRuleForm);
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
-  const [isLoadingTree, setIsLoadingTree] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [tree, setTree] = useState<TreeCompanyNode[]>([]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [selectedArea, setSelectedArea] = useState<AreaContext | null>(null);
-  const [showFullCatalog, setShowFullCatalog] = useState(false);
+  const companies = tree;
+  const workLocationOptions = useMemo(() => getWorkLocations(tree, form), [tree, form]);
+  const departmentOptions = useMemo(() => getDepartments(tree, form), [tree, form]);
+  const areaOptions = useMemo(() => getAreas(tree, form), [tree, form]);
+  const selectedArea = useMemo(() => getSelectedArea(tree, form), [tree, form]);
 
-  const [selection, setSelection] = useState<Record<ScopeTypeKey, Set<string>>>({
-    COMPANY: new Set<string>(),
-    WORK_LOCATION: new Set<string>(),
-    DEPARTMENT: new Set<string>(),
-    AREA: new Set<string>(),
-    COST_CENTER: new Set<string>(),
-    WORK_GROUP: new Set<string>(),
-    EMPLOYEE_PROFILE: new Set<string>(),
-  });
-
-  const token = session?.access_token || '';
-  const selectedScopeCount = useMemo(() => countSelectedScopes(selection), [selection]);
-  const visibleTree = useMemo(
-    () => (showFullCatalog || selectedScopeCount === 0 ? tree : filterTreeBySelection(tree, selection)),
-    [tree, selection, selectedScopeCount, showFullCatalog]
-  );
+  const costCenterOptions = selectedArea?.cost_centers || [];
+  const workGroupOptions = selectedArea?.work_groups || [];
+  const employeeProfileOptions = selectedArea?.employee_profiles || [];
 
   useEffect(() => {
     void loadTargets();
@@ -159,27 +193,11 @@ export default function SecurityUserScopesManagement() {
 
   useEffect(() => {
     if (!selectedUserRoleId) return;
-    void Promise.all([loadScopes(selectedUserRoleId), loadTree()]);
+    void loadScopeRulesData(selectedUserRoleId);
   }, [selectedUserRoleId]);
 
-  useEffect(() => {
-    if (showFullCatalog || selectedScopeCount === 0) return;
-
-    const nextExpanded = new Set<string>();
-    for (const company of visibleTree) {
-      nextExpanded.add(keyOf('COMPANY', company.id));
-      for (const workLocation of company.work_locations) {
-        nextExpanded.add(keyOf('WORK_LOCATION', workLocation.id));
-        for (const department of workLocation.departments) {
-          nextExpanded.add(keyOf('DEPARTMENT', department.id));
-        }
-      }
-    }
-    setExpanded(nextExpanded);
-  }, [showFullCatalog, selectedScopeCount, visibleTree]);
-
   async function authorizedFetch(path: string, init?: RequestInit): Promise<Response> {
-    if (!token) throw new Error('Sesion no disponible');
+    if (!token) throw new Error('Sesión no disponible');
     return fetch(`${API_BASE}${path}`, {
       ...init,
       headers: {
@@ -209,166 +227,150 @@ export default function SecurityUserScopesManagement() {
     }
   }
 
-  async function loadTree() {
-    setIsLoadingTree(true);
+  async function loadScopeRulesData(userRoleId: string) {
+    setIsLoadingData(true);
     try {
-      const response = await authorizedFetch('/catalogs/tree');
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || 'No se pudo cargar arbol organizacional');
+      const [treeResponse, rulesResponse] = await Promise.all([
+        authorizedFetch('/catalogs/tree'),
+        authorizedFetch(`/${userRoleId}/scope-rules`),
+      ]);
+      const treePayload = await treeResponse.json();
+      const rulesPayload = await rulesResponse.json();
+      if (!treeResponse.ok) throw new Error(treePayload?.error || 'No se pudo cargar estructura organizacional');
+      if (!rulesResponse.ok) throw new Error(rulesPayload?.error || 'No se pudo cargar reglas de alcance');
 
-      const nextTree = (payload.tree || []) as TreeCompanyNode[];
+      const nextTree = (treePayload.tree || []) as TreeCompanyNode[];
+      const nextRules = (rulesPayload.rules || []) as ScopeRule[];
       setTree(nextTree);
-
-      const nextExpanded = new Set<string>();
-      for (const company of nextTree) {
-        nextExpanded.add(keyOf('COMPANY', company.id));
-      }
-      setExpanded(nextExpanded);
+      setRules(nextRules);
+      setDraftRules(
+        nextRules.map((rule) => ({
+          company_id: rule.company_id,
+          work_location_id: rule.work_location_id || '',
+          department_id: rule.department_id || '',
+          area_id: rule.area_id || '',
+          cost_center_id: rule.cost_center_id || '',
+          work_group_id: rule.work_group_id || '',
+          employee_profile_id: rule.employee_profile_id || '',
+        }))
+      );
+      setForm(emptyRuleForm);
     } catch (error: any) {
-      toast.error(error?.message || 'Error cargando arbol organizacional');
+      toast.error(error?.message || 'Error cargando reglas de alcance');
     } finally {
-      setIsLoadingTree(false);
+      setIsLoadingData(false);
     }
   }
 
-  async function loadScopes(userRoleId: string) {
-    try {
-      const response = await authorizedFetch(`/${userRoleId}/scopes`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || 'No se pudo cargar scopes');
+  function updateForm(patch: Partial<ScopeRuleForm>) {
+    setForm((prev) => ({ ...prev, ...patch }));
+  }
 
-      const rows = (payload.scopes || []) as ScopeRow[];
-      const next: Record<ScopeTypeKey, Set<string>> = {
-        COMPANY: new Set<string>(),
-        WORK_LOCATION: new Set<string>(),
-        DEPARTMENT: new Set<string>(),
-        AREA: new Set<string>(),
-        COST_CENTER: new Set<string>(),
-        WORK_GROUP: new Set<string>(),
-        EMPLOYEE_PROFILE: new Set<string>(),
-      };
-
-      for (const row of rows) {
-        if (row.scope_type_key in next) {
-          next[row.scope_type_key].add(row.scope_entity_id);
-        }
-      }
-
-      setSelection(next);
-      setSelectedArea(null);
-    } catch (error: any) {
-      toast.error(error?.message || 'Error cargando scopes actuales');
+  function addDraftRule() {
+    const payload = toRulePayload(form);
+    if (!payload.company_id) {
+      toast.error('Selecciona una empresa para crear la regla');
+      return;
     }
+
+    const nextRule: ScopeRuleForm = {
+      company_id: payload.company_id,
+      work_location_id: payload.work_location_id || '',
+      department_id: payload.department_id || '',
+      area_id: payload.area_id || '',
+      cost_center_id: payload.cost_center_id || '',
+      work_group_id: payload.work_group_id || '',
+      employee_profile_id: payload.employee_profile_id || '',
+    };
+
+    if (draftRules.some((rule) => ruleKey(rule) === ruleKey(nextRule))) {
+      toast.error('La regla ya existe en la lista');
+      return;
+    }
+
+    setDraftRules((prev) => [...prev, nextRule]);
+    setForm({ ...emptyRuleForm, company_id: form.company_id });
   }
 
-  function toggleExpanded(type: ScopeTypeKey, id: string) {
-    const key = keyOf(type, id);
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  function removeDraftRule(index: number) {
+    setDraftRules((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
   }
 
-  function toggleSelection(type: ScopeTypeKey, id: string, checked: boolean) {
-    setSelection((prev) => {
-      const next = new Set(prev[type]);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return { ...prev, [type]: next };
-    });
+  function findRuleDisplay(rule: ScopeRuleForm): ScopeRule {
+    const company = findCompany(tree, rule.company_id);
+    const workLocation = getWorkLocations(tree, rule).find((row) => row.id === rule.work_location_id) || null;
+    const department = getDepartments(tree, rule).find((row) => row.id === rule.department_id) || null;
+    const area = getAreas(tree, rule).find((row) => row.id === rule.area_id) || null;
+    const costCenter = area?.cost_centers.find((row) => row.id === rule.cost_center_id) || null;
+    const workGroup = area?.work_groups.find((row) => row.id === rule.work_group_id) || null;
+    const employeeProfile = area?.employee_profiles.find((row) => row.id === rule.employee_profile_id) || null;
+
+    return {
+      company_id: rule.company_id,
+      company_name: company?.name || null,
+      work_location_id: rule.work_location_id || null,
+      work_location_name: workLocation?.name || null,
+      department_id: rule.department_id || null,
+      department_name: department?.name || null,
+      area_id: rule.area_id || null,
+      area_name: area?.name || null,
+      cost_center_id: rule.cost_center_id || null,
+      cost_center_name: costCenter?.name || null,
+      work_group_id: rule.work_group_id || null,
+      work_group_name: workGroup?.name || null,
+      employee_profile_id: rule.employee_profile_id || null,
+      employee_profile_name: employeeProfile?.name || null,
+    };
   }
 
-  function setAllSelection(type: ScopeTypeKey, ids: string[], checked: boolean) {
-    setSelection((prev) => {
-      const next = new Set(prev[type]);
-      for (const id of ids) {
-        if (checked) next.add(id);
-        else next.delete(id);
-      }
-      return { ...prev, [type]: next };
-    });
-  }
-
-  function selectAreaContext(
-    company: TreeCompanyNode,
-    workLocation: TreeWorkLocationNode,
-    department: TreeDepartmentNode,
-    area: TreeAreaNode
-  ) {
-    setSelectedArea({
-      company_id: company.id,
-      company_name: company.name,
-      work_location_id: workLocation.id,
-      work_location_name: workLocation.name,
-      department_id: department.id,
-      department_name: department.name,
-      area_id: area.id,
-      area_name: area.name,
-      cost_centers: area.cost_centers,
-      work_groups: area.work_groups,
-      employee_profiles: area.employee_profiles,
-    });
-  }
-
-  async function saveScopes() {
+  async function saveRules() {
     if (!selectedUserRoleId) {
       toast.error('Selecciona un usuario objetivo');
       return;
     }
 
-    const scopes = [
-      ...Array.from(selection.COMPANY).map((id) => ({ scope_type_key: 'COMPANY', scope_entity_id: id })),
-      ...Array.from(selection.WORK_LOCATION).map((id) => ({ scope_type_key: 'WORK_LOCATION', scope_entity_id: id })),
-      ...Array.from(selection.DEPARTMENT).map((id) => ({ scope_type_key: 'DEPARTMENT', scope_entity_id: id })),
-      ...Array.from(selection.AREA).map((id) => ({ scope_type_key: 'AREA', scope_entity_id: id })),
-      ...Array.from(selection.COST_CENTER).map((id) => ({ scope_type_key: 'COST_CENTER', scope_entity_id: id })),
-      ...Array.from(selection.WORK_GROUP).map((id) => ({ scope_type_key: 'WORK_GROUP', scope_entity_id: id })),
-      ...Array.from(selection.EMPLOYEE_PROFILE).map((id) => ({ scope_type_key: 'EMPLOYEE_PROFILE', scope_entity_id: id })),
-    ];
-
     setIsSaving(true);
     try {
-      const response = await authorizedFetch(`/${selectedUserRoleId}/scopes`, {
+      const response = await authorizedFetch(`/${selectedUserRoleId}/scope-rules`, {
         method: 'PUT',
-        body: JSON.stringify({ scopes }),
+        body: JSON.stringify({ rules: draftRules.map(toRulePayload) }),
       });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error || 'No se pudieron guardar los alcances');
-      toast.success('Alcances guardados correctamente');
-      await loadScopes(selectedUserRoleId);
+      if (!response.ok) throw new Error(payload?.error || 'No se pudieron guardar las reglas');
+      toast.success('Reglas de alcance guardadas correctamente');
+      await loadScopeRulesData(selectedUserRoleId);
     } catch (error: any) {
-      toast.error(error?.message || 'Error guardando alcances');
+      toast.error(error?.message || 'Error guardando reglas de alcance');
     } finally {
       setIsSaving(false);
     }
   }
 
   return (
-    <div className="p-6 max-w-full flex h-[calc(100vh-140px)] min-h-0 flex-col gap-4">
+    <div className="p-6 max-w-full space-y-5">
       <SystemAdminPageHeader
         icon={ShieldCheck}
         title="Alcances por Usuario"
-        subtitle="Configura alcances organizacionales para usuarios objetivo"
+        subtitle="Configura reglas explícitas de alcance sobre la estructura de employee_companies"
         rightSlot={
           <HeaderInfoTips
             items={[
               {
-                title: 'Usuario objetivo',
-                text: 'Solo se listan usuarios con rol Supervisor o Administrador de RRHH.',
+                title: 'Reglas de alcance',
+                text: 'Cada fila define una combinación permitida. Los campos vacíos significan Todos dentro del nivel anterior.',
                 variant: 'info',
               },
             ]}
           />
         }
       />
+
       <div className="rounded-lg border border-slate-200 bg-white p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:gap-4">
           <select
             className="w-full rounded-md border border-slate-300 p-2 text-sm"
             value={selectedUserRoleId}
-            onChange={(e) => setSelectedUserRoleId(e.target.value)}
+            onChange={(event) => setSelectedUserRoleId(event.target.value)}
             disabled={isLoadingTargets || targets.length === 0}
           >
             {targets.length === 0 ? <option value="">Sin usuarios objetivo</option> : null}
@@ -382,16 +384,16 @@ export default function SecurityUserScopesManagement() {
             <Button
               variant="outline"
               className="border-sky-300 bg-sky-50 text-sky-700 hover:bg-sky-100 hover:text-sky-800"
-              onClick={() => selectedUserRoleId && void loadScopes(selectedUserRoleId)}
-              disabled={!selectedUserRoleId || isLoadingTree || isSaving}
+              onClick={() => selectedUserRoleId && void loadScopeRulesData(selectedUserRoleId)}
+              disabled={!selectedUserRoleId || isLoadingData || isSaving}
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               Actualizar
             </Button>
             <Button
               className="bg-emerald-600 text-white hover:bg-emerald-700"
-              onClick={() => void saveScopes()}
-              disabled={!selectedUserRoleId || isLoadingTree || isSaving}
+              onClick={() => void saveRules()}
+              disabled={!selectedUserRoleId || isLoadingData || isSaving}
             >
               <Save className="mr-2 h-4 w-4" />
               {isSaving ? 'Guardando...' : 'Guardar Alcance'}
@@ -400,294 +402,213 @@ export default function SecurityUserScopesManagement() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-        <div className="grid min-h-full grid-cols-1 items-stretch gap-4 xl:grid-cols-[1.35fr_1fr]">
-          <div className="flex min-h-0 flex-col rounded-lg border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-slate-800">Arbol organizacional de alcances</div>
-            <label className="inline-flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={showFullCatalog}
-                onChange={(event) => setShowFullCatalog(event.target.checked)}
-              />
-              Mostrar catálogo completo
-            </label>
-          </div>
-          <div className="mb-3 text-xs text-slate-500">
-            {showFullCatalog || selectedScopeCount === 0
-              ? 'Estructura completa disponible para asignar nuevos alcances.'
-              : 'Mostrando solo los alcances habilitados para el usuario seleccionado.'}
-          </div>
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="mb-3">
+          <h2 className="text-sm font-semibold text-slate-800">Nueva regla de alcance</h2>
+          <p className="text-xs text-slate-500">
+            Empresa es obligatoria. Los campos no seleccionados aplican como “Todos” dentro del nivel anterior.
+          </p>
+        </div>
 
-          <div className="min-h-0 flex-1 pr-1">
-            <div className="h-full min-h-0 overflow-auto">
-              {visibleTree.length === 0 ? (
-                <div className="text-xs text-slate-500">No hay estructura organizacional disponible.</div>
-              ) : (
-                <div className="h-full space-y-2">
-                  {visibleTree.map((company) => {
-                    const companyExpanded = expanded.has(keyOf('COMPANY', company.id));
-                    return (
-                      <div key={company.id} className="p-1">
-                        <div className="flex items-center gap-2 text-sm text-slate-700">
-                          <button type="button" className="w-5 text-left text-slate-500" onClick={() => toggleExpanded('COMPANY', company.id)}>
-                            {companyExpanded ? '-' : '+'}
-                          </button>
-                          <input
-                            type="checkbox"
-                            checked={selection.COMPANY.has(company.id)}
-                            onChange={(e) => toggleSelection('COMPANY', company.id, e.target.checked)}
-                          />
-                          <span className="font-medium">{company.name}</span>
-                        </div>
-
-                        {companyExpanded ? (
-                          <div className="ml-6 mt-1 space-y-1">
-                            {company.work_locations.map((workLocation, workLocationIndex) => {
-                              const workLocationExpanded = expanded.has(keyOf('WORK_LOCATION', workLocation.id));
-                              const workLocationConnector = workLocationIndex === company.work_locations.length - 1 ? '└─' : '├─';
-                              return (
-                                <div key={workLocation.id}>
-                                  <div className="flex items-center gap-2 text-sm text-slate-700">
-                                    <span className="w-5 text-slate-400">{workLocationConnector}</span>
-                                    <button
-                                      type="button"
-                                      className="w-5 text-left text-slate-500"
-                                      onClick={() => toggleExpanded('WORK_LOCATION', workLocation.id)}
-                                    >
-                                      {workLocationExpanded ? '-' : '+'}
-                                    </button>
-                                    <input
-                                      type="checkbox"
-                                      checked={selection.WORK_LOCATION.has(workLocation.id)}
-                                      onChange={(e) => toggleSelection('WORK_LOCATION', workLocation.id, e.target.checked)}
-                                    />
-                                    <span>{workLocation.name}</span>
-                                  </div>
-
-                                  {workLocationExpanded ? (
-                                    <div className="ml-8 mt-1 space-y-1">
-                                      {workLocation.departments.map((department, departmentIndex) => {
-                                        const departmentExpanded = expanded.has(keyOf('DEPARTMENT', department.id));
-                                        const departmentConnector = departmentIndex === workLocation.departments.length - 1 ? '└─' : '├─';
-                                        return (
-                                          <div key={department.id}>
-                                            <div className="flex items-center gap-2 text-sm text-slate-700">
-                                              <span className="w-5 text-slate-400">{departmentConnector}</span>
-                                              <button
-                                                type="button"
-                                                className="w-5 text-left text-slate-500"
-                                                onClick={() => toggleExpanded('DEPARTMENT', department.id)}
-                                              >
-                                                {departmentExpanded ? '-' : '+'}
-                                              </button>
-                                              <input
-                                                type="checkbox"
-                                                checked={selection.DEPARTMENT.has(department.id)}
-                                                onChange={(e) => toggleSelection('DEPARTMENT', department.id, e.target.checked)}
-                                              />
-                                              <span>{department.name}</span>
-                                            </div>
-
-                                            {departmentExpanded ? (
-                                              <div className="ml-8 mt-1 space-y-1">
-                                                {department.areas.map((area, areaIndex) => {
-                                                  const areaSelected = selectedArea?.area_id === area.id;
-                                                  const areaConnector = areaIndex === department.areas.length - 1 ? '└─' : '├─';
-                                                  return (
-                                                    <div key={area.id} className={`rounded-md p-1 ${areaSelected ? 'bg-sky-50' : ''}`}>
-                                                      <div className="flex items-center gap-2 text-sm text-slate-700">
-                                                        <span className="w-5 text-slate-400">{areaConnector}</span>
-                                                        <input
-                                                          type="checkbox"
-                                                          checked={selection.AREA.has(area.id)}
-                                                          onChange={(e) => toggleSelection('AREA', area.id, e.target.checked)}
-                                                        />
-                                                        <button
-                                                          type="button"
-                                                          className={`text-left hover:underline ${areaSelected ? 'font-medium text-sky-700' : ''}`}
-                                                          onClick={() => selectAreaContext(company, workLocation, department, area)}
-                                                        >
-                                                          {area.name}
-                                                        </button>
-                                                      </div>
-                                                    </div>
-                                                  );
-                                                })}
-                                              </div>
-                                            ) : null}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2 text-sm font-semibold text-slate-800">Contexto seleccionado</div>
-            {!selectedArea ? (
-              <div className="text-xs text-slate-500">Selecciona un Area del arbol para gestionar centros de costo y grupos de trabajo.</div>
-            ) : (
-              <div className="text-xs text-slate-600">
-                <div>Empresa: <span className="font-medium text-slate-800">{selectedArea.company_name}</span></div>
-                <div>Localizacion: <span className="font-medium text-slate-800">{selectedArea.work_location_name}</span></div>
-                <div>Departamento: <span className="font-medium text-slate-800">{selectedArea.department_name}</span></div>
-                <div>Area: <span className="font-medium text-slate-800">{selectedArea.area_name}</span></div>
-              </div>
-            )}
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Centros de costo</div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.cost_centers.length === 0}
-                  onClick={() => selectedArea && setAllSelection('COST_CENTER', selectedArea.cost_centers.map((x) => x.id), true)}
-                >
-                  Marcar todos
-                </button>
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.cost_centers.length === 0}
-                  onClick={() => selectedArea && setAllSelection('COST_CENTER', selectedArea.cost_centers.map((x) => x.id), false)}
-                >
-                  Limpiar
-                </button>
-              </div>
-            </div>
-
-            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {!selectedArea ? (
-                <div className="text-xs text-slate-500">Sin contexto seleccionado.</div>
-              ) : selectedArea.cost_centers.length === 0 ? (
-                <div className="text-xs text-slate-500">No hay centros de costo para el area actual.</div>
-              ) : (
-                selectedArea.cost_centers.map((row) => (
-                  <label key={row.id} className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={selection.COST_CENTER.has(row.id)}
-                      onChange={(e) => toggleSelection('COST_CENTER', row.id, e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <span>{row.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Grupos de trabajo</div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.work_groups.length === 0}
-                  onClick={() => selectedArea && setAllSelection('WORK_GROUP', selectedArea.work_groups.map((x) => x.id), true)}
-                >
-                  Marcar todos
-                </button>
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.work_groups.length === 0}
-                  onClick={() => selectedArea && setAllSelection('WORK_GROUP', selectedArea.work_groups.map((x) => x.id), false)}
-                >
-                  Limpiar
-                </button>
-              </div>
-            </div>
-
-            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {!selectedArea ? (
-                <div className="text-xs text-slate-500">Sin contexto seleccionado.</div>
-              ) : selectedArea.work_groups.length === 0 ? (
-                <div className="text-xs text-slate-500">No hay grupos de trabajo para el area actual.</div>
-              ) : (
-                selectedArea.work_groups.map((row) => (
-                  <label key={row.id} className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={selection.WORK_GROUP.has(row.id)}
-                      onChange={(e) => toggleSelection('WORK_GROUP', row.id, e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <span>{row.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            </div>
-
-            <div className="rounded-lg border border-slate-200 bg-white p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Perfiles</div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.employee_profiles.length === 0}
-                  onClick={() => selectedArea && setAllSelection('EMPLOYEE_PROFILE', selectedArea.employee_profiles.map((x) => x.id), true)}
-                >
-                  Marcar todos
-                </button>
-                <button
-                  type="button"
-                  className="text-xs text-sky-700 hover:underline disabled:text-slate-400"
-                  disabled={!selectedArea || selectedArea.employee_profiles.length === 0}
-                  onClick={() => selectedArea && setAllSelection('EMPLOYEE_PROFILE', selectedArea.employee_profiles.map((x) => x.id), false)}
-                >
-                  Limpiar
-                </button>
-              </div>
-            </div>
-
-            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-              {!selectedArea ? (
-                <div className="text-xs text-slate-500">Sin contexto seleccionado.</div>
-              ) : selectedArea.employee_profiles.length === 0 ? (
-                <div className="text-xs text-slate-500">No hay perfiles para el area actual.</div>
-              ) : (
-                selectedArea.employee_profiles.map((row) => (
-                  <label key={row.id} className="flex items-start gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={selection.EMPLOYEE_PROFILE.has(row.id)}
-                      onChange={(e) => toggleSelection('EMPLOYEE_PROFILE', row.id, e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <span>{row.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SelectField
+            label="Empresa *"
+            value={form.company_id}
+            onChange={(value) =>
+              updateForm({
+                company_id: value,
+                work_location_id: '',
+                department_id: '',
+                area_id: '',
+                cost_center_id: '',
+                work_group_id: '',
+                employee_profile_id: '',
+              })
+            }
+            placeholder="-- Seleccionar empresa --"
+            options={companies}
+          />
+          <SelectField
+            label="Localización"
+            value={form.work_location_id}
+            onChange={(value) =>
+              updateForm({
+                work_location_id: value,
+                department_id: '',
+                area_id: '',
+                cost_center_id: '',
+                work_group_id: '',
+                employee_profile_id: '',
+              })
+            }
+            placeholder="Todas las localizaciones"
+            options={workLocationOptions}
+            disabled={!form.company_id}
+          />
+          <SelectField
+            label="Departamento"
+            value={form.department_id}
+            onChange={(value) =>
+              updateForm({
+                department_id: value,
+                area_id: '',
+                cost_center_id: '',
+                work_group_id: '',
+                employee_profile_id: '',
+              })
+            }
+            placeholder="Todos los departamentos"
+            options={departmentOptions}
+            disabled={!form.company_id}
+          />
+          <SelectField
+            label="Área"
+            value={form.area_id}
+            onChange={(value) =>
+              updateForm({
+                area_id: value,
+                cost_center_id: '',
+                work_group_id: '',
+                employee_profile_id: '',
+              })
+            }
+            placeholder="Todas las áreas"
+            options={areaOptions}
+            disabled={!form.company_id}
+          />
+          <SelectField
+            label="Centro de costo"
+            value={form.cost_center_id}
+            onChange={(value) => updateForm({ cost_center_id: value })}
+            placeholder="Todos los centros"
+            options={costCenterOptions}
+            disabled={!selectedArea}
+          />
+          <SelectField
+            label="Grupo de trabajo"
+            value={form.work_group_id}
+            onChange={(value) => updateForm({ work_group_id: value })}
+            placeholder="Todos los grupos"
+            options={workGroupOptions}
+            disabled={!selectedArea}
+          />
+          <SelectField
+            label="Perfil"
+            value={form.employee_profile_id}
+            onChange={(value) => updateForm({ employee_profile_id: value })}
+            placeholder="Todos los perfiles"
+            options={employeeProfileOptions}
+            disabled={!selectedArea}
+          />
+          <div className="flex items-end">
+            <Button
+              type="button"
+              className="w-full bg-sky-600 text-white hover:bg-sky-700"
+              onClick={addDraftRule}
+              disabled={isLoadingData}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Agregar regla
+            </Button>
           </div>
         </div>
       </div>
 
-      {isLoadingTree ? <div className="text-xs text-slate-500">Actualizando arbol...</div> : null}
+      <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-800">Reglas configuradas</h2>
+            <p className="text-xs text-slate-500">
+              {draftRules.length} regla{draftRules.length === 1 ? '' : 's'} pendiente{draftRules.length === 1 ? '' : 's'} de guardar.
+            </p>
+          </div>
+          {rules.length > 0 ? (
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+              Guardadas actualmente: {rules.length}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="overflow-auto rounded-md border">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 py-2 text-left font-semibold text-slate-700">Regla</th>
+                <th className="w-[110px] px-3 py-2 text-center font-semibold text-slate-700">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {isLoadingData ? (
+                <tr>
+                  <td colSpan={2} className="px-3 py-6 text-center text-slate-500">
+                    Cargando reglas...
+                  </td>
+                </tr>
+              ) : draftRules.length === 0 ? (
+                <tr>
+                  <td colSpan={2} className="px-3 py-6 text-center text-slate-500">
+                    No hay reglas configuradas para el usuario seleccionado.
+                  </td>
+                </tr>
+              ) : (
+                draftRules.map((rule, index) => {
+                  const display = findRuleDisplay(rule);
+                  return (
+                    <tr key={`${ruleKey(rule)}-${index}`} className="border-t">
+                      <td className="px-3 py-3 text-slate-700">{displayRule(display)}</td>
+                      <td className="px-3 py-3 text-center">
+                        <button
+                          type="button"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                          onClick={() => removeDraftRule(index)}
+                          title="Quitar regla"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
 
+function SelectField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  options,
+  disabled = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  options: TreeLeafNode[];
+  disabled?: boolean;
+}) {
+  return (
+    <label className="space-y-1">
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100 disabled:text-slate-400"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {optionLabel(option)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}

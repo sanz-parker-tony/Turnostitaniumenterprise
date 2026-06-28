@@ -2999,6 +2999,7 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
 
     const selectedCountryId = normalizeScopeFilter(req.query.country_id);
     const selectedStateId = normalizeScopeFilter(req.query.state_id);
+    const loadDependentGeo = String(req.query.dependent_geo ?? 'true').toLowerCase() !== 'false';
 
     const holidayTypeGroupPromise = Postgres
       .from('lookup_groups')
@@ -3006,6 +3007,28 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
       .eq('lookup_group_key', 'HOLIDAY_TYPE')
       .eq('is_active', true)
       .maybeSingle();
+
+    let statesQuery = Postgres
+      .from('states')
+      .select('*')
+      .eq('is_active', true);
+    if (!loadDependentGeo) {
+      statesQuery = statesQuery.limit(0);
+    } else if (selectedCountryId) {
+      statesQuery = statesQuery.eq('country_id', selectedCountryId);
+    }
+
+    let citiesQuery = Postgres
+      .from('cities')
+      .select('*')
+      .eq('is_active', true);
+    if (!loadDependentGeo) {
+      citiesQuery = citiesQuery.limit(0);
+    } else if (selectedStateId) {
+      citiesQuery = citiesQuery.eq('state_id', selectedStateId);
+    } else if (selectedCountryId) {
+      citiesQuery = citiesQuery.eq('country_id', selectedCountryId);
+    }
 
     const [companies, workLocations, countries, statesRaw, citiesRaw, holidayTypeGroup] = await Promise.all([
       Postgres
@@ -3024,14 +3047,8 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
         .from('countries')
         .select('*')
         .eq('is_active', true),
-      Postgres
-        .from('states')
-        .select('*')
-        .eq('is_active', true),
-      Postgres
-        .from('cities')
-        .select('*')
-        .eq('is_active', true),
+      statesQuery,
+      citiesQuery,
       holidayTypeGroupPromise,
     ]);
 
@@ -3061,18 +3078,10 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
     let stateOptions = (statesRaw.data || [])
       .map((row: any) => mapStateOption(row))
       .sort((a: any, b: any) => String(a.lookup_label).localeCompare(String(b.lookup_label), 'es'));
-    if (selectedCountryId) {
-      stateOptions = stateOptions.filter((state: any) => String(state.country_id || '') === selectedCountryId);
-    }
 
     let cityOptions = (citiesRaw.data || [])
       .map((row: any) => mapCityOption(row))
       .sort((a: any, b: any) => String(a.lookup_label).localeCompare(String(b.lookup_label), 'es'));
-    if (selectedStateId) {
-      cityOptions = cityOptions.filter((city: any) => String(city.state_id || '') === selectedStateId);
-    } else if (selectedCountryId) {
-      cityOptions = cityOptions.filter((city: any) => String(city.country_id || '') === selectedCountryId);
-    }
 
     let holidayTypeRows: any[] = [];
     if (holidayTypeGroup.data?.id) {

@@ -1215,14 +1215,20 @@ export function OrgMaintenance({
     return String(rawValue ?? '');
   };
 
-  const getCatalogOptionById = (key: string, id: any) => {
-    const selectedId = String(id || '');
-    if (!selectedId) return null;
-    return (catalogs[key] || []).find((option: any) => String(option?.id || '') === selectedId) || null;
-  };
+  const getFilterOptionLabel = (option: any) =>
+    option.label ||
+    option.lookup_label ||
+    option.company_name ||
+    option.state_label ||
+    option.country_label ||
+    option.lookup_key ||
+    option.id ||
+    '';
 
   const sortOptionsByLabel = (options: any[]) =>
-    [...options].sort((a, b) => String(getOptionLabel(a) || '').localeCompare(String(getOptionLabel(b) || '')));
+    [...options].sort((a, b) =>
+      String(getFilterOptionLabel(a)).localeCompare(String(getFilterOptionLabel(b)))
+    );
 
   const getUsedWorkLocationOptions = (
     catalogKey: 'companies' | 'countries' | 'states',
@@ -2220,29 +2226,9 @@ export function OrgMaintenance({
         <>
           <div className="rounded-lg border bg-white p-4">
             <div className="flex items-center justify-between gap-3">
-              <div className={`grid w-full grid-cols-1 gap-3 ${
-                entity === 'work-locations' ? 'max-w-7xl md:grid-cols-5' : 'max-w-3xl md:grid-cols-2'
-              }`}>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
-                  <input
-                    value={searchTerm}
-                    onChange={(event) => setSearchTerm(event.target.value)}
-                    placeholder="Buscar..."
-                    className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value as 'all' | 'active' | 'inactive')}
-                >
-                  <option value="all">Todos los estados</option>
-                  <option value="active">Activos</option>
-                  <option value="inactive">Inactivos</option>
-                </select>
-                {entity === 'work-locations' && (
-                  <>
+              {entity === 'work-locations' ? (
+                <div className="w-full max-w-5xl space-y-3">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <select
                       className="w-full rounded-md border px-3 py-2 text-sm"
                       value={workLocationCompanyFilter}
@@ -2287,9 +2273,50 @@ export function OrgMaintenance({
                         </option>
                       ))}
                     </select>
-                  </>
-                )}
-              </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+                      <input
+                        value={searchTerm}
+                        onChange={(event) => setSearchTerm(event.target.value)}
+                        placeholder="Buscar..."
+                        className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <select
+                      className="w-full rounded-md border px-3 py-2 text-sm"
+                      value={statusFilter}
+                      onChange={(event) => setStatusFilter(event.target.value as 'all' | 'active' | 'inactive')}
+                    >
+                      <option value="all">Todos los estados</option>
+                      <option value="active">Activos</option>
+                      <option value="inactive">Inactivos</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid w-full max-w-3xl grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
+                    <input
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      placeholder="Buscar..."
+                      className="w-full rounded-md border border-gray-300 pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <select
+                    className="w-full rounded-md border px-3 py-2 text-sm"
+                    value={statusFilter}
+                    onChange={(event) => setStatusFilter(event.target.value as 'all' | 'active' | 'inactive')}
+                  >
+                    <option value="all">Todos los estados</option>
+                    <option value="active">Activos</option>
+                    <option value="inactive">Inactivos</option>
+                  </select>
+                </div>
+              )}
               <span className="text-sm text-gray-500">
                 {filteredItems.length} de {effectiveItems.length}
               </span>

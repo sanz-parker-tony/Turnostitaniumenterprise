@@ -264,6 +264,7 @@ export function DeviceManagement() {
   const [devices, setDevices] = useState<DeviceRow[]>([]);
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [companyFilter, setCompanyFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [page, setPage] = useState(1);
 
@@ -317,13 +318,22 @@ export function DeviceManagement() {
     return devices.filter((row) => {
       const text = `${row.device_name || ''} ${row.device_serial_number || ''} ${row.device_ip || ''} ${row.company_name || ''} ${row.work_location_name || ''}`.toLowerCase();
       const searchOk = !searchTerm.trim() || text.includes(searchTerm.toLowerCase());
+      const companyOk = companyFilter === 'all' || String(row.company_id || '') === companyFilter;
       const statusOk =
         statusFilter === 'all' ||
         (statusFilter === 'active' && row.is_active) ||
         (statusFilter === 'inactive' && !row.is_active);
-      return searchOk && statusOk;
+      return searchOk && companyOk && statusOk;
     });
-  }, [devices, searchTerm, statusFilter]);
+  }, [devices, searchTerm, companyFilter, statusFilter]);
+
+  const companyFilterOptions = useMemo(
+    () =>
+      [...companies].sort((a, b) =>
+        String(a.company_name || a.company_code || '').localeCompare(String(b.company_name || b.company_code || ''))
+      ),
+    [companies]
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paged = useMemo(() => {
@@ -527,7 +537,7 @@ export function DeviceManagement() {
       {success && <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{success}</div>}
 
       <div className="rounded-lg border bg-white p-5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
@@ -541,6 +551,24 @@ export function DeviceManagement() {
                 }}
               />
             </div>
+          </div>
+
+          <div>
+            <select
+              className="w-full rounded-md border px-3 py-2 text-sm"
+              value={companyFilter}
+              onChange={(event) => {
+                setCompanyFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="all">Todas las empresas</option>
+              {companyFilterOptions.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.company_name || company.company_code || company.id}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>

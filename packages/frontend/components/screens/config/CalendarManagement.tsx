@@ -21,6 +21,8 @@ import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
 interface OptionItem {
   id: string;
   company_id?: string | null;
+  country_id?: string | null;
+  state_id?: string | null;
   company_name?: string | null;
   company_code?: string | null;
   work_location_name?: string | null;
@@ -230,10 +232,15 @@ export function CalendarManagement() {
     return payload;
   };
 
-  const loadLocationCatalogs = async (countryId?: string, stateId?: string) => {
+  const loadLocationCatalogs = async (
+    countryId?: string,
+    stateId?: string,
+    options?: { dependentGeo?: boolean }
+  ) => {
     const params = new URLSearchParams();
     if (countryId) params.set('country_id', countryId);
     if (stateId) params.set('state_id', stateId);
+    if (options?.dependentGeo === false) params.set('dependent_geo', 'false');
     const suffix = params.toString() ? `?${params.toString()}` : '';
 
     const payload = (await request(
@@ -280,7 +287,7 @@ export function CalendarManagement() {
   useEffect(() => {
     void (async () => {
       try {
-        await loadLocationCatalogs();
+        await loadLocationCatalogs('', '', { dependentGeo: false });
       } catch (err: any) {
         setError(err.message || 'Error cargando catalogos');
       }
@@ -295,6 +302,39 @@ export function CalendarManagement() {
     if (!selectedCompanyId) return workLocations;
     return workLocations.filter((wl) => wl.company_id === selectedCompanyId);
   }, [workLocations, selectedCompanyId]);
+
+  const filterStateOptions = useMemo(() => {
+    if (!selectedCountryId) return [];
+    return states.filter((state) => String(state.country_id || '') === selectedCountryId);
+  }, [states, selectedCountryId]);
+
+  const filterCityOptions = useMemo(() => {
+    if (selectedStateId) {
+      return cities.filter((city) => String(city.state_id || '') === selectedStateId);
+    }
+    if (selectedCountryId) {
+      return cities.filter((city) => String(city.country_id || '') === selectedCountryId);
+    }
+    return [];
+  }, [cities, selectedCountryId, selectedStateId]);
+
+  const formStateOptions = useMemo(() => {
+    const countryId = normalizeNullableId(formData.country_id);
+    if (!countryId) return [];
+    return states.filter((state) => String(state.country_id || '') === countryId);
+  }, [states, formData.country_id]);
+
+  const formCityOptions = useMemo(() => {
+    const stateId = normalizeNullableId(formData.state_id);
+    const countryId = normalizeNullableId(formData.country_id);
+    if (stateId) {
+      return cities.filter((city) => String(city.state_id || '') === stateId);
+    }
+    if (countryId) {
+      return cities.filter((city) => String(city.country_id || '') === countryId);
+    }
+    return [];
+  }, [cities, formData.country_id, formData.state_id]);
 
   const holidayTypeById = useMemo(() => {
     const map = new Map<string, OptionItem>();
@@ -393,6 +433,11 @@ export function CalendarManagement() {
     fillFormFromHoliday(holiday);
     setModalError(null);
     setModalOpen(true);
+    const countryId = normalizeNullableId(holiday.country_id) || '';
+    const stateId = normalizeNullableId(holiday.state_id) || '';
+    if (countryId || stateId) {
+      void loadLocationCatalogs(countryId, stateId, { dependentGeo: true });
+    }
   };
 
   const changeCountry = async (countryId: string) => {
@@ -402,7 +447,7 @@ export function CalendarManagement() {
       state_id: '',
       city_id: '',
     }));
-    await loadLocationCatalogs(countryId, '');
+    await loadLocationCatalogs(countryId, '', { dependentGeo: Boolean(countryId) });
   };
 
   const changeState = async (stateId: string) => {
@@ -411,7 +456,9 @@ export function CalendarManagement() {
       state_id: stateId,
       city_id: '',
     }));
-    await loadLocationCatalogs(formData.country_id, stateId);
+    await loadLocationCatalogs(formData.country_id, stateId, {
+      dependentGeo: Boolean(formData.country_id || stateId),
+    });
   };
 
   const handleSave = async () => {
@@ -591,7 +638,7 @@ export function CalendarManagement() {
                 setSelectedCountryId(nextCountry);
                 setSelectedStateId('');
                 setSelectedCityId('');
-                void loadLocationCatalogs(nextCountry, '');
+                void loadLocationCatalogs(nextCountry, '', { dependentGeo: Boolean(nextCountry) });
               }}
               className="w-full border rounded px-3 py-2 text-sm"
             >
@@ -611,12 +658,15 @@ export function CalendarManagement() {
                 const nextState = event.target.value;
                 setSelectedStateId(nextState);
                 setSelectedCityId('');
-                void loadLocationCatalogs(selectedCountryId, nextState);
+                void loadLocationCatalogs(selectedCountryId, nextState, {
+                  dependentGeo: Boolean(selectedCountryId || nextState),
+                });
               }}
-              className="w-full border rounded px-3 py-2 text-sm"
+              disabled={!selectedCountryId}
+              className="w-full border rounded px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400"
             >
               <option value="">Todas las provincias</option>
-              {states.map((state) => (
+              {filterStateOptions.map((state) => (
                 <option key={state.id} value={state.id}>
                   {optionLabel(state)}
                 </option>
@@ -628,10 +678,11 @@ export function CalendarManagement() {
             <select
               value={selectedCityId}
               onChange={(event) => setSelectedCityId(event.target.value)}
-              className="w-full border rounded px-3 py-2 text-sm"
+              disabled={!selectedCountryId && !selectedStateId}
+              className="w-full border rounded px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400"
             >
               <option value="">Todas las ciudades</option>
-              {cities.map((city) => (
+              {filterCityOptions.map((city) => (
                 <option key={city.id} value={city.id}>
                   {optionLabel(city)}
                 </option>
@@ -924,10 +975,11 @@ export function CalendarManagement() {
                   <select
                     value={formData.state_id}
                     onChange={(event) => void changeState(event.target.value)}
-                    className="w-full border rounded px-2 py-1.5 text-sm"
+                    disabled={!normalizeNullableId(formData.country_id)}
+                    className="w-full border rounded px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <option value="">-- No aplica --</option>
-                    {states.map((state) => (
+                    {formStateOptions.map((state) => (
                       <option key={state.id} value={state.id}>
                         {optionLabel(state)}
                       </option>
@@ -942,10 +994,11 @@ export function CalendarManagement() {
                     onChange={(event) =>
                       setFormData((prev) => ({ ...prev, city_id: event.target.value }))
                     }
-                    className="w-full border rounded px-2 py-1.5 text-sm"
+                    disabled={!normalizeNullableId(formData.country_id) && !normalizeNullableId(formData.state_id)}
+                    className="w-full border rounded px-2 py-1.5 text-sm disabled:bg-gray-100 disabled:text-gray-400"
                   >
                     <option value="">-- No aplica --</option>
-                    {cities.map((city) => (
+                    {formCityOptions.map((city) => (
                       <option key={city.id} value={city.id}>
                         {optionLabel(city)}
                       </option>
