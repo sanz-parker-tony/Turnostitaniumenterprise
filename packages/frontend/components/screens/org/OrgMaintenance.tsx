@@ -723,6 +723,9 @@ export function OrgMaintenance({
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [workLocationCompanyFilter, setWorkLocationCompanyFilter] = useState('all');
+  const [workLocationCountryFilter, setWorkLocationCountryFilter] = useState('all');
+  const [workLocationStateFilter, setWorkLocationStateFilter] = useState('all');
   const [photoRules, setPhotoRules] = useState<EmployeePhotoValidationRules>(FALLBACK_EMPLOYEE_PHOTO_RULES);
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
@@ -1144,6 +1147,9 @@ export function OrgMaintenance({
     setFormData({});
     setSearchTerm('');
     setStatusFilter('all');
+    setWorkLocationCompanyFilter('all');
+    setWorkLocationCountryFilter('all');
+    setWorkLocationStateFilter('all');
     setSelectedPhotoFile(null);
     clearPhotoPreview();
     if (entity === 'employees') {
@@ -1209,6 +1215,81 @@ export function OrgMaintenance({
     return String(rawValue ?? '');
   };
 
+  const getCatalogOptionById = (key: string, id: any) => {
+    const selectedId = String(id || '');
+    if (!selectedId) return null;
+    return (catalogs[key] || []).find((option: any) => String(option?.id || '') === selectedId) || null;
+  };
+
+  const sortOptionsByLabel = (options: any[]) =>
+    [...options].sort((a, b) => String(getOptionLabel(a) || '').localeCompare(String(getOptionLabel(b) || '')));
+
+  const getUsedWorkLocationOptions = (
+    catalogKey: 'companies' | 'countries' | 'states',
+    itemKey: string,
+    options: { applyCompany?: boolean; applyCountry?: boolean } = {}
+  ) => {
+    const { applyCompany = true, applyCountry = true } = options;
+    const usedIds = new Set(
+      effectiveItems
+        .filter((item) =>
+          !applyCompany || workLocationCompanyFilter === 'all' || String(item.company_id || '') === workLocationCompanyFilter
+        )
+        .filter((item) =>
+          !applyCountry ||
+          workLocationCountryFilter === 'all' ||
+          String(item.country_id || '') === workLocationCountryFilter
+        )
+        .map((item) => String(item[itemKey] || ''))
+        .filter(Boolean)
+    );
+    return sortOptionsByLabel((catalogs[catalogKey] || []).filter((option: any) => usedIds.has(String(option?.id || ''))));
+  };
+
+  const workLocationCompanyFilterOptions = useMemo(
+    () => getUsedWorkLocationOptions('companies', 'company_id', { applyCompany: false, applyCountry: false }),
+    [entity, effectiveItems, catalogs.companies]
+  );
+
+  const workLocationCountryFilterOptions = useMemo(
+    () => getUsedWorkLocationOptions('countries', 'country_id', { applyCountry: false }),
+    [entity, effectiveItems, catalogs.countries, workLocationCompanyFilter]
+  );
+
+  const workLocationStateFilterOptions = useMemo(
+    () =>
+      sortOptionsByLabel(
+        getUsedWorkLocationOptions('states', 'state_id').filter((state: any) => {
+          if (workLocationCountryFilter === 'all') return true;
+          return String(state?.country_id || '') === workLocationCountryFilter;
+        })
+      ),
+    [entity, effectiveItems, catalogs.states, workLocationCompanyFilter, workLocationCountryFilter]
+  );
+
+  useEffect(() => {
+    if (entity !== 'work-locations') return;
+    if (workLocationCountryFilter === 'all') return;
+    const countryStillAvailable = workLocationCountryFilterOptions.some(
+      (country: any) => String(country?.id || '') === workLocationCountryFilter
+    );
+    if (!countryStillAvailable) {
+      setWorkLocationCountryFilter('all');
+      setWorkLocationStateFilter('all');
+    }
+  }, [entity, workLocationCountryFilter, workLocationCountryFilterOptions]);
+
+  useEffect(() => {
+    if (entity !== 'work-locations') return;
+    if (workLocationStateFilter === 'all') return;
+    const stateStillAvailable = workLocationStateFilterOptions.some(
+      (state: any) => String(state?.id || '') === workLocationStateFilter
+    );
+    if (!stateStillAvailable) {
+      setWorkLocationStateFilter('all');
+    }
+  }, [entity, workLocationStateFilter, workLocationStateFilterOptions]);
+
   const filteredItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     return effectiveItems.filter((item) => {
@@ -1224,9 +1305,25 @@ export function OrgMaintenance({
         (statusFilter === 'active' && item.is_active === true) ||
         (statusFilter === 'inactive' && item.is_active === false);
 
-      return searchOk && statusOk;
+      const workLocationFiltersOk =
+        entity !== 'work-locations' ||
+        ((workLocationCompanyFilter === 'all' || String(item.company_id || '') === workLocationCompanyFilter) &&
+          (workLocationCountryFilter === 'all' || String(item.country_id || '') === workLocationCountryFilter) &&
+          (workLocationStateFilter === 'all' || String(item.state_id || '') === workLocationStateFilter));
+
+      return searchOk && statusOk && workLocationFiltersOk;
     });
-  }, [effectiveItems, config.tableColumns, searchTerm, statusFilter, catalogs]);
+  }, [
+    effectiveItems,
+    config.tableColumns,
+    searchTerm,
+    statusFilter,
+    catalogs,
+    entity,
+    workLocationCompanyFilter,
+    workLocationCountryFilter,
+    workLocationStateFilter,
+  ]);
 
   const getColumnHeaderLabel = (column: string) => {
     if (column === 'is_active') return 'Estado';
@@ -2123,7 +2220,9 @@ export function OrgMaintenance({
         <>
           <div className="rounded-lg border bg-white p-4">
             <div className="flex items-center justify-between gap-3">
-              <div className="grid w-full max-w-3xl grid-cols-1 gap-3 md:grid-cols-2">
+              <div className={`grid w-full grid-cols-1 gap-3 ${
+                entity === 'work-locations' ? 'max-w-7xl md:grid-cols-5' : 'max-w-3xl md:grid-cols-2'
+              }`}>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
                   <input
@@ -2142,6 +2241,54 @@ export function OrgMaintenance({
                   <option value="active">Activos</option>
                   <option value="inactive">Inactivos</option>
                 </select>
+                {entity === 'work-locations' && (
+                  <>
+                    <select
+                      className="w-full rounded-md border px-3 py-2 text-sm"
+                      value={workLocationCompanyFilter}
+                      onChange={(event) => {
+                        setWorkLocationCompanyFilter(event.target.value);
+                        setWorkLocationCountryFilter('all');
+                        setWorkLocationStateFilter('all');
+                      }}
+                    >
+                      <option value="all">Todas las empresas</option>
+                      {workLocationCompanyFilterOptions.map((company: any) => (
+                        <option key={company.id} value={company.id}>
+                          {getOptionLabel(company)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="w-full rounded-md border px-3 py-2 text-sm"
+                      value={workLocationCountryFilter}
+                      onChange={(event) => {
+                        setWorkLocationCountryFilter(event.target.value);
+                        setWorkLocationStateFilter('all');
+                      }}
+                    >
+                      <option value="all">Todos los países</option>
+                      {workLocationCountryFilterOptions.map((country: any) => (
+                        <option key={country.id} value={country.id}>
+                          {getOptionLabel(country)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="w-full rounded-md border px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-400"
+                      value={workLocationStateFilter}
+                      onChange={(event) => setWorkLocationStateFilter(event.target.value)}
+                      disabled={workLocationCountryFilter === 'all'}
+                    >
+                      <option value="all">Todas las provincias</option>
+                      {workLocationStateFilterOptions.map((state: any) => (
+                        <option key={state.id} value={state.id}>
+                          {getOptionLabel(state)}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
               </div>
               <span className="text-sm text-gray-500">
                 {filteredItems.length} de {effectiveItems.length}

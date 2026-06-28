@@ -142,6 +142,107 @@ export async function updateTenant(req: Request, res: Response) {
 }
 
 /**
+ * GET /tenants/:id/summary
+ * Resumen informativo de entidades relacionadas al tenant.
+ */
+export async function getTenantSummary(req: Request, res: Response) {
+  try {
+    const tenantId = req.params.id;
+    const Postgres = getPostgresClient();
+
+    // OnPremise: expose only operational tenant references.
+    // Future SaaS: re-enable billing/subscription references such as
+    // tenant_subscriptions, subscription_plans and payment_transactions.
+    // tenant_members remains a compatibility table; OnPremise access is managed
+    // through users, roles and organizational scopes.
+    const [
+      settingsResult,
+      onboardingResult,
+      languageSettingsResult,
+    ] = await Promise.all([
+      Postgres
+        .from('tenant_settings')
+        .select(
+          `
+          id,
+          tenant_id,
+          system_setting_id,
+          setting_value,
+          is_active,
+          created_by,
+          created_at,
+          updated_by,
+          updated_at
+        `
+        )
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false }),
+      Postgres
+        .from('tenant_onboarding')
+        .select(
+          'id, onboarding_status, completed_steps, current_step, completion_percentage, started_at, completed_at, notes, updated_at'
+        )
+        .eq('tenant_id', tenantId)
+        .maybeSingle(),
+      Postgres
+        .from('tenant_language_settings')
+        .select('id, default_language_code, enabled_languages, created_at, updated_at')
+        .eq('tenant_id', tenantId)
+        .maybeSingle(),
+    ]);
+
+    const firstError =
+      settingsResult.error ||
+      onboardingResult.error ||
+      languageSettingsResult.error;
+
+    if (firstError) throw firstError;
+
+    const tenantSettings = settingsResult.data || [];
+    const systemSettingIds = [
+      ...new Set(
+        tenantSettings
+          .map((row: any) => row.system_setting_id)
+          .filter((id: any) => typeof id === 'string' && id.trim().length > 0)
+      ),
+    ];
+
+    let systemSettingsById = new Map<string, any>();
+    if (systemSettingIds.length > 0) {
+      const { data: systemSettings, error: systemSettingsError } = await Postgres
+        .from('system_settings')
+        .select('id, setting_key, setting_name, setting_short_key, default_value')
+        .in('id', systemSettingIds);
+
+      if (systemSettingsError) throw systemSettingsError;
+      systemSettingsById = new Map((systemSettings || []).map((row: any) => [row.id, row]));
+    }
+
+    const enrichedTenantSettings = tenantSettings.map((row: any) => ({
+      ...row,
+      system_setting: systemSettingsById.get(row.system_setting_id) || null,
+    }));
+
+    return res.json({
+      summary: {
+        active_settings_count: enrichedTenantSettings.filter((row: any) => row.is_active === true).length,
+        onboarding: onboardingResult.data || null,
+        language_settings: languageSettingsResult.data || null,
+      },
+      details: {
+        tenant_settings: enrichedTenantSettings,
+        tenant_onboarding: onboardingResult.data ? [onboardingResult.data] : [],
+        language_settings: languageSettingsResult.data || null,
+        tenant_language_settings: languageSettingsResult.data ? [languageSettingsResult.data] : [],
+      },
+    });
+  } catch (error: any) {
+    console.error('Error obteniendo resumen del tenant:', error);
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+/**
  * GET /tenants/:id/settings
  * Obtiene los overrides de settings del tenant
  */

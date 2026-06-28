@@ -1,7 +1,7 @@
 'use client';
 /**
- * SubscriptionPlansManagement - GestiÃ³n de Planes SaaS
- * Seguridad â†’ Planes
+ * SubscriptionPlansManagement - Gestión de Planes SaaS
+ * Seguridad → Planes
  */
 
 import { buildApiUrl } from '../../../utils/api-config';
@@ -261,7 +261,7 @@ export default function SubscriptionPlansManagement() {
   };
 
   const removePlan = async (plan: SubscriptionPlan) => {
-    const ok = window.confirm(`Â¿Eliminar el plan ${plan.plan_name} (${plan.plan_key})?`);
+    const ok = window.confirm(`¿Eliminar el plan ${plan.plan_name} (${plan.plan_key})?`);
     if (!ok) return;
     try {
       const res = await fetch(`${API}/${plan.id}`, {
@@ -311,7 +311,7 @@ export default function SubscriptionPlansManagement() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por clave, nombre o descripciÃ³n..."
+            placeholder="Buscar por clave, nombre o descripción..."
             className="w-full pl-9 pr-4 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -350,7 +350,7 @@ export default function SubscriptionPlansManagement() {
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Clave</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Nombre</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Precio</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">LÃ­mites</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Límites</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Estado</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Acciones</th>
                 </tr>
@@ -461,7 +461,7 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">DescripciÃ³n</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Descripción</label>
                   <textarea
                     value={form.plan_description}
                     onChange={(e) => setForm({ ...form, plan_description: e.target.value })}
@@ -503,7 +503,7 @@ export default function SubscriptionPlansManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">DÃ­as de prueba</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Días de prueba</label>
                   <input
                     type="number"
                     min={0}
@@ -514,48 +514,48 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Usuarios</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Usuarios</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_users}
                     onChange={(e) => setForm({ ...form, max_users: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacÃ­o = ilimitado"
+                    placeholder="vacío = ilimitado"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Empleados</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Empleados</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_employees}
                     onChange={(e) => setForm({ ...form, max_employees: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacÃ­o = ilimitado"
+                    placeholder="vacío = ilimitado"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Empresas</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Empresas</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_companies}
                     onChange={(e) => setForm({ ...form, max_companies: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacÃ­o = ilimitado"
+                    placeholder="vacío = ilimitado"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">MÃ¡x. Localizaciones</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Máx. Localizaciones</label>
                   <input
                     type="number"
                     min={0}
                     value={form.max_locations}
                     onChange={(e) => setForm({ ...form, max_locations: e.target.value })}
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="vacÃ­o = ilimitado"
+                    placeholder="vacío = ilimitado"
                   />
                 </div>
 
@@ -571,13 +571,13 @@ export default function SubscriptionPlansManagement() {
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Features (1 por lÃ­nea)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Features (1 por línea)</label>
                   <textarea
                     value={form.features_text}
                     onChange={(e) => setForm({ ...form, features_text: e.target.value })}
                     rows={5}
                     className="w-full px-3 py-2 border rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder={'Control de marcaciones\nReportes avanzados\nIntegraciÃ³n nÃ³mina'}
+                    placeholder={'Control de marcaciones\nReportes avanzados\nIntegración nómina'}
                   />
                 </div>
 

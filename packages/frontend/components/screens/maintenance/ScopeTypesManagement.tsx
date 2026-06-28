@@ -1,9 +1,9 @@
 /**
- * ScopeTypesManagement.tsx - GestiÃ³n de Tipos de Alcance
+ * ScopeTypesManagement.tsx - Gestión de Tipos de Alcance
  * Turnos Titanium Enterprise
  *
  * Pantalla de mantenimiento para la tabla scope_types
- * UbicaciÃ³n: Mantenimiento â†’ Alcances
+ * Ubicación: Mantenimiento → Alcances
  */
 
 'use client';
@@ -158,7 +158,7 @@ export function ScopeTypesManagement() {
     if (!formData.scope_type_key.trim()) {
       errors.scope_type_key = 'La clave es obligatoria';
     } else if (formData.scope_type_key.length > 80) {
-      errors.scope_type_key = 'MÃ¡ximo 80 caracteres';
+      errors.scope_type_key = 'Máximo 80 caracteres';
     }
     if (!formData.scope_type_name.trim()) errors.scope_type_name = 'El nombre es obligatorio';
     setFormErrors(errors);
@@ -397,7 +397,7 @@ export function ScopeTypesManagement() {
                   }`}
                 />
                 {formErrors.scope_type_key && <p className="text-xs text-red-500 mt-1">{formErrors.scope_type_key}</p>}
-                <p className="text-xs text-gray-400 mt-1">Identificador Ãºnico, mÃ¡ximo 80 caracteres.</p>
+                <p className="text-xs text-gray-400 mt-1">Identificador único, máximo 80 caracteres.</p>
               </div>
 
               <div>

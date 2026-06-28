@@ -23,6 +23,7 @@ import {
 import {
   getTenant,
   updateTenant,
+  getTenantSummary,
   getTenantSettings,
   createTenantSetting,
   updateTenantSetting,
@@ -4446,6 +4447,7 @@ router.post('/db/query', requireAuth, async (req: Request, res: Response) => {
 
 router.get('/tenants/:id', requireAuth, getTenant);
 router.put('/tenants/:id', requireAuth, updateTenant);
+router.get('/tenants/:id/summary', requireAuth, getTenantSummary);
 router.get('/tenants/:id/settings', requireAuth, getTenantSettings);
 router.post('/tenants/:id/settings', requireAuth, createTenantSetting);
 router.put('/tenants/:id/settings/:setting_id', requireAuth, updateTenantSetting);

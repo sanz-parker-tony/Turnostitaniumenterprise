@@ -9,7 +9,6 @@ import { ReactNode } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { AppSidebar } from './AppSidebar';
 import { AppHeader } from './AppHeader';
-import { MenuDebugger } from './MenuDebugger';
 import { SidebarInset, SidebarProvider } from './ui/sidebar';
 import { Router } from './Router';
 
@@ -42,8 +41,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </SidebarInset>
       </div>
-      {/* Herramienta de debugging del menú */}
-      {!isEmployee ? <MenuDebugger /> : null}
     </SidebarProvider>
   );
 }

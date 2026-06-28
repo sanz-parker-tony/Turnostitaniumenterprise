@@ -69,6 +69,11 @@ router.get('/catalogs/screen-actions', async (_req: Request, res: Response) => {
           sa.ui_element_key,
           s.screen_key,
           s.screen_name,
+          s.menu_label,
+          s.sort_order AS screen_sort_order,
+          smg.menu_group_key,
+          smg.menu_group_name,
+          smg.sort_order AS menu_group_sort_order,
           a.action_key,
           a.action_name,
           (COALESCE(s.screen_name, s.screen_key) || ' -> ' || COALESCE(a.action_name, a.action_key)) AS label
@@ -76,11 +81,13 @@ router.get('/catalogs/screen-actions', async (_req: Request, res: Response) => {
         JOIN screens s
           ON s.id = sa.screen_id
          AND s.is_active = true
+        LEFT JOIN system_menu_groups smg
+          ON smg.id = s.menu_group_id
         JOIN actions a
           ON a.id = sa.action_id
          AND a.is_active = true
         WHERE sa.is_active = true
-        ORDER BY s.sort_order NULLS LAST, s.screen_name, a.action_name
+        ORDER BY smg.sort_order NULLS LAST, smg.menu_group_name, s.sort_order NULLS LAST, s.screen_name, a.action_name
       `
     );
 

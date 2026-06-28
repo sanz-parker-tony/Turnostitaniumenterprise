@@ -88,6 +88,9 @@ interface UserRoleSummary {
   user_id: string;
   primary_role_name: string | null;
   primary_role_key: string | null;
+  role_ids?: string[];
+  role_keys?: string[];
+  role_names?: string[];
   role_count: number;
 }
 
@@ -126,6 +129,8 @@ const DATA_SCOPE_LABELS: Record<string, string> = {
   DIRECT_REPORTS: 'Reportes directos',
   SELF: 'Solo propio',
 };
+
+const IMPORTANT_ROLE_ORDER = ['SYSTEM_ADMIN', 'TENANT_ADMIN', 'SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TIC_ADMIN', 'EMPLOYEE'];
 
 function shortId(value?: string | null): string {
   if (!value) return '-';
@@ -167,6 +172,7 @@ export function UsersManagement() {
   // Filtros
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [roleFilter, setRoleFilter] = useState<string>('all');
   const [sortField, setSortField] = useState<keyof AppUser>('username');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
@@ -409,13 +415,19 @@ export function UsersManagement() {
 
   const filteredUsers = users
     .filter(u => {
+      const summary = userRoleSummaries[u.id];
       const matchSearch = !searchTerm ||
         u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (u.display_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (u.email || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (u.tenant_name || '').toLowerCase().includes(searchTerm.toLowerCase());
       const matchStatus = statusFilter === 'all' || (statusFilter === 'active' ? u.is_active : !u.is_active);
-      return matchSearch && matchStatus;
+      const matchRole =
+        roleFilter === 'all' ||
+        (roleFilter === '__none__'
+          ? !summary || summary.role_count === 0
+          : (summary?.role_ids || []).includes(roleFilter));
+      return matchSearch && matchStatus && matchRole;
     })
     .sort((a, b) => {
       const va = String(a[sortField] || ''); const vb = String(b[sortField] || '');
@@ -423,6 +435,13 @@ export function UsersManagement() {
     });
 
   const totalRoleScopes = Object.values(roleScopesByUserRoleId).reduce((acc, scopes) => acc + scopes.length, 0);
+  const roleFilterOptions = [...roles].sort((a, b) => {
+    const aPriority = IMPORTANT_ROLE_ORDER.indexOf(String(a.role_key || '').toUpperCase());
+    const bPriority = IMPORTANT_ROLE_ORDER.indexOf(String(b.role_key || '').toUpperCase());
+    const normalizedAPriority = aPriority === -1 ? 999 : aPriority;
+    const normalizedBPriority = bPriority === -1 ? 999 : bPriority;
+    return normalizedAPriority - normalizedBPriority || a.role_name.localeCompare(b.role_name);
+  });
   const availableRolesForForm: Role[] = (() => {
     if (!editingUserRole) return roles;
     const exists = roles.some((r) => r.id === editingUserRole.role_id);
@@ -815,6 +834,19 @@ export function UsersManagement() {
                   className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30"
                 />
               </div>
+              <select
+                value={roleFilter}
+                onChange={e => setRoleFilter(e.target.value)}
+                className="min-w-56 px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+              >
+                <option value="all">Todos los roles</option>
+                <option value="__none__">Sin rol asignado</option>
+                {roleFilterOptions.map(role => (
+                  <option key={role.id} value={role.id}>
+                    {role.role_name} ({role.role_key})
+                  </option>
+                ))}
+              </select>
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value as any)}

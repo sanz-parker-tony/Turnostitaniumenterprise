@@ -374,5 +374,79 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// DELETE /:id - Eliminar rol creado si todavía no fue asignado
+// ============================================================================
+
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const Postgres = getPostgres();
+
+    const { data: existing, error: existingError } = await Postgres
+      .from('roles')
+      .select('id, role_key, is_system_role, is_locked')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (existingError) {
+      return res.status(500).json({ error: existingError.message });
+    }
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Rol no encontrado' });
+    }
+
+    if (existing.is_system_role || existing.is_locked) {
+      return res.status(403).json({ error: 'Los roles de sistema o bloqueados no pueden eliminarse' });
+    }
+
+    const { data: assignedRole } = await Postgres
+      .from('user_roles')
+      .select('id')
+      .eq('role_id', id)
+      .limit(1)
+      .maybeSingle();
+
+    if (assignedRole) {
+      return res.status(409).json({ error: 'No se puede eliminar: el rol ya fue asignado a un usuario' });
+    }
+
+    const { data: childRole } = await Postgres
+      .from('roles')
+      .select('id')
+      .eq('base_role_id', id)
+      .limit(1)
+      .maybeSingle();
+
+    if (childRole) {
+      return res.status(409).json({ error: 'No se puede eliminar: otro rol hereda de este rol' });
+    }
+
+    const { error: permissionDeleteError } = await Postgres
+      .from('role_screen_actions')
+      .delete()
+      .eq('role_id', id);
+
+    if (permissionDeleteError) {
+      return res.status(500).json({ error: permissionDeleteError.message });
+    }
+
+    const { error: deleteError } = await Postgres
+      .from('roles')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) {
+      return res.status(500).json({ error: deleteError.message });
+    }
+
+    return res.status(200).json({ success: true, message: 'Rol eliminado exitosamente' });
+  } catch (err: any) {
+    console.error('[ROLES] Error en DELETE /:id:', err);
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
 export default router;
 

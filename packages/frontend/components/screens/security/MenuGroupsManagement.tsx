@@ -1,7 +1,7 @@
 'use client';
 /**
- * MenuGroupsManagement - GestiÃ³n de Grupos de MenÃº
- * Turnos Titanium Enterprise â€” Seguridad â†’ Grupos de MenÃº
+ * MenuGroupsManagement - Gestión de Grupos de Menú
+ * Turnos Titanium Enterprise — Seguridad → Grupos de Menú
  */
 
 import { buildApiUrl } from '../../../utils/api-config';
@@ -327,7 +327,7 @@ export function MenuGroupsManagement() {
                     </th>
                   ))}
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Abrev.</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Ãcono</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Ícono</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600 cursor-pointer hover:text-gray-900"
                     onClick={() => sortBy('sort_order')}>
                     Orden<SortIcon field="sort_order" />
@@ -341,7 +341,7 @@ export function MenuGroupsManagement() {
                 {filtered.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center py-12 text-gray-400">
-                      {search ? 'No hay resultados para esta bÃºsqueda' : 'No hay grupos de menÃº registrados'}
+                      {search ? 'No hay resultados para esta búsqueda' : 'No hay grupos de menú registrados'}
                     </td>
                   </tr>
                 ) : filtered.map(g => (
@@ -350,13 +350,13 @@ export function MenuGroupsManagement() {
                       <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">{g.menu_group_key}</span>
                     </td>
                     <td className="px-4 py-3 font-medium text-gray-900">{g.menu_group_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{g.menu_group_short_name || 'â€”'}</td>
-                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{g.icon_key || 'â€”'}</td>
+                    <td className="px-4 py-3 text-gray-500">{g.menu_group_short_name || '—'}</td>
+                    <td className="px-4 py-3 text-gray-500 font-mono text-xs">{g.icon_key || '—'}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{g.sort_order}</td>
                     <td className="px-4 py-3">
                       {g.permission_level
                         ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{g.permission_level}</span>
-                        : <span className="text-gray-400">â€”</span>}
+                        : <span className="text-gray-400">—</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className={g.is_active ? BADGE.active : BADGE.inactive}>
@@ -396,7 +396,7 @@ export function MenuGroupsManagement() {
             <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
               <div className="flex items-center gap-2">
                 <LayoutList className="w-5 h-5 text-blue-600" />
-                <h2 className="font-semibold text-gray-900">{editing ? 'Editar Grupo de MenÃº' : 'Nuevo Grupo de MenÃº'}</h2>
+                <h2 className="font-semibold text-gray-900">{editing ? 'Editar Grupo de Menú' : 'Nuevo Grupo de Menú'}</h2>
               </div>
               <button onClick={() => setPanelOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded">
                 <X className="w-5 h-5" />
@@ -435,7 +435,7 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Datos â”€â”€ */}
+              {/* ── Tab: Datos ── */}
               {activeTab === 'main' && (
                 <div className="space-y-4">
                   <div>
@@ -445,7 +445,7 @@ export function MenuGroupsManagement() {
                       disabled={!!editing}
                       placeholder="Ej: MAINT, SECURITY, CONFIG"
                       className="w-full px-3 py-2 border rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400" />
-                    <p className="text-xs text-gray-400 mt-1">Solo mayÃºsculas, nÃºmeros y guiÃ³n bajo. No modificable una vez creado.</p>
+                    <p className="text-xs text-gray-400 mt-1">Solo mayúsculas, números y guión bajo. No modificable una vez creado.</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Nombre <span className="text-red-500">*</span></label>
@@ -463,7 +463,7 @@ export function MenuGroupsManagement() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ãcono (Lucide)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ícono (Lucide)</label>
                       <input value={form.icon_key}
                         onChange={e => setForm({ ...form, icon_key: e.target.value })}
                         placeholder="Ej: Settings, Shield"
@@ -481,7 +481,7 @@ export function MenuGroupsManagement() {
                     <select value={form.permission_level}
                       onChange={e => setForm({ ...form, permission_level: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">â€” Sin restricciÃ³n â€”</option>
+                      <option value="">— Sin restricción —</option>
                       <option value="SYSTEM">SYSTEM</option>
                       <option value="TENANT">TENANT</option>
                       <option value="PUBLIC">PUBLIC</option>
@@ -496,7 +496,7 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Traducciones â”€â”€ */}
+              {/* ── Tab: Traducciones ── */}
               {activeTab === 'translations' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">Configure el nombre del grupo en cada idioma disponible.</p>
@@ -530,10 +530,10 @@ export function MenuGroupsManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Pantallas del Grupo â”€â”€ */}
+              {/* ── Tab: Pantallas del Grupo ── */}
               {activeTab === 'screens' && (
                 <div className="space-y-3">
-                  <p className="text-sm text-gray-500">Pantallas asignadas a este grupo de menÃº.</p>
+                  <p className="text-sm text-gray-500">Pantallas asignadas a este grupo de menú.</p>
                   {!editing ? (
                     <p className="text-sm text-gray-400">Guarda el grupo primero para ver sus pantallas.</p>
                   ) : loadingScreens ? (
@@ -544,7 +544,7 @@ export function MenuGroupsManagement() {
                     <div className="text-center py-8 text-gray-400">
                       <Monitor className="w-8 h-8 mx-auto mb-2 opacity-40" />
                       <p className="text-sm">Sin pantallas asignadas a este grupo</p>
-                      <p className="text-xs mt-1">Crea pantallas en <strong>Seguridad â†’ Pantallas</strong> y asÃ­gnalas a este grupo.</p>
+                      <p className="text-xs mt-1">Crea pantallas en <strong>Seguridad → Pantallas</strong> y asígnalas a este grupo.</p>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -556,7 +556,7 @@ export function MenuGroupsManagement() {
                               <p className="text-sm font-medium text-gray-900">{sc.screen_name}</p>
                               <div className="flex items-center gap-2 mt-0.5">
                                 <span className="font-mono text-xs text-gray-400">{sc.screen_key}</span>
-                                {sc.route_path && <span className="text-xs text-gray-400">Â· {sc.route_path}</span>}
+                                {sc.route_path && <span className="text-xs text-gray-400">· {sc.route_path}</span>}
                               </div>
                             </div>
                           </div>

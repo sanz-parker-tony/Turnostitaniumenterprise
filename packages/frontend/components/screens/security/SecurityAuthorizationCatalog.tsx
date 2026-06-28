@@ -43,60 +43,60 @@ type IconOption = {
 const MENU_ICON_OPTIONS: IconOption[] = [
   // Seguridad y acceso
   { key: 'ShieldCheck', label: 'Seguridad de roles', description: 'Permisos, roles y controles de acceso', category: 'Seguridad' },
-  { key: 'ShieldAlert', label: 'Alertas de seguridad', description: 'Riesgos, incidencias y eventos crÃƒÆ’Ã‚Â­ticos', category: 'Seguridad' },
-  { key: 'Shield', label: 'PolÃƒÆ’Ã‚Â­ticas de seguridad', description: 'Configuraciones generales de seguridad', category: 'Seguridad' },
+  { key: 'ShieldAlert', label: 'Alertas de seguridad', description: 'Riesgos, incidencias y eventos críticos', category: 'Seguridad' },
+  { key: 'Shield', label: 'Políticas de seguridad', description: 'Configuraciones generales de seguridad', category: 'Seguridad' },
   { key: 'Lock', label: 'Bloqueos', description: 'Pantallas de bloqueo y restricciones', category: 'Seguridad' },
-  { key: 'KeyRound', label: 'Credenciales', description: 'Llaves, tokens, contraseÃƒÆ’Ã‚Â±as y autenticaciÃƒÆ’Ã‚Â³n', category: 'Seguridad' },
-  { key: 'Fingerprint', label: 'Identidad', description: 'ValidaciÃƒÆ’Ã‚Â³n de identidad y autenticaciÃƒÆ’Ã‚Â³n fuerte', category: 'Seguridad' },
-  { key: 'UserCheck', label: 'AprobaciÃƒÆ’Ã‚Â³n de acceso', description: 'Aprobaciones y validaciones de usuario', category: 'Seguridad' },
-  { key: 'UserX', label: 'RevocaciÃƒÆ’Ã‚Â³n de acceso', description: 'Bloquear o retirar acceso', category: 'Seguridad' },
+  { key: 'KeyRound', label: 'Credenciales', description: 'Llaves, tokens, contraseñas y autenticación', category: 'Seguridad' },
+  { key: 'Fingerprint', label: 'Identidad', description: 'Validación de identidad y autenticación fuerte', category: 'Seguridad' },
+  { key: 'UserCheck', label: 'Aprobación de acceso', description: 'Aprobaciones y validaciones de usuario', category: 'Seguridad' },
+  { key: 'UserX', label: 'Revocación de acceso', description: 'Bloquear o retirar acceso', category: 'Seguridad' },
 
-  // OrganizaciÃƒÆ’Ã‚Â³n y empresa
-  { key: 'Building2', label: 'Empresas', description: 'Empresas, filiales o unidades organizacionales', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Building', label: 'Sedes', description: 'Sucursales y sedes fÃƒÆ’Ã‚Â­sicas', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'MapPin', label: 'Ubicaciones', description: 'Ubicaciones geogrÃƒÆ’Ã‚Â¡ficas y centros', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Network', label: 'Estructura organizacional', description: 'JerarquÃƒÆ’Ã‚Â­as y relaciones organizativas', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Briefcase', label: 'Cargos', description: 'Cargos y puestos de trabajo', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Users', label: 'Colaboradores', description: 'GestiÃƒÆ’Ã‚Â³n de empleados y equipos', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'UserCog', label: 'Perfiles de usuario', description: 'ConfiguraciÃƒÆ’Ã‚Â³n de perfiles y atributos', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
-  { key: 'UserPlus', label: 'Alta de usuarios', description: 'Registro e incorporaciÃƒÆ’Ã‚Â³n de personal', category: 'OrganizaciÃƒÆ’Ã‚Â³n' },
+  // Organización y empresa
+  { key: 'Building2', label: 'Empresas', description: 'Empresas, filiales o unidades organizacionales', category: 'Organización' },
+  { key: 'Building', label: 'Sedes', description: 'Sucursales y sedes físicas', category: 'Organización' },
+  { key: 'MapPin', label: 'Ubicaciones', description: 'Ubicaciones geográficas y centros', category: 'Organización' },
+  { key: 'Network', label: 'Estructura organizacional', description: 'Jerarquías y relaciones organizativas', category: 'Organización' },
+  { key: 'Briefcase', label: 'Cargos', description: 'Cargos y puestos de trabajo', category: 'Organización' },
+  { key: 'Users', label: 'Colaboradores', description: 'Gestión de empleados y equipos', category: 'Organización' },
+  { key: 'UserCog', label: 'Perfiles de usuario', description: 'Configuración de perfiles y atributos', category: 'Organización' },
+  { key: 'UserPlus', label: 'Alta de usuarios', description: 'Registro e incorporación de personal', category: 'Organización' },
 
-  // OperaciÃƒÆ’Ã‚Â³n y actividad
-  { key: 'Clock3', label: 'Asistencia y marcaciones', description: 'Control de tiempo y asistencia', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'CalendarDays', label: 'Calendarios', description: 'Calendarios laborales y planificaciÃƒÆ’Ã‚Â³n', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'CalendarClock', label: 'Turnos', description: 'PlanificaciÃƒÆ’Ã‚Â³n y control de turnos', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'AlarmClockCheck', label: 'Cumplimiento horario', description: 'ValidaciÃƒÆ’Ã‚Â³n de puntualidad y reglas', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'ClipboardCheck', label: 'Aprobaciones', description: 'Flujos de aprobaciÃƒÆ’Ã‚Â³n operativa', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'FileCheck', label: 'Solicitudes', description: 'GestiÃƒÆ’Ã‚Â³n de solicitudes y permisos', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Workflow', label: 'Flujos', description: 'Procesos y automatizaciones', category: 'OperaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Cog', label: 'ConfiguraciÃƒÆ’Ã‚Â³n operativa', description: 'ParÃƒÆ’Ã‚Â¡metros funcionales del negocio', category: 'OperaciÃƒÆ’Ã‚Â³n' },
+  // Operación y actividad
+  { key: 'Clock3', label: 'Asistencia y marcaciones', description: 'Control de tiempo y asistencia', category: 'Operación' },
+  { key: 'CalendarDays', label: 'Calendarios', description: 'Calendarios laborales y planificación', category: 'Operación' },
+  { key: 'CalendarClock', label: 'Turnos', description: 'Planificación y control de turnos', category: 'Operación' },
+  { key: 'AlarmClockCheck', label: 'Cumplimiento horario', description: 'Validación de puntualidad y reglas', category: 'Operación' },
+  { key: 'ClipboardCheck', label: 'Aprobaciones', description: 'Flujos de aprobación operativa', category: 'Operación' },
+  { key: 'FileCheck', label: 'Solicitudes', description: 'Gestión de solicitudes y permisos', category: 'Operación' },
+  { key: 'Workflow', label: 'Flujos', description: 'Procesos y automatizaciones', category: 'Operación' },
+  { key: 'Cog', label: 'Configuración operativa', description: 'Parámetros funcionales del negocio', category: 'Operación' },
 
   // Datos y reportes
-  { key: 'BarChart3', label: 'Reportes', description: 'Reportes, mÃƒÆ’Ã‚Â©tricas y analÃƒÆ’Ã‚Â­tica', category: 'Datos y Reportes' },
+  { key: 'BarChart3', label: 'Reportes', description: 'Reportes, métricas y analítica', category: 'Datos y Reportes' },
   { key: 'PieChart', label: 'Indicadores', description: 'KPI y paneles de control', category: 'Datos y Reportes' },
-  { key: 'LineChart', label: 'Tendencias', description: 'Series de tiempo y evoluciÃƒÆ’Ã‚Â³n', category: 'Datos y Reportes' },
+  { key: 'LineChart', label: 'Tendencias', description: 'Series de tiempo y evolución', category: 'Datos y Reportes' },
   { key: 'Table', label: 'Tablas de datos', description: 'Consultas tabulares y listados', category: 'Datos y Reportes' },
-  { key: 'Database', label: 'Datos maestros', description: 'CatÃƒÆ’Ã‚Â¡logos y entidades maestras', category: 'Datos y Reportes' },
+  { key: 'Database', label: 'Datos maestros', description: 'Catálogos y entidades maestras', category: 'Datos y Reportes' },
   { key: 'FileSpreadsheet', label: 'Exportaciones', description: 'Excel, CSV y salidas tabulares', category: 'Datos y Reportes' },
-  { key: 'Search', label: 'BÃƒÆ’Ã‚Âºsqueda', description: 'ExploraciÃƒÆ’Ã‚Â³n y consulta de informaciÃƒÆ’Ã‚Â³n', category: 'Datos y Reportes' },
-  { key: 'Filter', label: 'Filtros', description: 'Filtros y segmentaciÃƒÆ’Ã‚Â³n de datos', category: 'Datos y Reportes' },
+  { key: 'Search', label: 'Búsqueda', description: 'Exploración y consulta de información', category: 'Datos y Reportes' },
+  { key: 'Filter', label: 'Filtros', description: 'Filtros y segmentación de datos', category: 'Datos y Reportes' },
 
-  // ComunicaciÃƒÆ’Ã‚Â³n e idioma
-  { key: 'Bell', label: 'Notificaciones', description: 'Alertas del sistema y avisos', category: 'ComunicaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Mail', label: 'MensajerÃƒÆ’Ã‚Â­a', description: 'Mensajes por correo y bandeja interna', category: 'ComunicaciÃƒÆ’Ã‚Â³n' },
-  { key: 'MessageSquare', label: 'Mensajes', description: 'Plantillas y claves de mensajes', category: 'ComunicaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Languages', label: 'Idiomas', description: 'GestiÃƒÆ’Ã‚Â³n de idiomas y traducciones', category: 'ComunicaciÃƒÆ’Ã‚Â³n' },
-  { key: 'Globe2', label: 'Multilenguaje', description: 'Contenido internacionalizado', category: 'ComunicaciÃƒÆ’Ã‚Â³n' },
+  // Comunicación e idioma
+  { key: 'Bell', label: 'Notificaciones', description: 'Alertas del sistema y avisos', category: 'Comunicación' },
+  { key: 'Mail', label: 'Mensajería', description: 'Mensajes por correo y bandeja interna', category: 'Comunicación' },
+  { key: 'MessageSquare', label: 'Mensajes', description: 'Plantillas y claves de mensajes', category: 'Comunicación' },
+  { key: 'Languages', label: 'Idiomas', description: 'Gestión de idiomas y traducciones', category: 'Comunicación' },
+  { key: 'Globe2', label: 'Multilenguaje', description: 'Contenido internacionalizado', category: 'Comunicación' },
 
-  // AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica
-  { key: 'Settings', label: 'ConfiguraciÃƒÆ’Ã‚Â³n general', description: 'Ajustes globales del sistema', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Settings2', label: 'ParÃƒÆ’Ã‚Â¡metros avanzados', description: 'Configuraciones tÃƒÆ’Ã‚Â©cnicas especÃƒÆ’Ã‚Â­ficas', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Server', label: 'Servicios', description: 'Servicios backend e integraciones', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Cloud', label: 'Integraciones cloud', description: 'Conectores y servicios externos', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'HardDrive', label: 'Almacenamiento', description: 'Rutas, archivos y repositorios', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Cpu', label: 'Procesamiento', description: 'Procesos y ejecuciÃƒÆ’Ã‚Â³n de tareas', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Wrench', label: 'Mantenimiento', description: 'Herramientas y tareas de soporte', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
-  { key: 'Bug', label: 'DiagnÃƒÆ’Ã‚Â³stico', description: 'DepuraciÃƒÆ’Ã‚Â³n, trazas e incidencias', category: 'AdministraciÃƒÆ’Ã‚Â³n tÃƒÆ’Ã‚Â©cnica' },
+  // Administración técnica
+  { key: 'Settings', label: 'Configuración general', description: 'Ajustes globales del sistema', category: 'Administración técnica' },
+  { key: 'Settings2', label: 'Parámetros avanzados', description: 'Configuraciones técnicas específicas', category: 'Administración técnica' },
+  { key: 'Server', label: 'Servicios', description: 'Servicios backend e integraciones', category: 'Administración técnica' },
+  { key: 'Cloud', label: 'Integraciones cloud', description: 'Conectores y servicios externos', category: 'Administración técnica' },
+  { key: 'HardDrive', label: 'Almacenamiento', description: 'Rutas, archivos y repositorios', category: 'Administración técnica' },
+  { key: 'Cpu', label: 'Procesamiento', description: 'Procesos y ejecución de tareas', category: 'Administración técnica' },
+  { key: 'Wrench', label: 'Mantenimiento', description: 'Herramientas y tareas de soporte', category: 'Administración técnica' },
+  { key: 'Bug', label: 'Diagnóstico', description: 'Depuración, trazas e incidencias', category: 'Administración técnica' },
 ];
 
 function getToken() {
@@ -365,10 +365,10 @@ export default function SecurityAuthorizationCatalog() {
 
       if (!tenantsRes.ok) throw new Error(tenantsData.error || 'Error cargando tenants');
       if (!rolesRes.ok) throw new Error(rolesData.error || 'Error cargando roles');
-      if (!groupsRes.ok) throw new Error(groupsData.error || 'Error cargando grupos de menÃƒÆ’Ã‚Âº');
+      if (!groupsRes.ok) throw new Error(groupsData.error || 'Error cargando grupos de menú');
       if (!screensRes.ok) throw new Error(screensData.error || 'Error cargando pantallas');
       if (!actionsRes.ok) throw new Error(actionsData.error || 'Error cargando acciones');
-      if (!screenActionsRes.ok) throw new Error(screenActionsData.error || 'Error cargando relaciones pantalla-acciÃƒÆ’Ã‚Â³n');
+      if (!screenActionsRes.ok) throw new Error(screenActionsData.error || 'Error cargando relaciones pantalla-acción');
 
       const loadedTenants: Tenant[] = tenantsData.tenants || [];
       const loadedRoles: Role[] = rolesData.roles || [];
@@ -592,13 +592,13 @@ export default function SecurityAuthorizationCatalog() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error creando acciÃƒÆ’Ã‚Â³n');
-      setSuccess('AcciÃƒÆ’Ã‚Â³n creada correctamente.');
+      if (!res.ok) throw new Error(data.error || 'Error creando acción');
+      setSuccess('Acción creada correctamente.');
       setActionForm({ action_key: '', action_name: '' });
       await loadCatalogs();
       closeDrawer();
     } catch (e: any) {
-      setError(e.message || 'Error creando acciÃƒÆ’Ã‚Â³n');
+      setError(e.message || 'Error creando acción');
     } finally {
       setWorking(false);
     }
@@ -625,10 +625,10 @@ export default function SecurityAuthorizationCatalog() {
             body: JSON.stringify({ is_active: true }),
           });
           const reactivateData = await reactivate.json();
-          if (!reactivate.ok) throw new Error(reactivateData.error || 'Error reactivando relaciÃƒÆ’Ã‚Â³n');
-          setSuccess('RelaciÃƒÆ’Ã‚Â³n pantalla-acciÃƒÆ’Ã‚Â³n reactivada.');
+          if (!reactivate.ok) throw new Error(reactivateData.error || 'Error reactivando relación');
+          setSuccess('Relación pantalla-acción reactivada.');
         } else {
-          setSuccess('La relaciÃƒÆ’Ã‚Â³n pantalla-acciÃƒÆ’Ã‚Â³n ya existe.');
+          setSuccess('La relación pantalla-acción ya existe.');
         }
       } else {
         const res = await fetch(SCREEN_ACTIONS_API, {
@@ -642,14 +642,14 @@ export default function SecurityAuthorizationCatalog() {
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error vinculando acciÃƒÆ’Ã‚Â³n');
-        setSuccess('AcciÃƒÆ’Ã‚Â³n vinculada correctamente a la pantalla.');
+        if (!res.ok) throw new Error(data.error || 'Error vinculando acción');
+        setSuccess('Acción vinculada correctamente a la pantalla.');
       }
 
       await loadCatalogs();
       closeDrawer();
     } catch (e: any) {
-      setError(e.message || 'Error vinculando acciÃƒÆ’Ã‚Â³n');
+      setError(e.message || 'Error vinculando acción');
     } finally {
       setWorking(false);
     }
@@ -666,14 +666,14 @@ export default function SecurityAuthorizationCatalog() {
         body: JSON.stringify({ is_active: false }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error quitando acciÃƒÆ’Ã‚Â³n de pantalla');
+      if (!res.ok) throw new Error(data.error || 'Error quitando acción de pantalla');
 
       setLocalPerms((prev) => ({ ...prev, [screenActionId]: false }));
       setDirty(true);
-      setSuccess('AcciÃƒÆ’Ã‚Â³n quitada de la pantalla (relaciÃƒÆ’Ã‚Â³n desactivada, no eliminada).');
+      setSuccess('Acción quitada de la pantalla (relación desactivada, no eliminada).');
       await loadCatalogs();
     } catch (e: any) {
-      setError(e.message || 'Error quitando acciÃƒÆ’Ã‚Â³n');
+      setError(e.message || 'Error quitando acción');
     } finally {
       setWorking(false);
     }
@@ -690,16 +690,16 @@ export default function SecurityAuthorizationCatalog() {
         body: JSON.stringify({ is_active: isActive }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error actualizando estado de acciÃƒÆ’Ã‚Â³n');
+      if (!res.ok) throw new Error(data.error || 'Error actualizando estado de acción');
 
       if (!isActive) {
         setLocalPerms((prev) => ({ ...prev, [screenActionId]: false }));
         setDirty(true);
       }
-      setSuccess(isActive ? 'AcciÃƒÆ’Ã‚Â³n reactivada en la pantalla.' : 'AcciÃƒÆ’Ã‚Â³n quitada de la pantalla.');
+      setSuccess(isActive ? 'Acción reactivada en la pantalla.' : 'Acción quitada de la pantalla.');
       await loadCatalogs();
     } catch (e: any) {
-      setError(e.message || 'Error actualizando acciÃƒÆ’Ã‚Â³n');
+      setError(e.message || 'Error actualizando acción');
     } finally {
       setWorking(false);
     }
@@ -739,7 +739,7 @@ export default function SecurityAuthorizationCatalog() {
           <h3 className="text-base font-semibold text-gray-900 mb-3">Nueva Pantalla</h3>
           <div className="space-y-3">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Grupo de menÃƒÆ’Ã‚Âº</label>
+              <label className="block text-xs text-gray-500 mb-1">Grupo de menú</label>
               <select
                 value={screenForm.menu_group_id}
                 onChange={(e) => setScreenForm((prev) => ({ ...prev, menu_group_id: e.target.value }))}
@@ -869,7 +869,7 @@ export default function SecurityAuthorizationCatalog() {
     if (drawerMode === 'create-action') {
       return (
         <>
-          <h3 className="text-base font-semibold text-gray-900 mb-3">Nueva AcciÃƒÆ’Ã‚Â³n</h3>
+          <h3 className="text-base font-semibold text-gray-900 mb-3">Nueva Acción</h3>
           <div className="space-y-3">
             <div>
               <label className="block text-xs text-gray-500 mb-1">action_key</label>
@@ -908,7 +908,7 @@ export default function SecurityAuthorizationCatalog() {
 
     return (
       <>
-        <h3 className="text-base font-semibold text-gray-900 mb-3">Vincular AcciÃƒÆ’Ã‚Â³n a Pantalla</h3>
+        <h3 className="text-base font-semibold text-gray-900 mb-3">Vincular Acción a Pantalla</h3>
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Pantalla</label>
@@ -926,13 +926,13 @@ export default function SecurityAuthorizationCatalog() {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">AcciÃƒÆ’Ã‚Â³n</label>
+            <label className="block text-xs text-gray-500 mb-1">Acción</label>
             <select
               value={linkForm.action_id}
               onChange={(e) => setLinkForm((prev) => ({ ...prev, action_id: e.target.value }))}
               className="w-full px-3 py-2 text-sm border rounded-lg"
             >
-              <option value="">Selecciona acciÃƒÆ’Ã‚Â³n</option>
+              <option value="">Selecciona acción</option>
               {actionsNotLinkedToScreen.map((action) => (
                 <option key={action.id} value={action.id}>
                   {action.action_name} ({action.action_key})
@@ -1290,7 +1290,7 @@ export default function SecurityAuthorizationCatalog() {
                   onClick={() => openDrawer('create-action')}
                   className="text-xs px-2 py-1 rounded border hover:bg-gray-100"
                 >
-                  + AcciÃƒÆ’Ã‚Â³n
+                  + Acción
                 </button>
                 <button
                   onClick={() => openDrawer('link-action')}

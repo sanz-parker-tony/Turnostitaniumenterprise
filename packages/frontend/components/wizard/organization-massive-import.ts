@@ -293,7 +293,7 @@ function readNamedSheetRows(
   }
 
   if (!required) return [];
-  throw new Error(`No se encontrÃ³ la pestaÃ±a requerida: ${candidates.join(' / ')}`);
+  throw new Error(`No se encontró la pestaña requerida: ${candidates.join(' / ')}`);
 }
 
 function validateHeaders(rows: Record<string, any>[], requiredColumns: readonly string[]): string[] {
@@ -594,7 +594,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
       const employeeCode = toText(row.employee_code);
       const companyCode = toText(row.company_code);
       if (!employeeCode || !companyCode) {
-        errors.push({ row: rowNo, column: 'employee_code/company_code', message: 'Campos obligatorios en pestaÃ±a 15' });
+        errors.push({ row: rowNo, column: 'employee_code/company_code', message: 'Campos obligatorios en pestaña 15' });
         return;
       }
 
@@ -609,7 +609,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
       const payroll = payrollByCode.get(toText(row.payroll_group_code) || '') || {};
 
       if (!profile || !workGroup || !workLocation || !department || !area || !job || !cost || !payroll) {
-        // no-op: backend validarÃ¡ codigos inexistentes, pero dejamos el registro
+        // no-op: backend validará codigos inexistentes, pero dejamos el registro
       }
 
       structureRows.push({
@@ -693,7 +693,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
       const rowNo = idx + 2;
       const employeeCode = toText(row.employee_code);
       if (!employeeCode) {
-        errors.push({ row: rowNo, column: 'employee_code', message: 'Campo obligatorio en pestaÃ±a 11' });
+        errors.push({ row: rowNo, column: 'employee_code', message: 'Campo obligatorio en pestaña 11' });
         return;
       }
 

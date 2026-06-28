@@ -1,9 +1,9 @@
 /**
- * RolesManagement.tsx - GestiÃ³n de Roles
+ * RolesManagement.tsx - Gestión de Roles
  * Turnos Titanium Enterprise
  *
  * Pantalla de mantenimiento para la tabla roles
- * UbicaciÃ³n: Mantenimiento â†’ Roles
+ * Ubicación: Mantenimiento → Roles
  */
 
 'use client';
@@ -13,7 +13,7 @@ import { useState, useEffect } from 'react';
 import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
   Shield, Lock, ShieldCheck, ChevronDown, ChevronUp, RefreshCw,
-  Save, Check, ShieldAlert,
+  Save, Check, ShieldAlert, Trash2,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
@@ -103,9 +103,11 @@ function getToken(): string {
 
 const API_BASE = buildApiUrl(`/roles-management`);
 
-// â”€â”€ Tipos para permisos â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Tipos para permisos ──────────────────────────────────────────────────────
 interface ScreenActionCatalog {
   id: string; screen_key: string; screen_name: string;
+  menu_label?: string | null; screen_sort_order?: number | null;
+  menu_group_key?: string | null; menu_group_name?: string | null; menu_group_sort_order?: number | null;
   action_key: string; action_name: string; ui_element_key: string | null; label: string;
 }
 
@@ -137,8 +139,9 @@ export function RolesManagement() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // â”€â”€ Permisos (role_screen_actions) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Permisos (role_screen_actions) ──────────────────────────────────────────
   const [screenActionsCatalog, setScreenActionsCatalog] = useState<ScreenActionCatalog[]>([]);
   const [localPerms, setLocalPerms] = useState<Record<string, boolean>>({});
   const [permsLoading, setPermsLoading] = useState(false);
@@ -270,7 +273,7 @@ export function RolesManagement() {
     setPermsDirty(false);
   };
 
-  // Cargar catÃ¡logo de screen_actions + permisos actuales del rol
+  // Cargar catálogo de screen_actions + permisos actuales del rol
   const loadPermissions = async (role: Role) => {
     setPermsLoading(true); setPermsError(null);
     try {
@@ -304,7 +307,7 @@ export function RolesManagement() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Error guardando permisos');
-      setPermsMsg(`âœ… ${data.updated} actualizados, ${data.created} nuevos`);
+      setPermsMsg(`✅ ${data.updated} actualizados, ${data.created} nuevos`);
       setPermsDirty(false);
       setTimeout(() => setPermsMsg(null), 4000);
       await loadPermissions(editingRole);
@@ -312,12 +315,44 @@ export function RolesManagement() {
     finally { setPermsSaving(false); }
   };
 
-  // Agrupar screen_actions por pantalla para la vista matricial
+  // Agrupar permisos por grupo de menú y pantalla para que el rol se configure
+  // igual que se navega la aplicación.
   const groupedSA = screenActionsCatalog.reduce((acc, sa) => {
-    if (!acc[sa.screen_key]) acc[sa.screen_key] = { screen_name: sa.screen_name, items: [] };
-    acc[sa.screen_key].items.push(sa);
+    const groupKey = sa.menu_group_key || 'SIN_GRUPO';
+    const screenKey = sa.screen_key;
+    if (!acc[groupKey]) {
+      acc[groupKey] = {
+        group_name: sa.menu_group_name || 'Sin grupo',
+        sort_order: sa.menu_group_sort_order ?? 9999,
+        screens: {},
+      };
+    }
+    if (!acc[groupKey].screens[screenKey]) {
+      acc[groupKey].screens[screenKey] = {
+        screen_name: sa.menu_label || sa.screen_name,
+        screen_key: screenKey,
+        sort_order: sa.screen_sort_order ?? 9999,
+        items: [],
+      };
+    }
+    acc[groupKey].screens[screenKey].items.push(sa);
     return acc;
-  }, {} as Record<string, { screen_name: string; items: ScreenActionCatalog[] }>);
+  }, {} as Record<string, {
+    group_name: string;
+    sort_order: number;
+    screens: Record<string, { screen_name: string; screen_key: string; sort_order: number; items: ScreenActionCatalog[] }>;
+  }>);
+
+  const setPermissionsForActions = (items: ScreenActionCatalog[], isAllowed: boolean) => {
+    setLocalPerms(prev => {
+      const next = { ...prev };
+      items.forEach(item => {
+        next[item.id] = isAllowed;
+      });
+      return next;
+    });
+    setPermsDirty(true);
+  };
   
   const validate = (): boolean => {
     const errors: Record<string, string> = {};
@@ -376,6 +411,28 @@ export function RolesManagement() {
       setError(err.message);
     } finally {
       setTogglingId(null);
+    }
+  };
+
+  const handleDeleteRole = async (role: Role) => {
+    if (role.is_system_role || role.is_locked) return;
+    const confirmed = window.confirm(`¿Eliminar el rol "${role.role_name}"? Solo se eliminará si no está asignado a usuarios.`);
+    if (!confirmed) return;
+
+    setDeletingId(role.id);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/${role.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Error al eliminar rol');
+      await loadRoles();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -560,6 +617,13 @@ export function RolesManagement() {
                         icon={role.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                         tone='amber'
                       />
+                      <GridActionIconButton
+                        onClick={() => handleDeleteRole(role)}
+                        disabled={role.is_system_role || role.is_locked || deletingId === role.id}
+                        label={role.is_system_role || role.is_locked ? 'No se puede eliminar' : 'Eliminar rol'}
+                        icon={<Trash2 className="w-4 h-4" />}
+                        tone="red"
+                      />
                     </div>
                   </td>
                 </tr>
@@ -601,7 +665,7 @@ export function RolesManagement() {
             {/* Modal Body */}
             <div className="px-6 py-5 overflow-y-auto flex-1">
 
-              {/* â”€â”€ TAB: Datos â”€â”€ */}
+              {/* ── TAB: Datos ── */}
               {modalTab === 'data' && (
                 <div className="space-y-4">
                   {formErrors.general && (
@@ -753,7 +817,7 @@ export function RolesManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ TAB: Permisos â”€â”€ */}
+              {/* ── TAB: Permisos ── */}
               {modalTab === 'permissions' && editingRole && (
                 <div className="space-y-3">
                   {permsError && (
@@ -771,9 +835,9 @@ export function RolesManagement() {
                     </p>
                     <div className="flex gap-2">
                       <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = true; }); setLocalPerms(u); setPermsDirty(true); }}
-                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Seleccionar todo</button>
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Todos</button>
                       <button onClick={() => { const u: Record<string,boolean> = {}; screenActionsCatalog.forEach(sa => { u[sa.id] = false; }); setLocalPerms(u); setPermsDirty(true); }}
-                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Quitar todo</button>
+                        className="text-xs px-2 py-1.5 border rounded-lg hover:bg-gray-50 text-gray-600">Ninguno</button>
                     </div>
                   </div>
 
@@ -788,36 +852,73 @@ export function RolesManagement() {
                       <p className="text-xs mt-1">Ve a <strong>Seguridad → Acciones de Pantalla</strong> para crearlas.</p>
                     </div>
                   ) : (
-                    <div className="space-y-3">
-                      {Object.entries(groupedSA).sort(([,a],[,b]) => a.screen_name.localeCompare(b.screen_name)).map(([screenKey, group]) => (
-                        <div key={screenKey} className="border rounded-lg overflow-hidden">
-                          <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b">
-                            <span className="font-medium text-sm text-gray-800">{group.screen_name}</span>
-                            <span className="font-mono text-xs text-gray-400">{screenKey}</span>
-                          </div>
-                          <div className="divide-y divide-gray-50">
-                            {group.items.map(sa => {
-                              const allowed = localPerms[sa.id] ?? false;
-                              return (
-                                <div key={sa.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50">
-                                  <div>
-                                    <span className="text-sm text-gray-800">{sa.action_name}</span>
-                                    <span className="ml-2 font-mono text-xs text-gray-400">{sa.action_key}</span>
-                                    {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">· {sa.ui_element_key}</span>}
+                    <div className="space-y-4">
+                      {Object.entries(groupedSA)
+                        .sort(([, a], [, b]) => a.sort_order - b.sort_order || a.group_name.localeCompare(b.group_name))
+                        .map(([groupKey, menuGroup]) => (
+                          <div key={groupKey} className="border rounded-xl overflow-hidden bg-white">
+                            <div className="flex items-center justify-between px-4 py-3 bg-slate-100 border-b">
+                              <div>
+                                <div className="font-semibold text-sm text-slate-900">{menuGroup.group_name}</div>
+                                <div className="font-mono text-xs text-slate-500">{groupKey}</div>
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {Object.keys(menuGroup.screens).length} opciones de menú
+                              </div>
+                            </div>
+                            <div className="space-y-3 p-3">
+                              {Object.entries(menuGroup.screens)
+                                .sort(([, a], [, b]) => a.sort_order - b.sort_order || a.screen_name.localeCompare(b.screen_name))
+                                .map(([screenKey, screen]) => (
+                                  <div key={screenKey} className="border rounded-lg overflow-hidden">
+                                    <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gray-50 border-b">
+                                      <div>
+                                        <span className="font-medium text-sm text-gray-800">{screen.screen_name}</span>
+                                        <span className="ml-2 font-mono text-xs text-gray-400">{screen.screen_key}</span>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => setPermissionsForActions(screen.items, true)}
+                                          className="text-xs px-2 py-1 border rounded-md hover:bg-white text-gray-600"
+                                        >
+                                          Todos
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setPermissionsForActions(screen.items, false)}
+                                          className="text-xs px-2 py-1 border rounded-md hover:bg-white text-gray-600"
+                                        >
+                                          Ninguno
+                                        </button>
+                                      </div>
+                                    </div>
+                                    <div className="divide-y divide-gray-50">
+                                      {screen.items.map(sa => {
+                                        const allowed = localPerms[sa.id] ?? false;
+                                        return (
+                                          <div key={sa.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-gray-50">
+                                            <div>
+                                              <span className="text-sm text-gray-800">{sa.action_name}</span>
+                                              <span className="ml-2 font-mono text-xs text-gray-400">{sa.action_key}</span>
+                                              {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">· {sa.ui_element_key}</span>}
+                                            </div>
+                                            <button onClick={() => { setLocalPerms(prev => ({ ...prev, [sa.id]: !prev[sa.id] })); setPermsDirty(true); }}
+                                              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                                allowed ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                              }`}>
+                                              {allowed ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                                              {allowed ? 'Permitido' : 'Denegado'}
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
                                   </div>
-                                  <button onClick={() => { setLocalPerms(prev => ({ ...prev, [sa.id]: !prev[sa.id] })); setPermsDirty(true); }}
-                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                      allowed ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                    }`}>
-                                    {allowed ? <Check className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-                                    {allowed ? 'Permitido' : 'Denegado'}
-                                  </button>
-                                </div>
-                              );
-                            })}
+                                ))}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   )}
                 </div>

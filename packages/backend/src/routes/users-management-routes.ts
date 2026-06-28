@@ -333,6 +333,9 @@ router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) 
       user_id: string;
       primary_role_name: string | null;
       primary_role_key: string | null;
+      role_ids: string[];
+      role_keys: string[];
+      role_names: string[];
       role_count: number;
     }> = {};
 
@@ -348,9 +351,21 @@ router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) 
           user_id: userId,
           primary_role_name: roleName,
           primary_role_key: roleKey,
+          role_ids: row.role_id ? [row.role_id] : [],
+          role_keys: roleKey ? [roleKey] : [],
+          role_names: roleName ? [roleName] : [],
           role_count: 1,
         };
       } else {
+        if (row.role_id && !summariesByUserId[userId].role_ids.includes(row.role_id)) {
+          summariesByUserId[userId].role_ids.push(row.role_id);
+        }
+        if (roleKey && !summariesByUserId[userId].role_keys.includes(roleKey)) {
+          summariesByUserId[userId].role_keys.push(roleKey);
+        }
+        if (roleName && !summariesByUserId[userId].role_names.includes(roleName)) {
+          summariesByUserId[userId].role_names.push(roleName);
+        }
         summariesByUserId[userId].role_count += 1;
       }
     }

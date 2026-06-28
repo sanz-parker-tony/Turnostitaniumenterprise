@@ -1,7 +1,7 @@
 'use client';
 /**
- * ScreensManagement - GestiÃ³n de Pantallas
- * Turnos Titanium Enterprise â€” Seguridad â†’ Pantallas
+ * ScreensManagement - Gestión de Pantallas
+ * Turnos Titanium Enterprise — Seguridad → Pantallas
  */
 
 import { buildApiUrl } from '../../../utils/api-config';
@@ -197,7 +197,7 @@ export function ScreensManagement() {
   const save = async () => {
     setPanelError(null);
     if (!form.screen_key || !form.screen_name || !form.menu_group_id) {
-      setPanelError('Clave, nombre y grupo de menÃº son obligatorios'); return;
+      setPanelError('Clave, nombre y grupo de menú son obligatorios'); return;
     }
     setSaving(true);
     try {
@@ -302,7 +302,7 @@ export function ScreensManagement() {
                       {col.label}<SortIcon field={col.f} />
                     </th>
                   ))}
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Etiqueta MenÃº</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Etiqueta Menú</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Grupo</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Ruta</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600 cursor-pointer" onClick={() => sortBy('sort_order')}>Orden<SortIcon field="sort_order" /></th>
@@ -317,13 +317,13 @@ export function ScreensManagement() {
                   <tr key={sc.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3"><span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">{sc.screen_key}</span></td>
                     <td className="px-4 py-3 font-medium text-gray-900">{sc.screen_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{sc.menu_label || 'â€”'}</td>
+                    <td className="px-4 py-3 text-gray-500">{sc.menu_label || '—'}</td>
                     <td className="px-4 py-3">
                       {sc.menu_group_name
                         ? <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full">{sc.menu_group_name}</span>
-                        : <span className="text-gray-400">â€”</span>}
+                        : <span className="text-gray-400">—</span>}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{sc.route_path || 'â€”'}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-500">{sc.route_path || '—'}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{sc.sort_order}</td>
                     <td className="px-4 py-3 text-center">
                       <span className={sc.is_active ? BADGE.active : BADGE.inactive}>{sc.is_active ? 'Activa' : 'Inactiva'}</span>
@@ -396,7 +396,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Datos â”€â”€ */}
+              {/* ── Tab: Datos ── */}
               {activeTab === 'main' && (
                 <div className="space-y-4">
                   <div>
@@ -408,20 +408,20 @@ export function ScreensManagement() {
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Nombre <span className="text-red-500">*</span></label>
                     <input value={form.screen_name} onChange={e => setForm({ ...form, screen_name: e.target.value })}
-                      placeholder="Ej: GestiÃ³n de Roles"
+                      placeholder="Ej: Gestión de Roles"
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Etiqueta en MenÃº</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Etiqueta en Menú</label>
                     <input value={form.menu_label} onChange={e => setForm({ ...form, menu_label: e.target.value })}
                       placeholder="Ej: Roles"
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Grupo de MenÃº <span className="text-red-500">*</span></label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Grupo de Menú <span className="text-red-500">*</span></label>
                     <select value={form.menu_group_id} onChange={e => setForm({ ...form, menu_group_id: e.target.value })}
                       className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">â€” Seleccionar â€”</option>
+                      <option value="">— Seleccionar —</option>
                       {menuGroups.map(mg => <option key={mg.id} value={mg.id}>{mg.menu_group_name}</option>)}
                     </select>
                   </div>
@@ -430,11 +430,11 @@ export function ScreensManagement() {
                     <input value={form.route_path} onChange={e => setForm({ ...form, route_path: e.target.value })}
                       placeholder="/dashboard/maintenance/roles"
                       className="w-full px-3 py-2 border rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <p className="text-xs text-gray-400 mt-1">Debe comenzar con / y usar solo minÃºsculas.</p>
+                    <p className="text-xs text-gray-400 mt-1">Debe comenzar con / y usar solo minúsculas.</p>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Ãcono (Lucide)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Ícono (Lucide)</label>
                       <input value={form.icon_key} onChange={e => setForm({ ...form, icon_key: e.target.value })}
                         placeholder="Ej: Shield"
                         className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -453,7 +453,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Traducciones â”€â”€ */}
+              {/* ── Tab: Traducciones ── */}
               {activeTab === 'translations' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">Configure el nombre de la pantalla en cada idioma.</p>
@@ -471,7 +471,7 @@ export function ScreensManagement() {
                               [lang.code]: { ...prev[lang.code], name: e.target.value, label: prev[lang.code]?.label || '' }
                             }))}
                             className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                          <input placeholder="Etiqueta de menÃº traducida (opcional)" value={translations[lang.code]?.label || ''}
+                          <input placeholder="Etiqueta de menú traducida (opcional)" value={translations[lang.code]?.label || ''}
                             onChange={e => setTranslations(prev => ({
                               ...prev,
                               [lang.code]: { ...prev[lang.code], label: e.target.value, name: prev[lang.code]?.name || '' }
@@ -483,7 +483,7 @@ export function ScreensManagement() {
                 </div>
               )}
 
-              {/* â”€â”€ Tab: Acciones de Pantalla â”€â”€ */}
+              {/* ── Tab: Acciones de Pantalla ── */}
               {activeTab === 'actions' && (
                 <div className="space-y-4">
                   <p className="text-sm text-gray-500">
@@ -510,7 +510,7 @@ export function ScreensManagement() {
                               <div>
                                 <span className="text-sm font-medium text-gray-900">{sa.action_name}</span>
                                 <span className="ml-2 font-mono text-xs text-gray-400">{sa.action_key}</span>
-                                {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">Â· {sa.ui_element_key}</span>}
+                                {sa.ui_element_key && <span className="ml-2 text-xs text-gray-400">· {sa.ui_element_key}</span>}
                               </div>
                             </div>
                             <button onClick={() => toggleScreenActionStatus(sa)}
@@ -522,13 +522,13 @@ export function ScreensManagement() {
                         ))}
                       </div>
 
-                      {/* Agregar nueva acciÃ³n */}
+                      {/* Agregar nueva acción */}
                       <div className="border-t pt-4">
-                        <p className="text-xs font-medium text-gray-600 mb-2">Agregar acciÃ³n a esta pantalla</p>
+                        <p className="text-xs font-medium text-gray-600 mb-2">Agregar acción a esta pantalla</p>
                         <div className="flex gap-2">
                           <select value={newActionId} onChange={e => setNewActionId(e.target.value)}
                             className="flex-1 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <option value="">â€” Seleccionar acciÃ³n â€”</option>
+                            <option value="">— Seleccionar acción —</option>
                             {actionsCatalog
                               .filter(a => !screenActions.some(sa => sa.action_id === a.id))
                               .map(a => <option key={a.id} value={a.id}>{a.action_name} ({a.action_key})</option>)}
