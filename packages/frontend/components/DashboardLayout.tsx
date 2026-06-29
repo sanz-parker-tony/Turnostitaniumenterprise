@@ -1,6 +1,6 @@
 /**
  * DashboardLayout - Layout principal con sidebar y header
- * El sidebar NO tiene scroll interno - el scroll es de toda la página
+ * El sidebar NO tiene scroll interno - el scroll es de toda la pagina
  */
 
 'use client';
@@ -21,6 +21,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
   const isEmployee = roleKey === 'EMPLOYEE';
   const isTenantAdmin = roleKey === 'TENANT_ADMIN';
+  const isSystemAdmin = roleKey === 'SYSTEM_ADMIN';
 
   return (
     <SidebarProvider>
@@ -30,12 +31,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <AppHeader />
           <div className={`flex flex-1 flex-col ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
             <div className={`flex-1 rounded-xl bg-muted/50 ${isEmployee ? 'p-2 sm:p-4' : 'p-4'}`}>
-              {/* Si no se pasan children, usar el Router dinámico */}
+              {/* Si no se pasan children, usar el Router dinamico */}
               {children || <Router />}
             </div>
-            {isTenantAdmin ? (
+            {isTenantAdmin || isSystemAdmin ? (
               <footer className="shrink-0 pt-3 text-center text-sm text-muted-foreground">
-                Titanium Labs Corp.™ 2026 © | Todos los derechos reservados
+                Titanium Labs Corp.&trade; 2026 &copy; | Todos los derechos reservados
               </footer>
             ) : null}
           </div>

@@ -967,41 +967,43 @@ export default function SecurityAuthorizationCatalog() {
   };
 
   return (
-    <div className="relative flex flex-col h-full gap-4 p-6">
-      <SystemAdminPageHeader
-        icon={ShieldCheck}
-        title={resolvedScreenName || 'Cargando pantalla...'}
-        subtitle={`Grupo: ${resolvedGroupName || '-'} · Menú: ${resolvedMenuLabel || '-'}`}
-        rightSlot={
-          <>
-            <HeaderInfoTips
-              items={[
-                {
-                  title: 'Seguridad de accesos',
-                  text: 'Esta pantalla controla asignación de permisos por rol y relaciones pantalla-acción.',
-                  variant: 'security',
-                },
-                {
-                  title: 'Tip de uso',
-                  text: 'Guarda permisos después de ajustar tenant, rol y acciones para evitar perder cambios.',
-                  variant: 'tip',
-                },
-              ]}
-            />
-            <HeaderRefreshButton onClick={loadCatalogs} />
-            <button
-              onClick={savePermissions}
-              disabled={!dirty || saving || !selectedTenant || !selectedRole}
-              className="flex items-center gap-2 px-4 py-2 bg-[#2ECC71] text-white rounded-lg hover:bg-green-600 text-sm font-medium disabled:opacity-60"
-            >
-              {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              {saving ? 'Guardando...' : 'Guardar Permisos'}
-            </button>
-          </>
-        }
-      />
+    <div className="relative box-border flex h-[calc(100vh-10rem)] min-h-0 flex-col gap-3 overflow-hidden p-6">
+      <div className="shrink-0">
+        <SystemAdminPageHeader
+          icon={ShieldCheck}
+          title={resolvedScreenName || 'Cargando pantalla...'}
+          subtitle={`Grupo: ${resolvedGroupName || '-'} · Menú: ${resolvedMenuLabel || '-'}`}
+          rightSlot={
+            <>
+              <HeaderInfoTips
+                items={[
+                  {
+                    title: 'Seguridad de accesos',
+                    text: 'Esta pantalla controla asignación de permisos por rol y relaciones pantalla-acción.',
+                    variant: 'security',
+                  },
+                  {
+                    title: 'Tip de uso',
+                    text: 'Guarda permisos después de ajustar tenant, rol y acciones para evitar perder cambios.',
+                    variant: 'tip',
+                  },
+                ]}
+              />
+              <HeaderRefreshButton onClick={loadCatalogs} />
+              <button
+                onClick={savePermissions}
+                disabled={!dirty || saving || !selectedTenant || !selectedRole}
+                className="flex items-center gap-2 px-4 py-2 bg-[#2ECC71] text-white rounded-lg hover:bg-green-600 text-sm font-medium disabled:opacity-60"
+              >
+                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {saving ? 'Guardando...' : 'Guardar Permisos'}
+              </button>
+            </>
+          }
+        />
+      </div>
 
-      <div className="rounded-lg border bg-white p-4">
+      <div className="shrink-0 rounded-lg border bg-white p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">Tenant</label>
@@ -1038,7 +1040,7 @@ export default function SecurityAuthorizationCatalog() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <button
           onClick={() => setActiveTab('assignment')}
           className={`px-3 py-2 text-sm rounded-lg border ${
@@ -1062,26 +1064,26 @@ export default function SecurityAuthorizationCatalog() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+        <div className="flex shrink-0 items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
       )}
       {success && (
-        <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+        <div className="flex shrink-0 items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
           <Check className="w-4 h-4 flex-shrink-0" />
           {success}
         </div>
       )}
 
       {activeTab === 'assignment' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-3">
           <div className="bg-white rounded-xl border overflow-hidden flex flex-col min-h-0">
             <div className="px-4 py-3 border-b bg-gray-50 flex items-center gap-2 text-sm font-medium text-gray-700">
               <LayoutList className="w-4 h-4" />
               Grupos de Menú
             </div>
-            <div className="overflow-auto p-2 space-y-1">
+            <div className="min-h-0 flex-1 overflow-auto p-2 space-y-1">
               {menuGroups.map((group) => {
                 const status = menuGroupStatus.find((item) => item.groupId === group.id);
                 const assigned = status?.assigned || false;
@@ -1120,7 +1122,7 @@ export default function SecurityAuthorizationCatalog() {
               <Monitor className="w-4 h-4" />
               Pantallas del Grupo
             </div>
-            <div className="overflow-auto p-2 space-y-1">
+            <div className="min-h-0 flex-1 overflow-auto p-2 space-y-1">
               {(screensByGroup[selectedMenuGroup] || []).map((screen) => {
                 const count = allowedCountForScreen(screen.id);
                 const isAssigned = count.total > 0 && count.allowed === count.total;
@@ -1192,7 +1194,7 @@ export default function SecurityAuthorizationCatalog() {
                 />
               </div>
             </div>
-            <div className="overflow-auto divide-y divide-gray-100">
+            <div className="min-h-0 flex-1 overflow-auto divide-y divide-gray-100">
               {selectedScreenActions.map((sa) => {
                 const allowed = localPerms[sa.id] ?? false;
                 const fallbackAction = actionById.get(sa.action_id);
@@ -1243,7 +1245,7 @@ export default function SecurityAuthorizationCatalog() {
       )}
 
       {activeTab === 'maintenance' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 min-h-0">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden lg:grid-cols-2">
           <div className="bg-white rounded-xl border overflow-hidden flex flex-col min-h-0">
             <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
@@ -1257,7 +1259,7 @@ export default function SecurityAuthorizationCatalog() {
                 + Nueva Pantalla
               </button>
             </div>
-            <div className="overflow-auto p-2 space-y-1">
+            <div className="min-h-0 flex-1 overflow-auto p-2 space-y-1">
               {activeScreens.map((screen) => (
                 <button
                   key={screen.id}
@@ -1300,7 +1302,7 @@ export default function SecurityAuthorizationCatalog() {
                 </button>
               </div>
             </div>
-            <div className="overflow-auto divide-y divide-gray-100">
+            <div className="min-h-0 flex-1 overflow-auto divide-y divide-gray-100">
               {(allScreenActionsByScreen[selectedScreen] || []).map((sa) => (
                 <div key={sa.id} className="p-3 flex items-center justify-between gap-2">
                   <div className="min-w-0">
@@ -1349,7 +1351,7 @@ export default function SecurityAuthorizationCatalog() {
       )}
 
       {dirty && (
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+        <div className="absolute bottom-4 right-6 z-20 max-w-md rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 shadow-lg">
           Hay cambios sin guardar en permisos del rol seleccionado.
         </div>
       )}

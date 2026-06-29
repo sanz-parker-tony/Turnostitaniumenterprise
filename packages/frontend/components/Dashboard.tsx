@@ -1320,186 +1320,373 @@ function SystemAdminInsights({
   weekStep: number;
 }) {
   const metrics = payload?.metrics || {};
+  const diagnostics = payload?.diagnostics || {};
   const employeesSeries = Array.isArray(payload?.weekly_employees) ? payload.weekly_employees : [];
   const punchesSeries = Array.isArray(payload?.weekly_punches) ? payload.weekly_punches : [];
   const deviceDistribution = Array.isArray(payload?.device_distribution_90d) ? payload.device_distribution_90d : [];
-  const topTenants = Array.isArray(payload?.top_tenants_30d) ? payload.top_tenants_30d : [];
+  const topCompanies = Array.isArray(payload?.top_companies_30d) ? payload.top_companies_30d : [];
+  const staleDevices = Array.isArray(payload?.stale_devices) ? payload.stale_devices : [];
+  const unsupervisedEmployees = Array.isArray(payload?.unsupervised_employees) ? payload.unsupervised_employees : [];
 
-  const kpiCards = [
+  const activeCompanies = Number(diagnostics.active_companies || metrics.active_companies || 0);
+  const companiesWithActivity7d = Number(diagnostics.companies_with_activity_7d || 0);
+  const activeDevices = Number(diagnostics.active_devices || metrics.active_devices || 0);
+  const devicesReporting24h = Number(diagnostics.devices_reporting_24h || 0);
+  const activeEmployees = Number(diagnostics.active_employees || metrics.active_employees || 0);
+  const employeesWithoutSupervisor = Number(diagnostics.employees_without_supervisor || 0);
+  const employeesWithoutUser = Number(diagnostics.employees_without_user || 0);
+  const employeesWithoutCompany = Number(diagnostics.employees_without_company || 0);
+  const employeesWithIncompleteOrg = Number(diagnostics.employees_with_incomplete_org || 0);
+  const usersWithoutRole = Number(diagnostics.users_without_role || 0);
+
+  const companyActivityRate7d = activeCompanies > 0 ? (companiesWithActivity7d / activeCompanies) * 100 : 0;
+  const deviceReportingRate24h = activeDevices > 0 ? (devicesReporting24h / activeDevices) * 100 : 0;
+  const supervisionCoverageRate = activeEmployees > 0 ? ((activeEmployees - employeesWithoutSupervisor) / activeEmployees) * 100 : 0;
+  const dataIssueCount = employeesWithoutSupervisor + employeesWithoutUser + employeesWithoutCompany + employeesWithIncompleteOrg + usersWithoutRole;
+  const controlScore = Math.max(0, Math.min(100, Math.round((companyActivityRate7d * 0.25) + (deviceReportingRate24h * 0.35) + (supervisionCoverageRate * 0.4))));
+
+  const healthCards = [
     {
-      title: 'Tenants Activos',
-      value: formatMetric(metrics.active_tenants),
-      detail: `Con actividad 30d: ${formatMetric(metrics.active_tenants_with_activity_30d)} (${metrics.tenant_activity_rate_30d || 0}%)`,
+      title: 'Score de seguimiento',
+      value: `${controlScore}%`,
+      detail: 'Combina adopcion multiempresa, conectividad y supervision.',
+      tone: controlScore >= 80 ? 'text-emerald-700' : controlScore >= 60 ? 'text-amber-700' : 'text-red-700',
     },
     {
-      title: 'Empleados Activos',
-      value: formatMetric(metrics.active_employees),
-      detail: `Usuarios activos: ${formatMetric(metrics.active_users)}`,
+      title: 'Empresas con actividad 7d',
+      value: `${formatMetric(companiesWithActivity7d)} / ${formatMetric(activeCompanies)}`,
+      detail: `${formatPercent(companyActivityRate7d)} de adopcion multiempresa reciente.`,
+      tone: 'text-blue-700',
     },
     {
-      title: 'Marcaciones',
-      value: formatMetric(metrics.total_punches_year),
-      detail: `Hoy: ${formatMetric(metrics.total_punches_today)} | 30d: ${formatMetric(metrics.total_punches_30d)}`,
+      title: 'Marcaciones 24h',
+      value: formatMetric(diagnostics.punches_24h),
+      detail: `${formatMetric(diagnostics.punches_7d)} marcaciones en 7 dias.`,
+      tone: 'text-slate-800',
     },
     {
-      title: 'Capacidad Operativa',
-      value: formatMetric(metrics.active_devices),
-      detail: `Disp. activos | Prom. 30d por empl: ${formatMetric(metrics.avg_punches_per_employee_30d)}`,
-    },
-    {
-      title: 'Ausencias Pendientes',
-      value: formatMetric(metrics.pending_absence_requests),
-      detail: 'Solicitudes globales pendientes',
-    },
-    {
-      title: 'Cambios de Turno Pendientes',
-      value: formatMetric(metrics.pending_shift_change_requests),
-      detail: 'Solicitudes globales pendientes',
+      title: 'Dispositivos reportando 24h',
+      value: `${formatMetric(devicesReporting24h)} / ${formatMetric(activeDevices)}`,
+      detail: `${formatPercent(deviceReportingRate24h)} conectividad reciente.`,
+      tone: 'text-cyan-700',
     },
   ];
 
+  const connectivityCards = [
+    { title: 'Activos', value: activeDevices, detail: 'Dispositivos configurados activos' },
+    { title: 'Reportando 24h', value: devicesReporting24h, detail: 'Con marcaciones recientes' },
+    { title: 'Sin registrar 72h', value: diagnostics.devices_without_punch_72h, detail: 'Riesgo de desconexion o no uso' },
+    { title: 'Nunca reportaron', value: diagnostics.devices_never_reported, detail: 'Instalados sin primera marcacion' },
+  ];
+
+  const qualityCards = [
+    { title: 'Empleados sin supervisor', value: employeesWithoutSupervisor, detail: 'No estan bajo seguimiento activo' },
+    { title: 'Empleados sin usuario', value: employeesWithoutUser, detail: 'No pueden operar autoservicio' },
+    { title: 'Empleados sin empresa', value: employeesWithoutCompany, detail: 'Sin asignacion laboral activa' },
+    { title: 'Org. incompleta', value: employeesWithIncompleteOrg, detail: 'Faltan localidad, depto. o area' },
+    { title: 'Usuarios sin rol', value: usersWithoutRole, detail: 'Acceso sin permiso funcional' },
+  ];
+
   return (
-    <div className="space-y-3">
-      <Card>
-        <CardHeader className="p-4 pb-2">
-          <CardTitle className="text-sm">KPIs Operativos</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pt-0 pb-4">
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-            {kpiCards.map((kpi) => (
-              <div key={kpi.title} className="rounded-lg border bg-card p-2">
-                <p className="text-xs text-muted-foreground">{kpi.title}</p>
-                <p className="mt-1 text-3xl font-semibold tracking-tight">{kpi.value}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground leading-tight">{kpi.detail}</p>
-              </div>
-            ))}
+    <div className="space-y-4 print:space-y-3">
+      <Card className="border-blue-100 bg-gradient-to-r from-white to-blue-50/40 print:shadow-none">
+        <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">Diagnostico de producto</div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">Eficiencia del software como herramienta de seguimiento y control</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Lectura ejecutiva de adopcion, conectividad remota, supervision y calidad de datos para visitas a clientes.
+            </p>
           </div>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="rounded-md border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 print:hidden"
+          >
+            Imprimir dashboard
+          </button>
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="h-[340px] flex flex-col">
-          <CardHeader className="pb-3">
-            <CardTitle className="whitespace-nowrap">Marcaciones por Dispositivo (90 dias)</CardTitle>
-            <CardDescription>Participacion porcentual por origen de dispositivo.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            {deviceDistribution.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin marcaciones registradas para el periodo.</p>
-            ) : (
-              <div className="h-full rounded-xl border bg-gradient-to-br from-slate-50 to-white p-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={deviceDistribution}
-                      dataKey="punches"
-                      nameKey="device_name"
-                      cx="50%"
-                      cy="47%"
-                      innerRadius={48}
-                      outerRadius={76}
-                      paddingAngle={2}
-                      strokeWidth={0}
-                    >
-                      {deviceDistribution.map((_: any, idx: number) => (
-                        <Cell key={`device-cell-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Legend verticalAlign="bottom" height={28} />
-                    <RechartsTooltip formatter={(value: any, _: any, row: any) => [`${formatMetric(value)} marcaciones`, row?.payload?.device_name]} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <Tabs defaultValue="salud" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 print:hidden">
+          <TabsTrigger value="salud">Salud</TabsTrigger>
+          <TabsTrigger value="adopcion">Adopcion</TabsTrigger>
+          <TabsTrigger value="conectividad">Conectividad</TabsTrigger>
+          <TabsTrigger value="control">Calidad y control</TabsTrigger>
+        </TabsList>
 
-        <Card className="h-[340px] flex flex-col">
-          <CardHeader>
-            <CardTitle>Top Tenants por Marcaciones (30 dias)</CardTitle>
-            <CardDescription>Volumen de uso por tenant en el ultimo mes.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            {topTenants.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin actividad de tenants para el periodo.</p>
-            ) : (
-              <div className="h-full rounded-xl border bg-white p-2">
+        <TabsContent value="salud" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {healthCards.map((card) => (
+              <Card key={card.title} className="print:shadow-none">
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">{card.title}</p>
+                  <p className={`mt-2 text-3xl font-semibold tracking-tight ${card.tone}`}>{card.value}</p>
+                  <p className="mt-2 text-xs leading-tight text-muted-foreground">{card.detail}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Performance de marcaciones ({selectedYear})</CardTitle>
+                <CardDescription>Volumen semanal global. Permite detectar caidas o picos anormales de uso.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topTenants.slice(0, 8)} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                  <LineChart data={punchesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="tenant_name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={58} />
+                    <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
                     <YAxis tick={{ fontSize: 11 }} />
-                    <RechartsTooltip formatter={(value: any) => [`${formatMetric(value)} marcaciones`, 'Volumen']} />
-                    <Bar dataKey="punches_30d" name="Marcaciones 30d" radius={[6, 6, 0, 0]}>
-                      {topTenants.slice(0, 8).map((_: any, idx: number) => (
-                        <Cell key={`tenant-bar-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
-                      ))}
-                    </Bar>
+                    <RechartsTooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="punches" name="Marcaciones" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Resumen operativo global</CardTitle>
+                <CardDescription>Indicadores base para evaluar si el producto esta vivo y generando control.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MetricBox title="Empresas activas" value={metrics.active_companies} detail={`Actividad 30d: ${formatMetric(metrics.active_companies_with_activity_30d)}`} />
+                  <MetricBox title="Empleados activos" value={metrics.active_employees} detail={`Usuarios activos: ${formatMetric(metrics.active_users)}`} />
+                  <MetricBox title="Marcaciones 30d" value={metrics.total_punches_30d} detail={`Hoy: ${formatMetric(metrics.total_punches_today)}`} />
+                  <MetricBox title="Promedio por empleado 30d" value={metrics.avg_punches_per_employee_30d} detail="Intensidad de uso del sistema" />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="adopcion" className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Top empresas por marcaciones (30 dias)</CardTitle>
+                <CardDescription>Empresas con mayor uso real del producto OnPremise.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[340px]">
+                {topCompanies.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin actividad de empresas para el periodo.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={topCompanies.slice(0, 8)} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="company_name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={58} />
+                      <YAxis tick={{ fontSize: 11 }} />
+                      <RechartsTooltip formatter={(value: any) => [`${formatMetric(value)} marcaciones`, 'Volumen']} />
+                      <Bar dataKey="punches_30d" name="Marcaciones 30d" radius={[6, 6, 0, 0]}>
+                        {topCompanies.slice(0, 8).map((_: any, idx: number) => (
+                          <Cell key={`company-bar-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Crecimiento de empleados ({selectedYear})</CardTitle>
+                <CardDescription>Nuevos registros semanales de empleados activos. Salto semanas: cada {weekStep}.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[340px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={employeesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <RechartsTooltip />
+                    <Legend />
+                    <Bar dataKey="new_employees" name="Nuevos" fill="#2563eb" radius={[6, 6, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
 
-        <Card className="h-[340px] flex flex-col">
-          <CardHeader>
-            <CardTitle>Incremento de Empleados por Semana ({selectedYear})</CardTitle>
-            <CardDescription>Nuevos registros semanales de empleados activos.</CardDescription>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={employeesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <RechartsTooltip />
-                <Legend />
-                <Line type="monotone" dataKey="new_employees" name="Nuevos" stroke="#2563eb" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        <TabsContent value="conectividad" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {connectivityCards.map((card) => (
+              <MetricBox key={card.title} title={card.title} value={card.value} detail={card.detail} />
+            ))}
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[1.4fr_0.9fr]">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Dispositivos con mas horas sin registrar marcaciones</CardTitle>
+                <CardDescription>Ranking de mayor a menor tiempo desde la ultima marcacion recibida.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <StaleDevicesTable staleDevices={staleDevices} />
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Marcaciones por dispositivo (90 dias)</CardTitle>
+                <CardDescription>Concentracion de uso por origen.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[320px]">
+                {deviceDistribution.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin marcaciones registradas para el periodo.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={deviceDistribution} dataKey="punches" nameKey="device_name" cx="50%" cy="47%" innerRadius={48} outerRadius={76} paddingAngle={2} strokeWidth={0}>
+                        {deviceDistribution.map((_: any, idx: number) => (
+                          <Cell key={`device-cell-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Legend verticalAlign="bottom" height={28} />
+                      <RechartsTooltip formatter={(value: any, _: any, row: any) => [`${formatMetric(value)} marcaciones`, row?.payload?.device_name]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="control" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+            {qualityCards.map((card) => (
+              <MetricBox key={card.title} title={card.title} value={card.value} detail={card.detail} warning={Number(card.value || 0) > 0} />
+            ))}
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Empleados sin supervision asignada</CardTitle>
+                <CardDescription>Muestra personas activas que no estan cubiertas por un supervisor/RRHH autorizado.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {unsupervisedEmployees.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No se detectan empleados activos sin supervision.</p>
+                ) : (
+                  <div className="overflow-hidden rounded-lg border">
+                    <div className="grid grid-cols-[1fr_1fr_1fr] gap-2 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                      <span>Empleado</span>
+                      <span>Empresa</span>
+                      <span>Localidad</span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {unsupervisedEmployees.map((row: any, index: number) => (
+                        <div key={`${row.employee_code || index}-${row.company_name}`} className="grid grid-cols-[1fr_1fr_1fr] gap-2 px-3 py-2 text-xs">
+                          <span className="min-w-0">
+                            <span className="block truncate font-semibold text-slate-800">{`${row.employee_lastname || ''} ${row.employee_name || ''}`.trim() || '-'}</span>
+                            <span className="block truncate text-slate-500">Codigo: {row.employee_code || '-'}</span>
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-slate-700">{row.company_name || '-'}</span>
+                          </span>
+                          <span className="truncate text-slate-600">{row.work_location_name || '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Semaforo de diagnostico</CardTitle>
+                <CardDescription>Lectura rapida para conversaciones con el cliente.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <DiagnosticLine label="Adopcion multiempresa" value={companyActivityRate7d} goodAt={75} />
+                <DiagnosticLine label="Conectividad remota" value={deviceReportingRate24h} goodAt={75} />
+                <DiagnosticLine label="Cobertura de supervision" value={supervisionCoverageRate} goodAt={90} />
+                <div className={`rounded-lg border p-3 text-sm ${dataIssueCount > 0 ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                  <div className="font-semibold">Incidencias de datos: {formatMetric(dataIssueCount)}</div>
+                  <div className="mt-1 text-xs opacity-80">Suma empleados sin supervisor, sin usuario, sin empresa, org. incompleta y usuarios sin rol.</div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function MetricBox({ title, value, detail, warning = false }: { title: string; value: unknown; detail: string; warning?: boolean }) {
+  return (
+    <Card className="print:shadow-none">
+      <CardContent className="p-4">
+        <p className="text-xs text-muted-foreground">{title}</p>
+        <p className={`mt-2 text-2xl font-semibold tracking-tight ${warning ? 'text-amber-700' : 'text-slate-900'}`}>{formatMetric(value)}</p>
+        <p className="mt-2 text-xs leading-tight text-muted-foreground">{detail}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StaleDevicesTable({ staleDevices }: { staleDevices: any[] }) {
+  if (staleDevices.length === 0) {
+    return <p className="text-sm text-muted-foreground">Sin dispositivos activos para evaluar.</p>;
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <div className="grid grid-cols-[42px_1.3fr_1fr_0.8fr_0.7fr] gap-2 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+        <span>#</span>
+        <span>Dispositivo</span>
+        <span>Empresa / Localidad</span>
+        <span>Ultima marcacion</span>
+        <span className="text-right">Horas</span>
       </div>
+      <div className="divide-y divide-slate-100">
+        {staleDevices.map((device: any, index: number) => {
+          const hours = Number(device.hours_without_punch);
+          const hasNeverPunched = Boolean(device.never_punched) || device.last_punch_datetime === null;
+          return (
+            <div key={device.device_id || `${device.device_name}-${index}`} className="grid grid-cols-[42px_1.3fr_1fr_0.8fr_0.7fr] gap-2 px-3 py-2 text-xs">
+              <span className="font-semibold text-slate-500">{index + 1}</span>
+              <span className="min-w-0">
+                <span className="block truncate font-semibold text-slate-800">{device.device_name || '-'}</span>
+                <span className="block truncate text-slate-500">Serial: {device.device_serial_number || '-'}</span>
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-slate-700">{device.company_name || '-'}</span>
+                <span className="block truncate text-slate-500">{device.location_name || '-'}</span>
+              </span>
+              <span className="text-slate-600">{hasNeverPunched ? 'Nunca' : new Date(device.last_punch_datetime).toLocaleString()}</span>
+              <span className="text-right font-semibold text-amber-700">{hasNeverPunched ? 'Sin registros' : formatMetric(hours)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Incremento de Marcaciones por Semana ({selectedYear})</CardTitle>
-            <CardDescription>Volumen semanal global de marcaciones.</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={punchesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <RechartsTooltip />
-                <Legend />
-                <Line type="monotone" dataKey="punches" name="Semanal" stroke="#f59e0b" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Nuevos Empleados por Semana ({selectedYear})</CardTitle>
-            <CardDescription>Vista en barras para variacion semanal.</CardDescription>
-          </CardHeader>
-          <CardContent className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={employeesSeries} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="week_label" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <RechartsTooltip />
-                <Legend />
-                <Bar dataKey="new_employees" name="Nuevos" fill="#2563eb" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+function DiagnosticLine({ label, value, goodAt }: { label: string; value: number; goodAt: number }) {
+  const safeValue = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
+  const isGood = safeValue >= goodAt;
+  const isMedium = safeValue >= Math.max(50, goodAt - 20);
+  const color = isGood ? 'bg-emerald-500' : isMedium ? 'bg-amber-500' : 'bg-red-500';
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-sm">
+        <span className="font-medium text-slate-700">{label}</span>
+        <span className="text-slate-600">{formatPercent(safeValue)}</span>
+      </div>
+      <div className="h-2 rounded-full bg-slate-100">
+        <div className={`h-2 rounded-full ${color}`} style={{ width: `${safeValue}%` }} />
       </div>
     </div>
   );
@@ -1708,10 +1895,10 @@ export function Dashboard() {
   const metrics = systemAdminPayload?.metrics || {};
   const systemAdminStats = [
     {
-      title: 'Tenants Activos',
-      value: formatMetric(metrics.active_tenants),
+      title: 'Empresas Activas',
+      value: formatMetric(metrics.active_companies),
       icon: Building2,
-      description: `Con actividad 30d: ${formatMetric(metrics.active_tenants_with_activity_30d)}`,
+      description: `Con actividad 30d: ${formatMetric(metrics.active_companies_with_activity_30d)}`,
       color: 'text-blue-600',
       bgColor: 'bg-blue-100',
     },
