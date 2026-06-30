@@ -407,7 +407,19 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
     const monthEndIso = monthEnd.toISOString().slice(0, 10);
     const monthKey = `${safeYear}-${String(safeMonth).padStart(2, '0')}`;
 
-    const [tenantInfoRes, countersRes, shiftsRes, workPatternsRes, monthCalendarRes, devicesRes] = await Promise.all([
+    const [
+      tenantInfoRes,
+      countersRes,
+      shiftsRes,
+      workPatternsRes,
+      monthCalendarRes,
+      devicesRes,
+      companyActivityRes,
+      locationActivityRes,
+      punchSourceRes,
+      deviceHealthRes,
+      weeklyPunchesRes,
+    ] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -416,7 +428,7 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
             t.tenant_name,
             t.is_active,
             t.created_at,
-            COALESCE(tls.language_code, 'es') AS language_code
+            COALESCE(tls.default_language_code, 'es') AS language_code
           FROM tenants t
           LEFT JOIN tenant_language_settings tls
             ON tls.tenant_id = t.id
@@ -455,15 +467,69 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
               AND h.holiday_date >= CURRENT_DATE
             ORDER BY h.holiday_date ASC
             LIMIT 1
+          ),
+          effective_punches_30 AS (
+            SELECT
+              p.id,
+              p.employee_id,
+              p.company_id,
+              COALESCE(d.work_location_id, ec.work_location_id) AS work_location_id,
+              p.time_clock_device_id
+            FROM employee_time_punches p
+            LEFT JOIN time_clock_devices d
+              ON d.id = p.time_clock_device_id
+            LEFT JOIN LATERAL (
+              SELECT ec.work_location_id
+              FROM employee_companies ec
+              WHERE ec.tenant_id = p.tenant_id
+                AND ec.employee_id = p.employee_id
+                AND ec.company_id = p.company_id
+                AND ec.is_active = true
+              ORDER BY ec.updated_at DESC NULLS LAST, ec.created_at DESC NULLS LAST
+              LIMIT 1
+            ) ec ON d.work_location_id IS NULL
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+          ),
+          device_status AS (
+            SELECT
+              d.id,
+              MAX(p.punch_datetime) AS last_punch_datetime
+            FROM time_clock_devices d
+            LEFT JOIN employee_time_punches p
+              ON p.time_clock_device_id = d.id
+             AND p.tenant_id = d.tenant_id
+             AND p.is_active = true
+            WHERE d.tenant_id = $1
+              AND d.is_active = true
+            GROUP BY d.id
+          ),
+          assigned_employees AS (
+            SELECT DISTINCT ura.employee_id
+            FROM user_role_employee_assignments ura
+            JOIN user_roles ur
+              ON ur.id = ura.user_role_id
+             AND ur.tenant_id = ura.tenant_id
+             AND ur.is_active = true
+            JOIN roles r
+              ON r.id = ur.role_id
+             AND r.is_active = true
+            WHERE ura.tenant_id = $1
+              AND ura.is_active = true
+              AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
           )
           SELECT
             (SELECT COUNT(*)::int FROM users WHERE tenant_id = $1 AND is_active = true) AS active_users,
             (SELECT COUNT(*)::int FROM employees WHERE tenant_id = $1 AND is_active = true) AS active_employees,
+            (SELECT COUNT(*)::int FROM employees WHERE tenant_id = $1 AND is_active = true AND user_id IS NOT NULL) AS employees_with_user,
             (SELECT COUNT(*)::int FROM companies WHERE tenant_id = $1 AND is_active = true) AS active_companies,
             (SELECT COUNT(*)::int FROM roles WHERE tenant_id = $1 AND is_active = true) AS active_roles,
             (SELECT COUNT(*)::int FROM tenant_members WHERE tenant_id = $1) AS tenant_members,
             (SELECT COUNT(*)::int FROM tenant_settings WHERE tenant_id = $1 AND is_active = true) AS tenant_setting_overrides,
             (SELECT COUNT(*)::int FROM work_locations WHERE tenant_id = $1 AND is_active = true) AS active_work_locations,
+            (SELECT COUNT(*)::int FROM work_locations WHERE tenant_id = $1 AND is_active = true AND geofence_polygon IS NOT NULL) AS geofenced_work_locations,
+            (SELECT COUNT(*)::int FROM work_locations WHERE tenant_id = $1 AND is_active = true AND geofence_polygon IS NULL) AS virtual_work_locations,
             (SELECT COUNT(*)::int FROM departments WHERE tenant_id = $1 AND is_active = true) AS active_departments,
             (SELECT COUNT(*)::int FROM areas WHERE tenant_id = $1 AND is_active = true) AS active_areas,
             (SELECT COUNT(*)::int FROM cost_centers WHERE tenant_id = $1 AND is_active = true) AS active_cost_centers,
@@ -491,7 +557,78 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
             (SELECT holiday_date FROM next_holiday) AS next_holiday_date,
             (SELECT holiday_name FROM next_holiday) AS next_holiday_name,
             (SELECT total FROM pending_absence) AS pending_absence_requests,
-            (SELECT total FROM pending_shift_change) AS pending_shift_change_requests
+            (SELECT total FROM pending_shift_change) AS pending_shift_change_requests,
+            (SELECT COUNT(*)::int FROM effective_punches_30) AS total_punches_30d,
+            (
+              SELECT COUNT(*)::int
+              FROM employee_time_punches p
+              WHERE p.tenant_id = $1
+                AND p.is_active = true
+                AND p.punch_datetime >= (now() - interval '7 days')
+            ) AS total_punches_7d,
+            (
+              SELECT COUNT(*)::int
+              FROM employee_time_punches p
+              WHERE p.tenant_id = $1
+                AND p.is_active = true
+                AND p.punch_datetime >= CURRENT_DATE
+                AND p.punch_datetime < (CURRENT_DATE + INTERVAL '1 day')
+            ) AS total_punches_today,
+            (SELECT COUNT(DISTINCT employee_id)::int FROM effective_punches_30) AS employees_punched_30d,
+            (
+              SELECT COUNT(DISTINCT ep.work_location_id)::int
+              FROM effective_punches_30 ep
+              WHERE ep.work_location_id IS NOT NULL
+            ) AS work_locations_with_activity_30d,
+            (
+              SELECT COUNT(*)::int
+              FROM effective_punches_30 ep
+              JOIN work_locations wl
+                ON wl.id = ep.work_location_id
+               AND wl.tenant_id = $1
+              WHERE wl.geofence_polygon IS NULL
+            ) AS virtual_location_punches_30d,
+            (
+              SELECT COUNT(DISTINCT ep.employee_id)::int
+              FROM effective_punches_30 ep
+              JOIN work_locations wl
+                ON wl.id = ep.work_location_id
+               AND wl.tenant_id = $1
+              WHERE wl.geofence_polygon IS NULL
+            ) AS virtual_location_employees_30d,
+            (
+              SELECT COUNT(*)::int
+              FROM time_clock_devices d
+              WHERE d.tenant_id = $1
+                AND d.is_active = true
+            ) AS active_devices,
+            (
+              SELECT COUNT(*)::int
+              FROM device_status
+              WHERE last_punch_datetime >= (now() - interval '24 hours')
+            ) AS devices_reporting_24h,
+            (
+              SELECT COUNT(*)::int
+              FROM device_status
+              WHERE last_punch_datetime IS NULL
+            ) AS devices_never_reported,
+            (
+              SELECT COUNT(*)::int
+              FROM device_status
+              WHERE last_punch_datetime IS NULL
+                 OR last_punch_datetime < (now() - interval '72 hours')
+            ) AS devices_without_punch_72h,
+            (
+              SELECT COUNT(*)::int
+              FROM employees e
+              WHERE e.tenant_id = $1
+                AND e.is_active = true
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM assigned_employees ae
+                  WHERE ae.employee_id = e.id
+                )
+            ) AS employees_without_supervisor
         `,
         [tenantId]
       ),
@@ -582,6 +719,216 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
         `,
         [tenantId]
       ),
+      pool.query(
+        `
+          WITH employee_counts AS (
+            SELECT ec.company_id, COUNT(DISTINCT ec.employee_id)::int AS employees
+            FROM employee_companies ec
+            JOIN employees e
+              ON e.id = ec.employee_id
+             AND e.tenant_id = ec.tenant_id
+             AND e.is_active = true
+            WHERE ec.tenant_id = $1
+              AND ec.is_active = true
+            GROUP BY ec.company_id
+          ),
+          location_counts AS (
+            SELECT wl.company_id, COUNT(*)::int AS locations
+            FROM work_locations wl
+            WHERE wl.tenant_id = $1
+              AND wl.is_active = true
+            GROUP BY wl.company_id
+          ),
+          device_counts AS (
+            SELECT d.company_id, COUNT(*)::int AS devices
+            FROM time_clock_devices d
+            WHERE d.tenant_id = $1
+              AND d.is_active = true
+            GROUP BY d.company_id
+          ),
+          punch_counts AS (
+            SELECT
+              p.company_id,
+              COUNT(*)::int AS punches_30d,
+              COUNT(DISTINCT p.employee_id)::int AS employees_punched_30d
+            FROM employee_time_punches p
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+            GROUP BY p.company_id
+          )
+          SELECT
+            c.id AS company_id,
+            c.company_name,
+            COALESCE(ec.employees, 0) AS employees,
+            COALESCE(lc.locations, 0) AS locations,
+            COALESCE(dc.devices, 0) AS devices,
+            COALESCE(pc.punches_30d, 0) AS punches_30d,
+            COALESCE(pc.employees_punched_30d, 0) AS employees_punched_30d
+          FROM companies c
+          LEFT JOIN employee_counts ec ON ec.company_id = c.id
+          LEFT JOIN location_counts lc ON lc.company_id = c.id
+          LEFT JOIN device_counts dc ON dc.company_id = c.id
+          LEFT JOIN punch_counts pc ON pc.company_id = c.id
+          WHERE c.tenant_id = $1
+            AND c.is_active = true
+          ORDER BY COALESCE(pc.punches_30d, 0) DESC, c.company_name ASC
+          LIMIT 12
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          WITH effective_punches AS (
+            SELECT
+              p.employee_id,
+              p.company_id,
+              COALESCE(d.work_location_id, ec.work_location_id) AS work_location_id
+            FROM employee_time_punches p
+            LEFT JOIN time_clock_devices d
+              ON d.id = p.time_clock_device_id
+            LEFT JOIN LATERAL (
+              SELECT ec.work_location_id
+              FROM employee_companies ec
+              WHERE ec.tenant_id = p.tenant_id
+                AND ec.employee_id = p.employee_id
+                AND ec.company_id = p.company_id
+                AND ec.is_active = true
+              ORDER BY ec.updated_at DESC NULLS LAST, ec.created_at DESC NULLS LAST
+              LIMIT 1
+            ) ec ON d.work_location_id IS NULL
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+          ),
+          device_counts AS (
+            SELECT d.work_location_id, COUNT(*)::int AS devices
+            FROM time_clock_devices d
+            WHERE d.tenant_id = $1
+              AND d.is_active = true
+              AND d.work_location_id IS NOT NULL
+            GROUP BY d.work_location_id
+          ),
+          punch_counts AS (
+            SELECT
+              ep.work_location_id,
+              COUNT(*)::int AS punches_30d,
+              COUNT(DISTINCT ep.employee_id)::int AS employees_punched_30d
+            FROM effective_punches ep
+            WHERE ep.work_location_id IS NOT NULL
+            GROUP BY ep.work_location_id
+          )
+          SELECT
+            wl.id AS work_location_id,
+            wl.work_location_name,
+            wl.work_location_code,
+            c.company_name,
+            CASE WHEN wl.geofence_polygon IS NULL THEN true ELSE false END AS is_virtual_location,
+            CASE WHEN wl.geofence_polygon IS NULL THEN 'Sin geocerca / virtual' ELSE 'Con geocerca' END AS location_kind,
+            COALESCE(dc.devices, 0) AS devices,
+            COALESCE(pc.punches_30d, 0) AS punches_30d,
+            COALESCE(pc.employees_punched_30d, 0) AS employees_punched_30d
+          FROM work_locations wl
+          LEFT JOIN companies c ON c.id = wl.company_id
+          LEFT JOIN device_counts dc ON dc.work_location_id = wl.id
+          LEFT JOIN punch_counts pc ON pc.work_location_id = wl.id
+          WHERE wl.tenant_id = $1
+            AND wl.is_active = true
+          ORDER BY COALESCE(pc.punches_30d, 0) DESC, wl.work_location_name ASC
+          LIMIT 15
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          WITH source_counts AS (
+            SELECT
+              COALESCE(NULLIF(TRIM(src.lookup_label), ''), NULLIF(TRIM(src.lookup_key), ''), CASE WHEN p.time_clock_device_id IS NULL THEN 'Sin dispositivo' ELSE 'Dispositivo' END) AS source_name,
+              COUNT(*)::int AS punches_30d,
+              COUNT(DISTINCT p.employee_id)::int AS employees_punched_30d
+            FROM employee_time_punches p
+            LEFT JOIN lookup_values src
+              ON src.id = p.punch_source_id
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.punch_datetime >= (now() - interval '30 days')
+            GROUP BY 1
+          )
+          SELECT
+            source_name,
+            punches_30d,
+            employees_punched_30d,
+            SUM(punches_30d) OVER ()::int AS total_punches_30d
+          FROM source_counts
+          ORDER BY punches_30d DESC, source_name ASC
+          LIMIT 10
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          WITH last_punch AS (
+            SELECT
+              p.time_clock_device_id,
+              MAX(p.punch_datetime) AS last_punch_datetime
+            FROM employee_time_punches p
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.time_clock_device_id IS NOT NULL
+            GROUP BY p.time_clock_device_id
+          )
+          SELECT
+            d.id AS device_id,
+            COALESCE(NULLIF(TRIM(d.device_name), ''), 'Sin nombre') AS device_name,
+            COALESCE(NULLIF(TRIM(d.device_serial_number), ''), '-') AS device_serial_number,
+            COALESCE(c.company_name, '-') AS company_name,
+            COALESCE(wl.work_location_name, d.device_location, '-') AS location_name,
+            COALESCE(dt.lookup_label, dt.lookup_key, '-') AS device_type,
+            lp.last_punch_datetime,
+            CASE
+              WHEN lp.last_punch_datetime IS NULL THEN NULL
+              ELSE ROUND((EXTRACT(EPOCH FROM (now() - lp.last_punch_datetime)) / 3600.0)::numeric, 2)
+            END AS hours_without_punch,
+            CASE WHEN lp.last_punch_datetime IS NULL THEN 1 ELSE 0 END AS never_punched
+          FROM time_clock_devices d
+          LEFT JOIN companies c ON c.id = d.company_id
+          LEFT JOIN work_locations wl ON wl.id = d.work_location_id
+          LEFT JOIN lookup_values dt ON dt.id = d.device_type_id
+          LEFT JOIN last_punch lp ON lp.time_clock_device_id = d.id
+          WHERE d.tenant_id = $1
+            AND d.is_active = true
+          ORDER BY
+            CASE WHEN lp.last_punch_datetime IS NULL THEN 1 ELSE 0 END DESC,
+            hours_without_punch DESC NULLS LAST,
+            d.device_name ASC
+          LIMIT 12
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          WITH days AS (
+            SELECT gs::date AS day
+            FROM generate_series((CURRENT_DATE - interval '29 days')::date, CURRENT_DATE::date, interval '1 day') gs
+          ),
+          daily AS (
+            SELECT p.punch_datetime::date AS day, COUNT(*)::int AS punches
+            FROM employee_time_punches p
+            WHERE p.tenant_id = $1
+              AND p.is_active = true
+              AND p.punch_datetime >= (CURRENT_DATE - interval '29 days')
+            GROUP BY 1
+          )
+          SELECT
+            d.day,
+            TO_CHAR(d.day, 'DD/MM') AS day_label,
+            COALESCE(daily.punches, 0)::int AS punches
+          FROM days d
+          LEFT JOIN daily ON daily.day = d.day
+          ORDER BY d.day
+        `,
+        [tenantId]
+      ),
     ]);
 
     return res.status(200).json({
@@ -597,6 +944,11 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
         holidays: monthCalendarRes.rows || [],
       },
       devices: devicesRes.rows || [],
+      company_activity: companyActivityRes.rows || [],
+      location_activity: locationActivityRes.rows || [],
+      punch_sources: punchSourceRes.rows || [],
+      device_health: deviceHealthRes.rows || [],
+      weekly_punches: weeklyPunchesRes.rows || [],
     });
   } catch (error: any) {
     return res.status(500).json({

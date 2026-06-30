@@ -1692,12 +1692,307 @@ function DiagnosticLine({ label, value, goodAt }: { label: string; value: number
   );
 }
 
+function TenantAdminInsights({
+  payload,
+  selectedMonth,
+  onMonthChange,
+}: {
+  payload: any;
+  selectedMonth: string;
+  onMonthChange: (value: string) => void;
+}) {
+  const metrics = payload?.metrics || {};
+  const tenant = payload?.tenant || {};
+  const companyActivity = Array.isArray(payload?.company_activity) ? payload.company_activity : [];
+  const locationActivity = Array.isArray(payload?.location_activity) ? payload.location_activity : [];
+  const punchSources = Array.isArray(payload?.punch_sources) ? payload.punch_sources : [];
+  const deviceHealth = Array.isArray(payload?.device_health) ? payload.device_health : [];
+  const dailyPunches = Array.isArray(payload?.weekly_punches) ? payload.weekly_punches : [];
+
+  const activeEmployees = Number(metrics.active_employees || 0);
+  const employeesPunched30d = Number(metrics.employees_punched_30d || 0);
+  const activeDevices = Number(metrics.active_devices || 0);
+  const devicesReporting24h = Number(metrics.devices_reporting_24h || 0);
+  const activeWorkLocations = Number(metrics.active_work_locations || 0);
+  const workLocationsWithActivity30d = Number(metrics.work_locations_with_activity_30d || 0);
+  const employeesWithUser = Number(metrics.employees_with_user || 0);
+  const totalPunches30d = Number(metrics.total_punches_30d || 0);
+  const virtualPunches30d = Number(metrics.virtual_location_punches_30d || 0);
+
+  const markingCoverageRate = activeEmployees > 0 ? (employeesPunched30d / activeEmployees) * 100 : 0;
+  const deviceReportingRate = activeDevices > 0 ? (devicesReporting24h / activeDevices) * 100 : 0;
+  const locationActivityRate = activeWorkLocations > 0 ? (workLocationsWithActivity30d / activeWorkLocations) * 100 : 0;
+  const userCoverageRate = activeEmployees > 0 ? (employeesWithUser / activeEmployees) * 100 : 0;
+  const virtualPunchRate = totalPunches30d > 0 ? (virtualPunches30d / totalPunches30d) * 100 : 0;
+  const customerScore = Math.max(0, Math.min(100, Math.round(
+    (markingCoverageRate * 0.35) +
+    (deviceReportingRate * 0.30) +
+    (locationActivityRate * 0.20) +
+    (userCoverageRate * 0.15)
+  )));
+
+  const healthCards = [
+    {
+      title: 'Score de uso del cliente',
+      value: `${customerScore}%`,
+      detail: 'Combina marcación, conectividad, recintos activos y usuarios.',
+      tone: customerScore >= 80 ? 'text-emerald-700' : customerScore >= 60 ? 'text-amber-700' : 'text-red-700',
+    },
+    {
+      title: 'Empleados marcando 30d',
+      value: `${formatMetric(employeesPunched30d)} / ${formatMetric(activeEmployees)}`,
+      detail: `${formatPercent(markingCoverageRate)} de cobertura real de uso.`,
+      tone: 'text-blue-700',
+    },
+    {
+      title: 'Recintos con actividad 30d',
+      value: `${formatMetric(workLocationsWithActivity30d)} / ${formatMetric(activeWorkLocations)}`,
+      detail: `${formatPercent(locationActivityRate)} de localidades operativas activas.`,
+      tone: 'text-cyan-700',
+    },
+    {
+      title: 'Dispositivos reportando 24h',
+      value: `${formatMetric(devicesReporting24h)} / ${formatMetric(activeDevices)}`,
+      detail: `${formatPercent(deviceReportingRate)} conectividad reciente.`,
+      tone: 'text-emerald-700',
+    },
+  ];
+
+  return (
+    <div className="space-y-4 print:space-y-3">
+      <Card className="border-emerald-100 bg-gradient-to-r from-white to-emerald-50/40 print:shadow-none">
+        <CardContent className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Diagnóstico de adopción</div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">Uso, actividad y desempeño de la aplicación</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Vista ejecutiva para justificar la inversión: empresas, recintos, dispositivos, usuarios y marcaciones reales.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Cliente: {tenant.tenant_name || 'Tenant actual'}</p>
+          </div>
+          <div className="flex items-center gap-2 print:hidden">
+            <label className="text-xs text-muted-foreground">
+              Mes calendario
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => onMonthChange(event.target.value)}
+                className="ml-2 h-9 rounded-md border border-input bg-background px-2 text-sm"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="rounded-md border border-emerald-200 bg-white px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50"
+            >
+              Imprimir dashboard
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Tabs defaultValue="salud" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 print:hidden">
+          <TabsTrigger value="salud">Salud operativa</TabsTrigger>
+          <TabsTrigger value="empresas">Empresas</TabsTrigger>
+          <TabsTrigger value="recintos">Recintos y origen</TabsTrigger>
+          <TabsTrigger value="dispositivos">Dispositivos</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="salud" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {healthCards.map((card) => (
+              <Card key={card.title} className="print:shadow-none">
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground">{card.title}</p>
+                  <p className={`mt-2 text-3xl font-semibold tracking-tight ${card.tone}`}>{card.value}</p>
+                  <p className="mt-2 text-xs leading-tight text-muted-foreground">{card.detail}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Marcaciones últimos 30 días</CardTitle>
+                <CardDescription>Volumen diario para detectar adopción, caídas o picos operativos.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={dailyPunches} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="day_label" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <RechartsTooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="punches" name="Marcaciones" stroke="#059669" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Resumen de estructura y uso</CardTitle>
+                <CardDescription>Indicadores de cobertura para evaluar madurez operativa del cliente.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MetricBox title="Empresas activas" value={metrics.active_companies} detail={`Empleados activos: ${formatMetric(metrics.active_employees)}`} />
+                  <MetricBox title="Usuarios del sistema" value={metrics.active_users} detail={`Empleados con usuario: ${formatMetric(metrics.employees_with_user)}`} />
+                  <MetricBox title="Marcaciones 30d" value={metrics.total_punches_30d} detail={`Hoy: ${formatMetric(metrics.total_punches_today)}`} />
+                  <MetricBox title="Recintos virtuales" value={metrics.virtual_work_locations} detail={`${formatMetric(metrics.virtual_location_employees_30d)} empleados marcaron allí`} />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="empresas" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Uso por empresa</CardTitle>
+                <CardDescription>Marcaciones acumuladas en los últimos 30 días.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[340px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={companyActivity.slice(0, 10)} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="company_name" tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={58} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <RechartsTooltip formatter={(value: any) => [`${formatMetric(value)} marcaciones`, 'Volumen']} />
+                    <Bar dataKey="punches_30d" name="Marcaciones 30d" radius={[6, 6, 0, 0]}>
+                      {companyActivity.slice(0, 10).map((_: any, idx: number) => (
+                        <Cell key={`tenant-company-bar-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Empresas, empleados y capacidad</CardTitle>
+                <CardDescription>Relación entre estructura configurada y uso real.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-hidden rounded-lg border">
+                  <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.7fr_0.8fr] gap-2 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                    <span>Empresa</span><span>Empleados</span><span>Recintos</span><span>Disp.</span><span>Marc. 30d</span>
+                  </div>
+                  <div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">
+                    {companyActivity.map((row: any, index: number) => (
+                      <div key={row.company_id || index} className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.7fr_0.8fr] gap-2 px-3 py-2 text-xs">
+                        <span className="truncate font-semibold text-slate-800">{row.company_name || '-'}</span>
+                        <span>{formatMetric(row.employees)}</span>
+                        <span>{formatMetric(row.locations)}</span>
+                        <span>{formatMetric(row.devices)}</span>
+                        <span className="font-semibold text-emerald-700">{formatMetric(row.punches_30d)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="recintos" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MetricBox title="Recintos configurados" value={metrics.active_work_locations} detail={`Con geocerca: ${formatMetric(metrics.geofenced_work_locations)}`} />
+            <MetricBox title="Recintos virtuales" value={metrics.virtual_work_locations} detail="Sin geocerca configurada" warning={Number(metrics.virtual_work_locations || 0) > 0} />
+            <MetricBox title="Marcaciones virtuales 30d" value={metrics.virtual_location_punches_30d} detail={`${formatPercent(virtualPunchRate)} de la marcación global`} />
+            <MetricBox title="Empleados en virtuales" value={metrics.virtual_location_employees_30d} detail="Empleados únicos marcando en esos recintos" />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Actividad por recinto</CardTitle>
+                <CardDescription>Recintos con mayor uso, empleados únicos y condición de geocerca.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="overflow-hidden rounded-lg border">
+                  <div className="grid grid-cols-[1.1fr_1fr_0.8fr_0.6fr_0.8fr] gap-2 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                    <span>Recinto</span><span>Empresa</span><span>Tipo</span><span>Empl.</span><span>Marc. 30d</span>
+                  </div>
+                  <div className="max-h-[360px] divide-y divide-slate-100 overflow-y-auto">
+                    {locationActivity.map((row: any, index: number) => (
+                      <div key={row.work_location_id || index} className="grid grid-cols-[1.1fr_1fr_0.8fr_0.6fr_0.8fr] gap-2 px-3 py-2 text-xs">
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-slate-800">{row.work_location_name || '-'}</span>
+                          <span className="block truncate text-slate-500">{row.work_location_code || '-'}</span>
+                        </span>
+                        <span className="truncate text-slate-700">{row.company_name || '-'}</span>
+                        <span className={row.is_virtual_location ? 'text-amber-700' : 'text-emerald-700'}>{row.location_kind || '-'}</span>
+                        <span>{formatMetric(row.employees_punched_30d)}</span>
+                        <span className="font-semibold text-emerald-700">{formatMetric(row.punches_30d)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="print:shadow-none">
+              <CardHeader>
+                <CardTitle>Marcaciones según origen</CardTitle>
+                <CardDescription>Distribución por fuente de marcación en los últimos 30 días.</CardDescription>
+              </CardHeader>
+              <CardContent className="h-[360px]">
+                {punchSources.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin marcaciones registradas para el periodo.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={punchSources} dataKey="punches_30d" nameKey="source_name" cx="50%" cy="47%" innerRadius={54} outerRadius={84} paddingAngle={2} strokeWidth={0}>
+                        {punchSources.map((_: any, idx: number) => (
+                          <Cell key={`tenant-source-cell-${idx}`} fill={SYSTEM_ADMIN_CHART_COLORS[idx % SYSTEM_ADMIN_CHART_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Legend verticalAlign="bottom" height={28} />
+                      <RechartsTooltip formatter={(value: any, _: any, row: any) => [`${formatMetric(value)} marcaciones`, row?.payload?.source_name]} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="dispositivos" className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <MetricBox title="Dispositivos activos" value={metrics.active_devices} detail="Registrados para marcación" />
+            <MetricBox title="Reportando 24h" value={metrics.devices_reporting_24h} detail={`${formatPercent(deviceReportingRate)} conectividad reciente`} />
+            <MetricBox title="Sin registrar 72h" value={metrics.devices_without_punch_72h} detail="Riesgo de desconexión o no uso" warning={Number(metrics.devices_without_punch_72h || 0) > 0} />
+            <MetricBox title="Nunca reportaron" value={metrics.devices_never_reported} detail="Instalados sin primera marcación" warning={Number(metrics.devices_never_reported || 0) > 0} />
+          </div>
+
+          <Card className="print:shadow-none">
+            <CardHeader>
+              <CardTitle>Dispositivos con más horas sin registrar marcaciones</CardTitle>
+              <CardDescription>Ranking de mayor a menor tiempo desde la última marcación recibida.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <StaleDevicesTable staleDevices={deviceHealth} />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { profile, session } = useAuth();
   const { menuScreens } = usePermissions();
 
   const isEmployee = profile?.role_key === 'EMPLOYEE';
   const isSystemAdmin = profile?.role_key === 'SYSTEM_ADMIN';
+  const isTenantAdmin = profile?.role_key === 'TENANT_ADMIN';
   const isSupervisor = profile?.role_key === 'SUPERVISOR';
 
   const [employeeLoading, setEmployeeLoading] = useState(false);
@@ -1706,12 +2001,19 @@ export function Dashboard() {
   const [systemAdminLoading, setSystemAdminLoading] = useState(false);
   const [systemAdminError, setSystemAdminError] = useState<string | null>(null);
   const [systemAdminPayload, setSystemAdminPayload] = useState<any>(null);
+  const [tenantAdminLoading, setTenantAdminLoading] = useState(false);
+  const [tenantAdminError, setTenantAdminError] = useState<string | null>(null);
+  const [tenantAdminPayload, setTenantAdminPayload] = useState<any>(null);
   const [supervisorLoading, setSupervisorLoading] = useState(false);
   const [supervisorError, setSupervisorError] = useState<string | null>(null);
   const [supervisorPayload, setSupervisorPayload] = useState<any>(null);
   const [supervisorPeriodInterval, setSupervisorPeriodInterval] = useState<'last_7_days' | 'last_4_weeks'>('last_7_days');
   const [systemAdminYear, setSystemAdminYear] = useState(new Date().getFullYear());
   const [systemAdminWeekStep, setSystemAdminWeekStep] = useState(1);
+  const [tenantAdminMonth, setTenantAdminMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
 
   const navigateWithoutReload = (path: string) => {
     window.history.pushState({}, '', path);
@@ -1780,6 +2082,36 @@ export function Dashboard() {
       mounted = false;
     };
   }, [isSystemAdmin, session?.access_token, systemAdminYear, systemAdminWeekStep]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadTenantAdmin = async () => {
+      if (!isTenantAdmin) return;
+      if (!session?.access_token) return;
+      try {
+        if (mounted) {
+          setTenantAdminLoading(true);
+          setTenantAdminError(null);
+        }
+        const resp = await fetch(buildApiUrl(`/dashboard/tenant-admin-summary?month=${tenantAdminMonth}`), {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data?.error || 'No se pudo cargar el dashboard del cliente');
+        if (mounted) setTenantAdminPayload(data);
+      } catch (e: any) {
+        if (mounted) setTenantAdminError(e?.message || 'Error cargando dashboard de TENANT_ADMIN');
+      } finally {
+        if (mounted) setTenantAdminLoading(false);
+      }
+    };
+
+    void loadTenantAdmin();
+    return () => {
+      mounted = false;
+    };
+  }, [isTenantAdmin, session?.access_token, tenantAdminMonth]);
 
   useEffect(() => {
     let mounted = true;
@@ -1960,6 +2292,8 @@ export function Dashboard() {
         title={isSupervisor ? 'Dashboard de Supervisor' : `Bienvenido, ${profile?.display_name || 'Usuario'}`}
         subtitle={isSystemAdmin
           ? 'Analitica global de adopcion, crecimiento y uso operativo del sistema'
+          : isTenantAdmin
+            ? 'Diagnóstico de uso, desempeño, empresas, recintos y dispositivos del cliente'
           : isSupervisor
             ? 'Asistencia operativa, novedades, marcaciones y tendencias del equipo asignado'
           : employeeOrganizationRoute || 'Ruta organizacional no configurada'}
@@ -2012,7 +2346,7 @@ export function Dashboard() {
         ) : undefined}
       />
 
-      {!isSystemAdmin && !isSupervisor && String(profile?.role_key || '').toUpperCase() !== 'EMPLOYEE' ? <RoleInfo roleKey={profile?.role_key} /> : null}
+      {!isSystemAdmin && !isTenantAdmin && !isSupervisor && String(profile?.role_key || '').toUpperCase() !== 'EMPLOYEE' ? <RoleInfo roleKey={profile?.role_key} /> : null}
 
       {isSupervisor ? (
         supervisorError ? (
@@ -2034,7 +2368,7 @@ export function Dashboard() {
         )
       ) : (
         <>
-          {!isSystemAdmin && !isSupervisor ? (
+          {!isSystemAdmin && !isTenantAdmin && !isSupervisor ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               {stats.map((stat, index) => {
                 const Icon = stat.icon;
@@ -2056,6 +2390,20 @@ export function Dashboard() {
             </div>
           ) : null}
 
+          {isTenantAdmin ? (
+            tenantAdminLoading ? (
+              <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">Cargando diagnóstico del cliente...</p></CardContent></Card>
+            ) : tenantAdminError ? (
+              <Card><CardContent className="pt-6"><p className="text-sm text-red-600">{tenantAdminError}</p></CardContent></Card>
+            ) : (
+              <TenantAdminInsights
+                payload={tenantAdminPayload}
+                selectedMonth={tenantAdminMonth}
+                onMonthChange={setTenantAdminMonth}
+              />
+            )
+          ) : null}
+
           {isSystemAdmin ? (
             systemAdminLoading ? (
               <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">Cargando analitica global...</p></CardContent></Card>
@@ -2070,7 +2418,7 @@ export function Dashboard() {
             )
           ) : null}
 
-          {!isSystemAdmin && !isSupervisor && (
+          {!isSystemAdmin && !isTenantAdmin && !isSupervisor && (
             <Card>
               <CardHeader>
                 <CardTitle>Acceso Rapido a Pantallas</CardTitle>
