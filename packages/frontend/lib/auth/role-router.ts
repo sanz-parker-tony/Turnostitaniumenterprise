@@ -4,7 +4,7 @@
  * 
  * REGLAS:
  * 1. Sin sesión → /login
- * 2. Si el rol principal es EMPLOYEE → /dashboard/kiosk/timeclock
+ * 2. Si el rol principal es EMPLOYEE → /kiosk/timeclock
  * 3. Caso contrario → /dashboard (con home específico por rol)
  * 4. Si roles vacíos → /login con warning
  */
@@ -23,7 +23,7 @@ export const ROLE_HOME_ROUTES = {
   SYSTEM_ADMIN: '/dashboard',
   RRHH_ADMIN: '/dashboard',
   SUPERVISOR: '/dashboard',
-  EMPLOYEE: '/dashboard/kiosk/timeclock',
+  EMPLOYEE: '/kiosk/timeclock',
 } as const;
 
 // Fallback si el rol no está en el mapeo

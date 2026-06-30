@@ -1,6 +1,6 @@
 /**
  * App.tsx - Turnos Titanium Enterprise
- * Flujo: Login -> Wizard si esta pendiente -> Dashboard
+ * Flujo: Login -> Wizard si esta pendiente -> Pantalla inicial por perfil
  */
 
 import { buildApiUrl } from './utils/api-config';
@@ -24,6 +24,13 @@ function LoadingScreen({ label, detail }: { label: string; detail: string }) {
       </div>
     </div>
   );
+}
+
+const DEFAULT_DASHBOARD_ROUTE = '/dashboard';
+const EMPLOYEE_DEFAULT_ROUTE = '/kiosk/timeclock';
+
+function getDefaultRouteByRoles(roleKeys: string[]) {
+  return roleKeys.includes('EMPLOYEE') ? EMPLOYEE_DEFAULT_ROUTE : DEFAULT_DASHBOARD_ROUTE;
 }
 
 function AppContent() {
@@ -139,7 +146,7 @@ function AppContent() {
 
       if (window.location.pathname === '/login') {
         if (!primaryRoleKey && roleKeys.length === 0) return;
-        const landingPath = primaryRoleKey === 'EMPLOYEE' ? '/dashboard/kiosk/timeclock' : '/dashboard';
+        const landingPath = getDefaultRouteByRoles(roleKeys);
         window.history.replaceState({}, '', landingPath);
         setCurrentPath(landingPath);
         window.dispatchEvent(new PopStateEvent('popstate'));

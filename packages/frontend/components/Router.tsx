@@ -200,6 +200,7 @@ export function Router() {
     '/dashboard/kiosk/time-punch-requests': <KioskTimePunchRequests />,
     '/kiosk/punch': <KioskPunch />,
     '/kiosk/timeclock': <KioskPunch />,
+    '/kiosk/timelclock': <KioskPunch />,
     '/kiosk/attendance': <KioskPunchHistory />,
     '/kiosk/my-punches': <KioskPunchHistory />,
     '/kiosk/requests': <KioskRequests />,

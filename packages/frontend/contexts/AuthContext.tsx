@@ -8,6 +8,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { ApiClient } from '../lib/api-client';
+import { buildApiUrl } from '../utils/api-config';
 
 interface User {
   id: string;
@@ -54,6 +55,12 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const POST_LOGIN_ROUTE_KEY = 'tt-post-login-route';
 const POST_LOGIN_RESOLVING_KEY = 'tt-post-login-resolving';
+const DEFAULT_DASHBOARD_ROUTE = '/dashboard';
+const EMPLOYEE_DEFAULT_ROUTE = '/kiosk/timeclock';
+const KIOSK_TIMECLOCK_ROUTES = new Set([
+  '/dashboard/kiosk/timeclock',
+  '/kiosk/timeclock',
+]);
 
 function clearBrowserSessionState() {
   if (typeof window === 'undefined') return;
@@ -276,27 +283,79 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return Array.from(roleKeys);
     }
 
-    const { data, error } = await ApiClient
+    const { data: userRoleRows, error: userRolesError } = await ApiClient
       .from('user_roles')
-      .select('roles:role_id(role_key)')
-      .eq('user_id', loadedProfile.id);
+      .select('role_id')
+      .eq('user_id', loadedProfile.id)
+      .eq('is_active', true);
 
-    if (error) {
-      console.warn('[AUTH] No se pudieron resolver roles asignados para post-login:', error);
+    if (userRolesError) {
+      console.warn('[AUTH] No se pudieron resolver user_roles para post-login:', userRolesError);
       return Array.from(roleKeys);
     }
 
-    (data || []).forEach((item: any) => {
-      const assignedRoles = Array.isArray(item?.roles) ? item.roles : [item?.roles];
-      assignedRoles.forEach((assignedRole: any) => {
-        const assignedRoleKey = String(assignedRole?.role_key || '').trim().toUpperCase();
-        if (assignedRoleKey) {
-          roleKeys.add(assignedRoleKey);
-        }
-      });
+    const roleIds = Array.from(
+      new Set((userRoleRows || []).map((item: any) => item?.role_id).filter(Boolean))
+    );
+
+    if (roleIds.length === 0) {
+      return Array.from(roleKeys);
+    }
+
+    const { data: roleRows, error: rolesError } = await ApiClient
+      .from('roles')
+      .select('role_key')
+      .in('id', roleIds)
+      .eq('is_active', true);
+
+    if (rolesError) {
+      console.warn('[AUTH] No se pudieron resolver roles para post-login:', rolesError);
+      return Array.from(roleKeys);
+    }
+
+    (roleRows || []).forEach((item: any) => {
+      const assignedRoleKey = String(item?.role_key || '').trim().toUpperCase();
+      if (assignedRoleKey) {
+        roleKeys.add(assignedRoleKey);
+      }
     });
 
     return Array.from(roleKeys);
+  };
+
+  const resolvePostLoginRoute = async (roleKeys: string[], accessToken: string | null | undefined): Promise<string> => {
+    if (roleKeys.includes('EMPLOYEE')) {
+      return EMPLOYEE_DEFAULT_ROUTE;
+    }
+
+    if (!accessToken) {
+      return DEFAULT_DASHBOARD_ROUTE;
+    }
+
+    try {
+      const response = await fetch(buildApiUrl('/users/menu-screens'), {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        console.warn('[AUTH] No se pudo resolver menu post-login:', payload);
+        return DEFAULT_DASHBOARD_ROUTE;
+      }
+
+      const screens = Array.isArray(payload?.screens) ? payload.screens : [];
+      const hasKioskTimeclock = screens.some((screen: any) => {
+        const screenKey = String(screen?.screen_key || '').trim().toUpperCase();
+        const routePath = String(screen?.route_path || '').trim();
+        return screenKey === 'KIOSK_TIMECLOCK' || KIOSK_TIMECLOCK_ROUTES.has(routePath);
+      });
+
+      return hasKioskTimeclock ? EMPLOYEE_DEFAULT_ROUTE : DEFAULT_DASHBOARD_ROUTE;
+    } catch (error) {
+      console.warn('[AUTH] Error resolviendo ruta post-login:', error);
+      return DEFAULT_DASHBOARD_ROUTE;
+    }
   };
 
   // Sign in
@@ -463,15 +522,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
           const loadedProfile = await loadProfile(data.user);
           const roleKeys = await resolveUserRoleKeys(loadedProfile);
-          const primaryRoleKey = String(loadedProfile?.role_key || roleKeys[0] || '').trim().toUpperCase();
-          const isEmployee = primaryRoleKey === 'EMPLOYEE';
-          const routeAfterLogin =
-            isEmployee
-              ? '/dashboard/kiosk/timeclock'
-              : '/dashboard';
+          setUserRoles(roleKeys);
+          const routeAfterLogin = await resolvePostLoginRoute(roleKeys, data.session?.access_token);
 
           if (typeof window !== 'undefined') {
-            if (isEmployee) {
+            if (routeAfterLogin !== DEFAULT_DASHBOARD_ROUTE) {
               window.sessionStorage.setItem(POST_LOGIN_ROUTE_KEY, routeAfterLogin);
             } else {
               window.sessionStorage.removeItem(POST_LOGIN_ROUTE_KEY);
