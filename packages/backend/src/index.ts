@@ -1551,13 +1551,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           ON t.id = u.tenant_id
         LEFT JOIN public.user_roles ur
           ON ur.user_id = u.id
-         AND ur.tenant_id = u.tenant_id
          AND ur.is_active = true
          AND (ur.valid_from IS NULL OR ur.valid_from <= now())
          AND (ur.valid_to IS NULL OR ur.valid_to >= now())
         LEFT JOIN public.roles r
           ON r.id = ur.role_id
-         AND r.tenant_id = ur.tenant_id
          AND r.is_active = true
         WHERE u.auth_user_id = $1
           AND u.is_active = true
@@ -3496,13 +3494,11 @@ router.get('/dashboard/supervisor-events', requireAuth, async (req: Request, res
         FROM public.users u
         LEFT JOIN public.user_roles ur
           ON ur.user_id = u.id
-         AND ur.tenant_id = u.tenant_id
          AND ur.is_active = true
          AND (ur.valid_from IS NULL OR ur.valid_from <= now())
          AND (ur.valid_to IS NULL OR ur.valid_to >= now())
         LEFT JOIN public.roles r
           ON r.id = ur.role_id
-         AND r.tenant_id = ur.tenant_id
          AND r.is_active = true
         WHERE u.auth_user_id = $1
           AND u.is_active = true

@@ -82,6 +82,8 @@ interface UserRoleScope {
   // joins
   scope_type_key?: string | null;
   scope_type_name?: string | null;
+  scope_entity_label?: string | null;
+  scope_entity_description?: string | null;
 }
 
 interface UserRoleSummary {
@@ -220,17 +222,30 @@ export function UsersManagement() {
     const entityId = scope.scope_entity_id;
     if (!entityId) return 'Entidad no definida';
 
+    if (scope.scope_entity_label) {
+      const scopeType = scope.scope_type_name || scope.scope_type_key || 'Entidad';
+      return `${scopeType}: ${scope.scope_entity_label}`;
+    }
+
     if (key.includes('TENANT')) {
       const name = tenantsById.get(entityId);
-      return name ? `Tenant: ${name}` : `Tenant ID: ${shortId(entityId)}`;
+      return name ? `Tenant: ${name}` : 'Tenant: Descripción no disponible';
     }
     if (key.includes('COMPANY') || key.includes('EMPRESA')) {
       const name = companiesById.get(entityId);
-      return name ? `Empresa: ${name}` : `Empresa ID: ${shortId(entityId)}`;
+      return name ? `Empresa: ${name}` : 'Empresa: Descripción no disponible';
     }
 
     const scopeType = scope.scope_type_name || scope.scope_type_key || 'Entidad';
-    return `${scopeType}: ${shortId(entityId)}`;
+    return `${scopeType}: Descripción no disponible`;
+  };
+
+  const resolveScopeEntityDescription = (scope: UserRoleScope): string | null => {
+    const description = String(scope.scope_entity_description || '').trim();
+    if (!description) return null;
+    if (description === scope.scope_entity_id) return null;
+    if (description === scope.scope_entity_label) return null;
+    return description;
   };
 
   const resolveScopeTypeLabel = (scope: UserRoleScope): string => {
@@ -1153,8 +1168,10 @@ export function UsersManagement() {
                               <div className="py-2 text-xs text-gray-400">Sin alcances configurados (aplica sin restricción).</div>
                             ) : (
                               <div className="space-y-2">
-                                {roleScopes.map((scope) => (
-                                  <div key={scope.id} className={`border rounded-lg p-2 bg-white ${!scope.is_active ? 'opacity-60' : ''}`}>
+                                {roleScopes.map((scope) => {
+                                  const entityDescription = resolveScopeEntityDescription(scope);
+                                  return (
+                                    <div key={scope.id} className={`border rounded-lg p-2 bg-white ${!scope.is_active ? 'opacity-60' : ''}`}>
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
                                         <div className="flex items-center gap-2">
@@ -1172,7 +1189,11 @@ export function UsersManagement() {
                                           Scope seleccionado: <span className="font-medium">{resolveScopeTypeLabel(scope)}</span>
                                         </p>
                                         <p className="text-xs text-gray-500 mt-1">{resolveScopeEntityLabel(scope)}</p>
-                                        <p className="text-xs text-gray-400 font-mono mt-0.5">ID: {scope.scope_entity_id}</p>
+                                        {entityDescription && (
+                                          <p className="text-xs text-gray-400 mt-0.5">
+                                            Descripción: <span className="font-medium">{entityDescription}</span>
+                                          </p>
+                                        )}
                                       </div>
                                       <div className="flex items-center gap-1">
                                         <button
@@ -1192,8 +1213,9 @@ export function UsersManagement() {
                                         </button>
                                       </div>
                                     </div>
-                                  </div>
-                                ))}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>

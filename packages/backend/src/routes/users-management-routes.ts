@@ -24,6 +24,111 @@ function getPostgres() {
   );
 }
 
+type ScopeEntityConfig = {
+  table: string;
+  select: string;
+  label: (row: any) => string;
+  description: (row: any) => string | null;
+};
+
+const SCOPE_ENTITY_CONFIGS: Record<string, ScopeEntityConfig> = {
+  TENANT: {
+    table: 'tenants',
+    select: 'id, tenant_key, tenant_name',
+    label: (row) => row.tenant_name || row.tenant_key || row.id,
+    description: (row) => row.tenant_key || null,
+  },
+  COMPANY: {
+    table: 'companies',
+    select: 'id, company_name, company_code',
+    label: (row) => row.company_code ? `${row.company_name} (${row.company_code})` : row.company_name,
+    description: (row) => row.company_code || null,
+  },
+  WORK_LOCATION: {
+    table: 'work_locations',
+    select: 'id, work_location_name, work_location_code',
+    label: (row) => row.work_location_code ? `${row.work_location_name} (${row.work_location_code})` : row.work_location_name,
+    description: (row) => row.work_location_code || null,
+  },
+  DEPARTMENT: {
+    table: 'departments',
+    select: 'id, department_name, department_code',
+    label: (row) => row.department_code ? `${row.department_name} (${row.department_code})` : row.department_name,
+    description: (row) => row.department_code || null,
+  },
+  AREA: {
+    table: 'areas',
+    select: 'id, area_name, area_code',
+    label: (row) => row.area_code ? `${row.area_name} (${row.area_code})` : row.area_name,
+    description: (row) => row.area_code || null,
+  },
+  COST_CENTER: {
+    table: 'cost_centers',
+    select: 'id, cost_center_name, cost_center_code',
+    label: (row) => row.cost_center_code ? `${row.cost_center_name} (${row.cost_center_code})` : row.cost_center_name,
+    description: (row) => row.cost_center_code || null,
+  },
+  WORK_GROUP: {
+    table: 'work_groups',
+    select: 'id, work_group_name, work_group_code',
+    label: (row) => row.work_group_code ? `${row.work_group_name} (${row.work_group_code})` : row.work_group_name,
+    description: (row) => row.work_group_code || null,
+  },
+  EMPLOYEE_PROFILE: {
+    table: 'employee_profiles',
+    select: 'id, profile_name, employee_profile_code',
+    label: (row) => row.employee_profile_code ? `${row.profile_name} (${row.employee_profile_code})` : row.profile_name,
+    description: (row) => row.employee_profile_code || null,
+  },
+  EMPLOYEE: {
+    table: 'employees',
+    select: 'id, employee_code, employee_lastname, employee_name',
+    label: (row) => `${row.employee_code ? `${row.employee_code} - ` : ''}${row.employee_lastname || ''} ${row.employee_name || ''}`.trim(),
+    description: (row) => row.employee_code || null,
+  },
+  EMPLOYEE_EXCLUDE: {
+    table: 'employees',
+    select: 'id, employee_code, employee_lastname, employee_name',
+    label: (row) => `${row.employee_code ? `${row.employee_code} - ` : ''}${row.employee_lastname || ''} ${row.employee_name || ''}`.trim(),
+    description: (row) => row.employee_code || null,
+  },
+};
+
+async function resolveScopeEntityLabels(Postgres: any, scopes: any[]) {
+  const labels = new Map<string, { label: string; description: string | null }>();
+  const scopesByType = new Map<string, Set<string>>();
+
+  for (const scope of scopes) {
+    const scopeTypeKey = String(scope.scope_type?.scope_type_key || '').trim().toUpperCase();
+    const entityId = String(scope.scope_entity_id || '').trim();
+    if (!scopeTypeKey || !entityId || !SCOPE_ENTITY_CONFIGS[scopeTypeKey]) continue;
+    if (!scopesByType.has(scopeTypeKey)) scopesByType.set(scopeTypeKey, new Set());
+    scopesByType.get(scopeTypeKey)!.add(entityId);
+  }
+
+  for (const [scopeTypeKey, entityIds] of scopesByType.entries()) {
+    const config = SCOPE_ENTITY_CONFIGS[scopeTypeKey];
+    const { data, error } = await Postgres
+      .from(config.table)
+      .select(config.select)
+      .in('id', Array.from(entityIds));
+
+    if (error) {
+      console.warn(`[USERS-MGMT] No se pudieron resolver entidades para scope ${scopeTypeKey}:`, error);
+      continue;
+    }
+
+    for (const row of data || []) {
+      labels.set(`${scopeTypeKey}:${row.id}`, {
+        label: config.label(row) || row.id,
+        description: config.description(row),
+      });
+    }
+  }
+
+  return labels;
+}
+
 // ============================================================================
 // CATÁLOGOS — deben ir ANTES de /:id para que Express no los capture como UUID
 // ============================================================================
@@ -542,11 +647,19 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
       return res.status(500).json({ error: error.message });
     }
 
-    const scopesWithLabels = (scopes || []).map((s: any) => ({
-      ...s,
-      scope_type_key: s.scope_type?.scope_type_key || null,
-      scope_type_name: s.scope_type?.scope_type_name || null,
-    }));
+    const entityLabels = await resolveScopeEntityLabels(Postgres, scopes || []);
+
+    const scopesWithLabels = (scopes || []).map((s: any) => {
+      const scopeTypeKey = s.scope_type?.scope_type_key || null;
+      const entityLabel = entityLabels.get(`${String(scopeTypeKey || '').toUpperCase()}:${s.scope_entity_id}`);
+      return {
+        ...s,
+        scope_type_key: scopeTypeKey,
+        scope_type_name: s.scope_type?.scope_type_name || null,
+        scope_entity_label: entityLabel?.label || null,
+        scope_entity_description: entityLabel?.description || null,
+      };
+    });
 
     return res.status(200).json({ success: true, scopes: scopesWithLabels, count: scopesWithLabels.length });
   } catch (err: any) {
