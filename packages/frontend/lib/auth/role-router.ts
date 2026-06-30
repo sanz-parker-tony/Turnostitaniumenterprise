@@ -4,7 +4,7 @@
  * 
  * REGLAS:
  * 1. Sin sesión → /login
- * 2. Si roles incluye EMPLOYEE → /kiosk/punch
+ * 2. Si el rol principal es EMPLOYEE → /dashboard/kiosk/timeclock
  * 3. Caso contrario → /dashboard (con home específico por rol)
  * 4. Si roles vacíos → /login con warning
  */
@@ -15,16 +15,15 @@
 
 /**
  * ESTÁNDAR DEFINITIVO:
- * - TODOS los roles van a /dashboard (incluye EMPLOYEE)
- * - El contenido de /dashboard varía según rol
- * - EMPLOYEE ve tarjetas + CTAs a /kiosk/*
+ * - EMPLOYEE inicia en marcación, sin reemplazar su dashboard
+ * - Los demás roles van a /dashboard
  */
 export const ROLE_HOME_ROUTES = {
   TENANT_ADMIN: '/dashboard',
   SYSTEM_ADMIN: '/dashboard',
   RRHH_ADMIN: '/dashboard',
   SUPERVISOR: '/dashboard',
-  EMPLOYEE: '/dashboard',  // ✅ También va a dashboard, NO a /kiosk/punch
+  EMPLOYEE: '/dashboard/kiosk/timeclock',
 } as const;
 
 // Fallback si el rol no está en el mapeo
@@ -154,12 +153,11 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
  * Devuelve la ruta home según los roles del usuario
  * 
  * ESTÁNDAR DEFINITIVO:
- * - TODOS los roles van a /dashboard (incluye EMPLOYEE)
- * - El dashboard renderiza contenido diferente según rol
- * - EMPLOYEE ve dashboard con CTAs a /kiosk/*
+ * - EMPLOYEE inicia en la pantalla de marcación.
+ * - El dashboard permanece disponible por navegación a Inicio.
  * 
- * @param roles - Array de role_key del usuario
- * @returns Ruta de destino (siempre /dashboard)
+ * @param roles - Array de role_key del usuario, con el rol principal primero
+ * @returns Ruta de destino post-login
  */
 export function getHomeRouteByRoles(roles: string[]): string {
   // Validación: roles vacíos → login
@@ -168,9 +166,15 @@ export function getHomeRouteByRoles(roles: string[]): string {
     return '/login';
   }
 
-  // TODOS los roles van a /dashboard
+  const primaryRoleKey = String(roles[0] || '').trim().toUpperCase();
+
+  if (primaryRoleKey === 'EMPLOYEE') {
+    console.log('[ROLE-ROUTER] Redirigiendo EMPLOYEE a marcación');
+    return ROLE_HOME_ROUTES.EMPLOYEE;
+  }
+
   console.log('[ROLE-ROUTER] Redirigiendo a /dashboard (roles:', roles.join(', ') + ')');
-  return '/dashboard';
+  return DEFAULT_DASHBOARD_HOME;
 }
 
 // ============================================================================

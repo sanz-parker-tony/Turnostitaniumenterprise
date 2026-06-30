@@ -443,7 +443,7 @@ export default function KioskPunch() {
     }
   };
 
-  const renderKeyButton = (keyNumber: number) => {
+  const renderKeyButton = (keyNumber: number, compact = false) => {
     const item = movementByKey.get(keyNumber);
     const isSaving = item?.id ? savingLookupId === item.id : false;
     const disabled = !item || !!savingLookupId;
@@ -473,17 +473,24 @@ export default function KioskPunch() {
         key={keyNumber}
         onClick={() => item?.id && void submitPunch(item.id)}
         disabled={disabled}
+        title={KEY_LABEL_OVERRIDES[keyNumber] || item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
         variant="outline"
-        className={`h-20 sm:h-24 w-full rounded-2xl border-2 px-3 py-2 flex flex-col items-center justify-center text-center shadow-sm ${toneClass}`}
+        className={`w-full border-2 flex flex-col items-center justify-center text-center shadow-sm ${
+          compact
+            ? 'h-11 min-w-0 rounded-xl px-0 py-0'
+            : 'h-20 sm:h-24 rounded-2xl px-3 py-2'
+        } ${toneClass}`}
       >
         {isSaving ? (
-          <Loader2 className="w-5 h-5 animate-spin mb-2" />
+          <Loader2 className={`${compact ? 'h-5 w-5' : 'mb-2 h-5 w-5'} animate-spin`} />
         ) : (
-          <span className={`inline-flex items-center justify-center w-10 h-10 rounded-full border mb-2 ${bubbleClass}`}>
-            <Icon className="w-6 h-6" />
+          <span className={`inline-flex items-center justify-center rounded-full border ${
+            compact ? 'h-8 w-8' : 'mb-2 h-10 w-10'
+          } ${bubbleClass}`}>
+            <Icon className={compact ? 'h-5 w-5' : 'h-6 w-6'} />
           </span>
         )}
-        <span className="text-sm font-medium leading-tight">
+        <span className={compact ? 'sr-only' : 'text-sm font-medium leading-tight'}>
           {KEY_LABEL_OVERRIDES[keyNumber] || item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
         </span>
       </Button>
@@ -512,14 +519,14 @@ export default function KioskPunch() {
   const employeeName = getFullName(context.employee);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-3 sm:space-y-5">
+    <div className="mx-auto w-full max-w-6xl space-y-2 sm:space-y-5">
       <Card className="border-2 border-slate-300 shadow-lg">
         <CardHeader className="hidden pb-2 sm:block">
           <CardTitle className="text-2xl">Marcar</CardTitle>
           <CardDescription>Interfaz de marcacion tipo reloj biometrico.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3 p-3 sm:space-y-5 sm:p-6">
-          <div className="rounded-xl border bg-slate-50 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 sm:gap-4">
+        <CardContent className="space-y-2 p-2 sm:space-y-5 sm:p-6">
+          <div className="rounded-xl border bg-slate-50 p-2 sm:p-4 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
                 {employeePhoto && !photoFailed ? (
@@ -536,13 +543,13 @@ export default function KioskPunch() {
               </div>
               <div>
                 <p className="font-semibold text-slate-900">{employeeName}</p>
-                <p className="text-sm text-slate-600">Codigo: {context.employee.employee_code || '-'}</p>
+                <p className="text-xs text-slate-600 sm:text-sm">Codigo: {context.employee.employee_code || '-'}</p>
               </div>
             </div>
-            <div className="flex w-full items-center justify-between gap-3 text-sm text-slate-700 sm:w-auto">
+            <div className="flex w-full items-center justify-between gap-3 text-xs text-slate-700 sm:w-auto sm:text-sm">
               <div className="min-w-0 space-y-1">
                 <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
-                <p className="flex items-center gap-1"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {activeDeviceLabel}</p>
+                <p className="hidden items-center gap-1 sm:flex"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {activeDeviceLabel}</p>
               </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <DeviceStatusIcon
@@ -567,16 +574,16 @@ export default function KioskPunch() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-[220px_440px_220px] items-start">
-            <div className="order-2 space-y-3 lg:order-1">
+          <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-[220px_440px_220px] items-start">
+            <div className="order-2 hidden space-y-3 sm:block lg:order-1">
               {renderKeyButton(1)}
               {renderKeyButton(2)}
               {renderKeyButton(3)}
               {renderKeyButton(4)}
             </div>
 
-            <div className="order-1 col-span-2 space-y-3 lg:order-2 lg:col-span-1">
-              <div className="h-[220px] overflow-hidden bg-black sm:h-[312px]">
+            <div className="order-1 col-span-2 space-y-2 sm:space-y-3 lg:order-2 lg:col-span-1">
+              <div className="h-[40dvh] min-h-[220px] overflow-hidden bg-black sm:h-[312px] sm:min-h-0">
                 <video
                   ref={videoRef}
                   autoPlay
@@ -586,31 +593,34 @@ export default function KioskPunch() {
                 />
               </div>
 
-              <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-20 sm:h-24 px-4 sm:px-5 py-3 flex items-center justify-between shadow-inner">
+              <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-14 sm:h-24 px-3 sm:px-5 py-2 sm:py-3 flex items-center justify-between shadow-inner">
                 <div className="leading-tight">
                   <p className="text-slate-300 text-[11px] uppercase tracking-widest">Hora del sistema</p>
-                  <p className="text-slate-300 text-[13px] capitalize">{formatClientDate(clockNow)}</p>
+                  <p className="hidden text-slate-300 text-[13px] capitalize sm:block">{formatClientDate(clockNow)}</p>
                 </div>
-                <p className="text-3xl sm:text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
+                <p className="text-2xl sm:text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
+              </div>
+              <div className="grid grid-cols-6 gap-1.5 sm:hidden">
+                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber, true))}
               </div>
               {lastMarkAt && (
-                <p className="text-xs text-slate-600">
+                <p className="hidden text-xs text-slate-600 sm:block">
                   Ultima marcacion: {formatClientDateTime(lastMarkAt, 'es-EC', lastMarkTimeZone || undefined)}
                 </p>
               )}
-              <p className="text-xs text-slate-600">
+              <p className="hidden text-xs text-slate-600 sm:block">
                 {cameraReady
                   ? 'Captura automatica activa: al marcar se toma una foto y se guarda con el id de marcacion.'
                   : `Camara no disponible: ${cameraError || 'inicializando...'}`}
               </p>
-              <p className="text-xs text-slate-600">
+              <p className="hidden text-xs text-slate-600 sm:block">
                 {locationReady
                   ? `Ubicacion activa${locationAccuracy ? `, precision aproximada ${locationAccuracy} m` : ''}.`
                   : `Ubicacion no disponible: ${locationError || 'active la ubicacion antes de marcar.'}`}
               </p>
             </div>
 
-            <div className="order-3 space-y-3 lg:order-3">
+            <div className="order-3 hidden space-y-3 sm:block lg:order-3">
               {renderKeyButton(5)}
               {renderKeyButton(6)}
               <div className="hidden h-[216px] lg:block" />

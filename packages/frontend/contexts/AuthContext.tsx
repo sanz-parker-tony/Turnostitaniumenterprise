@@ -43,6 +43,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   userRoles: string[];  // ✅ NUEVO: Array de role_keys del usuario
   isLoading: boolean;
+  isPostLoginResolving: boolean;
   authStatusMessage: string;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -51,6 +52,8 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const POST_LOGIN_ROUTE_KEY = 'tt-post-login-route';
+const POST_LOGIN_RESOLVING_KEY = 'tt-post-login-resolving';
 
 function clearBrowserSessionState() {
   if (typeof window === 'undefined') return;
@@ -69,7 +72,11 @@ function clearBrowserSessionState() {
     'wizard_completed',
   ].forEach((key) => window.localStorage.removeItem(key));
 
-  ['bootstrap_screens_done_v4'].forEach((key) => window.sessionStorage.removeItem(key));
+  [
+    'bootstrap_screens_done_v4',
+    POST_LOGIN_ROUTE_KEY,
+    POST_LOGIN_RESOLVING_KEY,
+  ].forEach((key) => window.sessionStorage.removeItem(key));
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -78,10 +85,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [userRoles, setUserRoles] = useState<string[]>([]);  // ✅ NUEVO
   const [isLoading, setIsLoading] = useState(true);
+  const [isPostLoginResolving, setIsPostLoginResolving] = useState(false);
   const [authStatusMessage, setAuthStatusMessage] = useState('Inicializando autenticacion...');
 
   // Cargar perfil del usuario (simplificado - usa solo Auth)
-  const loadProfile = async (currentUser: User) => {
+  const loadProfile = async (currentUser: User): Promise<UserProfile | null> => {
     try {
       setAuthStatusMessage('Ejecutando query: buscar perfil por auth_user_id...');
       console.log('📋 Buscando perfil en BD para auth_user_id:', currentUser.id);
@@ -172,8 +180,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 updated_at: new Date().toISOString()
               })
               .eq('id', userByEmail.id);
+
+            return formattedProfile;
           }
-          return;
+          return null;
         } else {
           console.error('❌ Error al consultar usuario:', queryError);
           throw queryError;
@@ -225,7 +235,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           })
           .eq('id', existingUser.id);
         
-        return;
+        return formattedProfile;
       }
 
       // ⚠️ PASO 2: Usuario NO encontrado en BD
@@ -237,10 +247,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // ✅ Ignorar AbortError - es normal cuando se desmonta el componente
       if (error?.name === 'AbortError') {
         console.log('🛑 Carga de perfil cancelada (componente desmontado)');
-        return;
+        return null;
       }
       console.error('❌ Error al cargar perfil:', error);
       // No bloquear el flujo, permitir continuar
+      return null;
     } finally {
       setAuthStatusMessage('');
     }
@@ -251,6 +262,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       await loadProfile(user);
     }
+  };
+
+  const resolveUserRoleKeys = async (loadedProfile: UserProfile | null): Promise<string[]> => {
+    const profileRoleKey = String(loadedProfile?.role_key || '').trim().toUpperCase();
+    const roleKeys = new Set<string>();
+
+    if (profileRoleKey) {
+      roleKeys.add(profileRoleKey);
+    }
+
+    if (!loadedProfile?.id) {
+      return Array.from(roleKeys);
+    }
+
+    const { data, error } = await ApiClient
+      .from('user_roles')
+      .select('roles:role_id(role_key)')
+      .eq('user_id', loadedProfile.id);
+
+    if (error) {
+      console.warn('[AUTH] No se pudieron resolver roles asignados para post-login:', error);
+      return Array.from(roleKeys);
+    }
+
+    (data || []).forEach((item: any) => {
+      const assignedRoles = Array.isArray(item?.roles) ? item.roles : [item?.roles];
+      assignedRoles.forEach((assignedRole: any) => {
+        const assignedRoleKey = String(assignedRole?.role_key || '').trim().toUpperCase();
+        if (assignedRoleKey) {
+          roleKeys.add(assignedRoleKey);
+        }
+      });
+    });
+
+    return Array.from(roleKeys);
   };
 
   // Sign in
@@ -324,6 +370,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log('🔐 AuthContext: SIGNED_OUT - Limpiando datos');
         setProfile(null);
         setUserRoles([]);
+        setIsPostLoginResolving(false);
         clearBrowserSessionState();
         setIsLoading(false);
         setAuthStatusMessage('');
@@ -344,6 +391,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setSession(null);
     setProfile(null);
     setUserRoles([]);
+    setIsPostLoginResolving(false);
     
     // 2. Limpiar localStorage/sessionStorage
     clearBrowserSessionState();
@@ -387,9 +435,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     profile,
     userRoles,  // ✅ NUEVO
     isLoading,
+    isPostLoginResolving,
     authStatusMessage,
     signIn: async (email: string, password: string) => {
       try {
+        setIsPostLoginResolving(true);
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem(POST_LOGIN_RESOLVING_KEY);
+          window.sessionStorage.removeItem(POST_LOGIN_ROUTE_KEY);
+        }
         setAuthStatusMessage('Ejecutando query de login...');
         const { data, error } = await ApiClient.auth.signInWithPassword({ email, password });
         
@@ -407,12 +461,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(data.user);
           setAuthStatusMessage('Login correcto. Cargando perfil...');
           console.log('🔐 AuthContext: SIGNED_IN - Cargando perfil');
-          await loadProfile(data.user);
+          const loadedProfile = await loadProfile(data.user);
+          const roleKeys = await resolveUserRoleKeys(loadedProfile);
+          const primaryRoleKey = String(loadedProfile?.role_key || roleKeys[0] || '').trim().toUpperCase();
+          const isEmployee = primaryRoleKey === 'EMPLOYEE';
+          const routeAfterLogin =
+            isEmployee
+              ? '/dashboard/kiosk/timeclock'
+              : '/dashboard';
+
+          if (typeof window !== 'undefined') {
+            if (isEmployee) {
+              window.sessionStorage.setItem(POST_LOGIN_ROUTE_KEY, routeAfterLogin);
+            } else {
+              window.sessionStorage.removeItem(POST_LOGIN_ROUTE_KEY);
+            }
+            window.history.replaceState({}, '', routeAfterLogin);
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+        } else if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem(POST_LOGIN_ROUTE_KEY);
         }
       } catch (error) {
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.removeItem(POST_LOGIN_RESOLVING_KEY);
+          window.sessionStorage.removeItem(POST_LOGIN_ROUTE_KEY);
+        }
         console.error('Error en signIn:', error);
         throw error;
       } finally {
+        setIsPostLoginResolving(false);
         setAuthStatusMessage('');
       }
     },

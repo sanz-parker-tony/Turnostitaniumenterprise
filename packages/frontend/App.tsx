@@ -27,7 +27,7 @@ function LoadingScreen({ label, detail }: { label: string; detail: string }) {
 }
 
 function AppContent() {
-  const { user, session, profile, isLoading } = useAuth();
+  const { user, session, profile, userRoles, isLoading, isPostLoginResolving } = useAuth();
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [checkingWizard, setCheckingWizard] = useState(false);
@@ -93,6 +93,10 @@ function AppContent() {
       setShowWizard(false);
       setMustChangePassword(false);
       setWizardCompleted(null);
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem('tt-post-login-route');
+        window.sessionStorage.removeItem('tt-post-login-resolving');
+      }
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
         window.history.replaceState({}, '', '/login');
         setCurrentPath('/login');
@@ -103,7 +107,19 @@ function AppContent() {
 
   useEffect(() => {
     if (!user || isLoading) return;
-    if (typeof window !== 'undefined' && window.location.pathname === '/login') {
+    if (typeof window !== 'undefined') {
+      const pendingPostLoginRoute = window.sessionStorage.getItem('tt-post-login-route');
+      if (pendingPostLoginRoute && window.location.pathname !== pendingPostLoginRoute) {
+        window.sessionStorage.removeItem('tt-post-login-route');
+        window.history.replaceState({}, '', pendingPostLoginRoute);
+        setCurrentPath(pendingPostLoginRoute);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+        return;
+      }
+      if (pendingPostLoginRoute && window.location.pathname === pendingPostLoginRoute) {
+        window.sessionStorage.removeItem('tt-post-login-route');
+      }
+
       let cachedRoleKey = '';
       try {
         const cachedProfile = localStorage.getItem('user_profile');
@@ -111,14 +127,25 @@ function AppContent() {
       } catch {
         cachedRoleKey = '';
       }
-      const roleKey = String(profile?.role_key || cachedRoleKey || '').trim().toUpperCase();
-      if (!roleKey) return;
-      const landingPath = roleKey === 'EMPLOYEE' ? '/dashboard/kiosk/timeclock' : '/dashboard';
-      window.history.replaceState({}, '', landingPath);
-      setCurrentPath(landingPath);
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      const primaryRoleKey = String(profile?.role_key || cachedRoleKey || userRoles[0] || '')
+        .trim()
+        .toUpperCase();
+      const roleKeys = [
+        primaryRoleKey,
+        ...userRoles,
+      ]
+        .map((role) => String(role || '').trim().toUpperCase())
+        .filter(Boolean);
+
+      if (window.location.pathname === '/login') {
+        if (!primaryRoleKey && roleKeys.length === 0) return;
+        const landingPath = primaryRoleKey === 'EMPLOYEE' ? '/dashboard/kiosk/timeclock' : '/dashboard';
+        window.history.replaceState({}, '', landingPath);
+        setCurrentPath(landingPath);
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      }
     }
-  }, [user, profile?.role_key, isLoading]);
+  }, [user, profile?.role_key, userRoles, isLoading]);
 
   useEffect(() => {
     if (!user || isLoading || !session?.access_token) {
@@ -245,8 +272,12 @@ function AppContent() {
     return <Login />;
   }
 
+  if (isPostLoginResolving) {
+    return <LoadingScreen label="Entrando..." detail="Resolviendo pantalla inicial..." />;
+  }
+
   if (currentPath === '/login') {
-    return <LoadingScreen label="Entrando..." detail="Redirigiendo al dashboard..." />;
+    return <LoadingScreen label="Entrando..." detail="Redirigiendo a la pantalla inicial..." />;
   }
 
   if (mustChangePassword) {
