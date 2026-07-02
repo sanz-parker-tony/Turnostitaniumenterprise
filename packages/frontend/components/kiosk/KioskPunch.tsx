@@ -430,9 +430,15 @@ export default function KioskPunch() {
           location_accuracy_meters: locationAccuracyMeters,
         }),
       });
-      setLastMarkAt(payload?.punch?.punch_datetime || clientPunchDate.toISOString());
-      setLastMarkTimeZone(payload?.punch?.punch_time_zone || payload?.punch_time_zone || getClientTimeZone());
-      toast.success('Marcacion registrada con camara y geolocalizacion');
+      if (payload?.route_tracking) {
+        setLastMarkAt(payload?.route_tracking_point?.tracking_datetime || clientPunchDate.toISOString());
+        setLastMarkTimeZone(payload?.route_tracking_point?.tracking_time_zone || payload?.tracking_time_zone || getClientTimeZone());
+        toast.success('Punto de recorrido registrado. No afecta asistencia.');
+      } else {
+        setLastMarkAt(payload?.punch?.punch_datetime || clientPunchDate.toISOString());
+        setLastMarkTimeZone(payload?.punch?.punch_time_zone || payload?.punch_time_zone || getClientTimeZone());
+        toast.success('Marcacion registrada con camara y geolocalizacion');
+      }
       if (payload?.location_validation?.message) {
         toast.info(String(payload.location_validation.message));
       }

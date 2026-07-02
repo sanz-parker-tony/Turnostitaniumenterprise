@@ -76,6 +76,7 @@ import notificationsRouter from './routes/notifications-routes';
 import systemMessageKeysRouter from './routes/system-message-keys-routes';
 import translationsManagementRouter from './routes/translations-management-routes';
 import systemReportsRouter from './routes/system-reports-routes';
+import routeTrackingRouter from './routes/route-tracking-routes';
 
 const router = Router();
 
@@ -1894,8 +1895,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.employee_id,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS work_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS work_exit
+            MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS work_entry,
+            MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS work_exit
           FROM public.employee_time_punches p
           WHERE p.tenant_id = $1::uuid
             AND p.is_active = true
@@ -2064,7 +2065,6 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND p.punch_datetime >= CURRENT_DATE
             AND p.punch_datetime < CURRENT_DATE + INTERVAL '1 day'
           ORDER BY p.punch_datetime DESC, p.created_at DESC
-          LIMIT 100
         )
         SELECT
           l.*,
@@ -3421,6 +3421,24 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     const extra50Minutes = Number(surchargeSummary.extra_50_minutes || 0);
     const extra100Minutes = Number(surchargeSummary.extra_100_minutes || 0);
     const surchargeTotalMinutes = ordinaryMinutes + nightMinutes + extra50Minutes + extra100Minutes;
+    const isApprovedStatus = (value: unknown) => ['APPROVED', 'APROBADO'].includes(String(value || '').toUpperCase());
+    const todayLate = latestPunches.filter((row: any) => ['ATRASO', 'ATRASO_JUSTIFICACION_PENDIENTE'].includes(String(row.event_key || '').toUpperCase())).length;
+    const todayEarlyDepartures = latestPunches.filter((row: any) => (
+      String(row.event_key || '').toUpperCase() === 'SALIDA_ANTICIPADA'
+      && !isApprovedStatus(row.early_departure_justification_status_key)
+    )).length;
+    const todayPunchJustified = latestPunches.filter((row: any) => (
+      String(row.event_key || '').toUpperCase() === 'ATRASO_JUSTIFICADO'
+      || (
+        String(row.event_key || '').toUpperCase() === 'SALIDA_ANTICIPADA'
+        && isApprovedStatus(row.early_departure_justification_status_key)
+      )
+    )).length;
+    const todayLeaveJustified = todayIssues.filter((row: any) => (
+      row.event_key === 'JUSTIFICADO'
+      && !row.first_entry
+      && !row.last_exit
+    )).length;
 
     return res.status(200).json({
       success: true,
@@ -3441,9 +3459,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         today_scheduled_employees: Number(todayScheduled.today_scheduled_employees || 0),
         today_scheduled_areas: Number(todayScheduled.today_scheduled_areas || 0),
         today_absences: todayIssues.filter((row: any) => row.event_key === 'FALTA').length,
-        today_late: todayIssues.filter((row: any) => row.event_key === 'ATRASO').length,
-        today_early_departures: todayIssues.filter((row: any) => row.event_key === 'SALIDA_ANTICIPADA').length,
-        today_justified: todayIssues.filter((row: any) => row.event_key === 'JUSTIFICADO').length,
+        today_late: todayLate,
+        today_early_departures: todayEarlyDepartures,
+        today_justified: todayPunchJustified + todayLeaveJustified,
         today_punches: latestPunches.length,
       },
       today_issues: todayIssues,
@@ -5166,6 +5184,7 @@ router.use('/employee-absence-requests', requireAuth, employeeAbsenceRequestsRou
 
 // Kiosk (employee self-service)
 router.use('/kiosk', requireAuth, kioskRouter);
+router.use('/route-tracking', requireAuth, routeTrackingRouter);
 router.use('/notifications', requireAuth, notificationsRouter);
 router.use('/system-message-keys', requireAuth, systemMessageKeysRouter);
 router.use('/messages-management', requireAuth, systemMessageKeysRouter); // Legacy alias

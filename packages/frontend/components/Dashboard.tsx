@@ -609,7 +609,7 @@ const SYSTEM_ADMIN_CHART_COLORS = [
 
 const SUPERVISOR_ISSUE_PIE_CONFIG = [
   { eventKey: 'FALTA', label: 'Faltas', color: '#dc2626' },
-  { eventKey: 'ATRASO', label: 'Atrasos', color: '#f59e0b' },
+  { eventKey: 'ATRASO', label: 'Atrasos no just.', color: '#f59e0b' },
   { eventKey: 'SALIDA_ANTICIPADA', label: 'Salidas anticipadas', color: '#f97316' },
   { eventKey: 'JUSTIFICADO', label: 'Justificados', color: '#22c55e' },
 ];

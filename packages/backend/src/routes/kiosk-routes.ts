@@ -26,6 +26,7 @@ const DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES = 5 * 1024 * 1024;
 const FIXED_NOTES = 'marcaci\u00f3n manual v\u00eda web';
 const MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY = 'MIN_MINUTES_BETWEEN_VALID_PUNCHES';
 const DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES = 5;
+const ROUTE_TRACKING_NOTES = 'marcacion de recorrido - fuera de recinto autorizado';
 
 type EmployeeContext = {
   user_id: string;
@@ -258,7 +259,16 @@ function resolveWorkLocationForPoint(params: {
   longitude: number;
   accuracyMeters?: number | null;
   locations: Array<{ id: string; work_location_name: string | null; geofence_polygon: any; time_zone?: string | null }>;
-}): { inside: boolean; work_location_id: string | null; work_location_name: string | null; time_zone: string | null; message: string } {
+}): {
+  inside: boolean;
+  work_location_id: string | null;
+  work_location_name: string | null;
+  time_zone: string | null;
+  nearest_work_location_id: string | null;
+  nearest_work_location_name: string | null;
+  distance_to_nearest_location_meters: number | null;
+  message: string;
+} {
   const toleranceMeters = clampGeofenceToleranceMeters(params.accuracyMeters ?? null);
   let nearestLocation: {
     id: string;
@@ -277,6 +287,9 @@ function resolveWorkLocationForPoint(params: {
           work_location_id: location.id,
           work_location_name: location.work_location_name || null,
           time_zone: normalizeNullableText(location.time_zone),
+          nearest_work_location_id: location.id,
+          nearest_work_location_name: location.work_location_name || null,
+          distance_to_nearest_location_meters: 0,
           message: `Está dentro de la localización ${name}`,
         };
       }
@@ -303,6 +316,9 @@ function resolveWorkLocationForPoint(params: {
       work_location_id: nearestLocation.id,
       work_location_name: nearestLocation.work_location_name,
       time_zone: normalizeNullableText(nearestLocation.time_zone),
+      nearest_work_location_id: nearestLocation.id,
+      nearest_work_location_name: nearestLocation.work_location_name,
+      distance_to_nearest_location_meters: Math.round(nearestLocation.distanceMeters),
       message: `Está dentro de la localización ${name} por tolerancia GPS (${Math.round(nearestLocation.distanceMeters)} m del polígono)`,
     };
   }
@@ -312,6 +328,11 @@ function resolveWorkLocationForPoint(params: {
     work_location_id: null,
     work_location_name: null,
     time_zone: null,
+    nearest_work_location_id: nearestLocation?.id || null,
+    nearest_work_location_name: nearestLocation?.work_location_name || null,
+    distance_to_nearest_location_meters: nearestLocation && Number.isFinite(nearestLocation.distanceMeters)
+      ? Math.round(nearestLocation.distanceMeters)
+      : null,
     message: 'No está dentro de ninguna localización predefinida',
   };
 }
@@ -489,6 +510,29 @@ async function savePunchSnapshot(params: {
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(fullPath, buffer);
   return { directory, fileName, fullPath };
+}
+
+async function saveRouteTrackingSnapshot(params: {
+  snapshotBase64: string;
+  employeeCode: string | null | undefined;
+  trackingPointId: string;
+  trackingDateTime: string | Date;
+}): Promise<{ directory: string; fileName: string; relativePath: string; fullPath: string }> {
+  const buffer = parseBase64Snapshot(params.snapshotBase64);
+  const stamp = toSnapshotTimestamp(params.trackingDateTime);
+  const employeeCode = sanitizeEmployeeCode(params.employeeCode);
+  const fileName = `${employeeCode}_${stamp}_${params.trackingPointId}.jpg`;
+  const folder = path.join('punches_snapshoots', 'route_tracking');
+  const directory = path.resolve(process.cwd(), folder);
+  const fullPath = path.join(directory, fileName);
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(fullPath, buffer);
+  return {
+    directory,
+    fileName,
+    relativePath: path.join(folder, fileName).split(path.sep).join('/'),
+    fullPath,
+  };
 }
 
 async function isLookupValueInGroupById(
@@ -1097,6 +1141,120 @@ async function findRecentValidPunch(params: {
   return result.rows[0] || null;
 }
 
+async function createRouteTrackingPoint(params: {
+  context: EmployeeContext;
+  companyId: string;
+  trackingDateTime: Date;
+  clientTimeZone: string | null;
+  latitud: number;
+  longitud: number;
+  locationAccuracyMeters: number | null;
+  snapshotBase64: string;
+  actor: string;
+  locationValidation: {
+    nearest_work_location_id: string | null;
+    distance_to_nearest_location_meters: number | null;
+    message: string;
+  };
+  reason: string;
+}) {
+  const trackingStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    params.context.tenant_id,
+    'ROUTE_TRACKING_STATUS',
+    ['ROUTE_POINT_VALID']
+  );
+  const effectiveTimeZone = params.clientTimeZone || 'America/Guayaquil';
+
+  const insertResult = await pool.query(
+    `
+      INSERT INTO public.employee_route_tracking_points (
+        id,
+        tenant_id,
+        company_id,
+        employee_id,
+        tracking_datetime,
+        tracking_time_zone,
+        latitud,
+        longitud,
+        location_accuracy_meters,
+        tracking_status_id,
+        nearest_work_location_id,
+        distance_to_nearest_location_meters,
+        notes,
+        is_active,
+        created_by
+      )
+      VALUES (
+        gen_random_uuid(),
+        $1,$2,$3,$4::timestamptz,$5,$6,$7,$8,$9,$10,$11,$12,true,$13
+      )
+      RETURNING *
+    `,
+    [
+      params.context.tenant_id,
+      params.companyId,
+      params.context.employee_id,
+      params.trackingDateTime.toISOString(),
+      effectiveTimeZone,
+      params.latitud,
+      params.longitud,
+      params.locationAccuracyMeters,
+      trackingStatusId,
+      params.locationValidation.nearest_work_location_id,
+      params.locationValidation.distance_to_nearest_location_meters,
+      `${ROUTE_TRACKING_NOTES}. ${params.reason}`,
+      params.actor,
+    ]
+  );
+
+  const trackingPoint = insertResult.rows[0];
+  try {
+    const snapshot = await saveRouteTrackingSnapshot({
+      snapshotBase64: params.snapshotBase64,
+      employeeCode: params.context.employee_code,
+      trackingPointId: trackingPoint.id,
+      trackingDateTime: trackingPoint.tracking_datetime,
+    });
+
+    const updateResult = await pool.query(
+      `
+        UPDATE public.employee_route_tracking_points
+           SET snapshot_path = $4,
+               updated_by = $5,
+               updated_at = now()
+         WHERE id = $1
+           AND tenant_id = $2
+           AND employee_id = $3
+         RETURNING *
+      `,
+      [
+        trackingPoint.id,
+        params.context.tenant_id,
+        params.context.employee_id,
+        snapshot.relativePath,
+        params.actor,
+      ]
+    );
+
+    return {
+      trackingPoint: updateResult.rows[0] || trackingPoint,
+      snapshot,
+      trackingTimeZone: effectiveTimeZone,
+    };
+  } catch (snapshotErr) {
+    await pool.query(
+      `
+        DELETE FROM public.employee_route_tracking_points
+        WHERE id = $1
+          AND tenant_id = $2
+          AND employee_id = $3
+      `,
+      [trackingPoint.id, params.context.tenant_id, params.context.employee_id]
+    );
+    throw snapshotErr;
+  }
+}
+
 router.get('/mark/context', async (req: Request, res: Response) => {
   try {
     const context = await resolveEmployeeContext(req);
@@ -1425,25 +1583,41 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       accuracyMeters: locationAccuracyMeters,
       locations: workLocationsResult.rows,
     });
-    if (workLocationsResult.rows.length === 0) {
-      return res.status(422).json({
-        error: 'No existen localizaciones activas con geocerca configurada para validar la marcacion',
-        location_validation: {
-          ...locationValidation,
-          message: 'No existen localizaciones activas con geocerca configurada',
+    const shouldCreateRouteTracking = workLocationsResult.rows.length === 0 || !locationValidation.inside || !locationValidation.work_location_id;
+    if (shouldCreateRouteTracking) {
+      const routeLocationValidation = {
+        ...locationValidation,
+        message: workLocationsResult.rows.length === 0
+          ? 'No existen localizaciones activas con geocerca configurada; se registra como recorrido'
+          : 'La ubicacion no esta dentro de un recinto valido; se registra como recorrido',
+      };
+      const routeResult = await createRouteTrackingPoint({
+        context,
+        companyId,
+        trackingDateTime: punchDateTime,
+        clientTimeZone,
+        latitud,
+        longitud,
+        locationAccuracyMeters,
+        snapshotBase64,
+        actor,
+        locationValidation: routeLocationValidation,
+        reason: routeLocationValidation.message,
+      });
+
+      return res.status(201).json({
+        success: true,
+        route_tracking: true,
+        route_tracking_point: routeResult.trackingPoint,
+        client_time_zone: clientTimeZone || null,
+        tracking_time_zone: routeResult.trackingTimeZone,
+        location_validation: routeLocationValidation,
+        message: 'Marcacion registrada como punto de recorrido. No afecta asistencia.',
+        snapshot: {
+          file_name: routeResult.snapshot.fileName,
+          folder: 'punches_snapshoots/route_tracking',
+          path: routeResult.snapshot.relativePath,
         },
-      });
-    }
-    if (!locationValidation.inside) {
-      return res.status(422).json({
-        error: 'La marcacion fue descartada porque la ubicacion no esta dentro de una localizacion valida',
-        location_validation: locationValidation,
-      });
-    }
-    if (!locationValidation.work_location_id) {
-      return res.status(422).json({
-        error: 'No se pudo determinar la localizacion de la marcacion',
-        location_validation: locationValidation,
       });
     }
 

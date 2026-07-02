@@ -648,16 +648,36 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
     }
 
     const entityLabels = await resolveScopeEntityLabels(Postgres, scopes || []);
+    const scopeIds = (scopes || []).map((s: any) => s.id).filter(Boolean);
+    const resolvedEntityNames = new Map<string, string>();
+
+    if (scopeIds.length > 0) {
+      const { data: resolvedScopes, error: resolvedScopesError } = await Postgres
+        .from('v_user_role_scopes_resolved')
+        .select('id, scope_entity_name')
+        .in('id', scopeIds);
+
+      if (resolvedScopesError) {
+        console.warn('[USERS-MGMT] No se pudieron resolver nombres desde v_user_role_scopes_resolved:', resolvedScopesError);
+      } else {
+        for (const resolvedScope of resolvedScopes || []) {
+          if (resolvedScope.id && resolvedScope.scope_entity_name) {
+            resolvedEntityNames.set(resolvedScope.id, resolvedScope.scope_entity_name);
+          }
+        }
+      }
+    }
 
     const scopesWithLabels = (scopes || []).map((s: any) => {
       const scopeTypeKey = s.scope_type?.scope_type_key || null;
       const entityLabel = entityLabels.get(`${String(scopeTypeKey || '').toUpperCase()}:${s.scope_entity_id}`);
+      const resolvedEntityName = resolvedEntityNames.get(s.id);
       return {
         ...s,
         scope_type_key: scopeTypeKey,
         scope_type_name: s.scope_type?.scope_type_name || null,
-        scope_entity_label: entityLabel?.label || null,
-        scope_entity_description: entityLabel?.description || null,
+        scope_entity_label: resolvedEntityName || entityLabel?.label || null,
+        scope_entity_description: null,
       };
     });
 

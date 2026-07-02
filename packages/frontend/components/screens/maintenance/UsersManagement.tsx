@@ -132,6 +132,19 @@ const DATA_SCOPE_LABELS: Record<string, string> = {
   SELF: 'Solo propio',
 };
 
+const SCOPE_ENTITY_TYPE_LABELS: Record<string, string> = {
+  TENANT: 'Tenant',
+  COMPANY: 'Empresa',
+  WORK_LOCATION: 'Localización',
+  DEPARTMENT: 'Departamento',
+  AREA: 'Área',
+  COST_CENTER: 'Centro de costo',
+  WORK_GROUP: 'Grupo de trabajo',
+  EMPLOYEE_PROFILE: 'Perfil de empleado',
+  EMPLOYEE: 'Empleado',
+  EMPLOYEE_EXCLUDE: 'Empleado excluido',
+};
+
 const IMPORTANT_ROLE_ORDER = ['SYSTEM_ADMIN', 'TENANT_ADMIN', 'SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TIC_ADMIN', 'EMPLOYEE'];
 
 function shortId(value?: string | null): string {
@@ -221,9 +234,9 @@ export function UsersManagement() {
     const key = String(scope.scope_type_key || '').toUpperCase();
     const entityId = scope.scope_entity_id;
     if (!entityId) return 'Entidad no definida';
+    const scopeType = SCOPE_ENTITY_TYPE_LABELS[key] || (scope.scope_type_name || scope.scope_type_key || 'Entidad').replace(/\s*\([^)]*\)\s*$/, '');
 
     if (scope.scope_entity_label) {
-      const scopeType = scope.scope_type_name || scope.scope_type_key || 'Entidad';
       return `${scopeType}: ${scope.scope_entity_label}`;
     }
 
@@ -236,15 +249,17 @@ export function UsersManagement() {
       return name ? `Empresa: ${name}` : 'Empresa: Descripción no disponible';
     }
 
-    const scopeType = scope.scope_type_name || scope.scope_type_key || 'Entidad';
     return `${scopeType}: Descripción no disponible`;
   };
 
   const resolveScopeEntityDescription = (scope: UserRoleScope): string | null => {
     const description = String(scope.scope_entity_description || '').trim();
+    const label = String(scope.scope_entity_label || '').trim();
     if (!description) return null;
     if (description === scope.scope_entity_id) return null;
-    if (description === scope.scope_entity_label) return null;
+    if (description === label) return null;
+    if (label.startsWith(`${description} -`)) return null;
+    if (label.endsWith(`(${description})`)) return null;
     return description;
   };
 

@@ -53,6 +53,7 @@ import KioskShiftChange from './kiosk/KioskShiftChange';
 import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
+import EmployeeRouteTrackingReport from './screens/reports/EmployeeRouteTrackingReport';
 
 function InvalidRouteFallback({ path }: { path: string }) {
   return (
@@ -191,6 +192,7 @@ export function Router() {
     '/dashboard/attendance/timeclock': <TimePunchesManagement />,
     '/dashboard/attendance/time-punches': <TimePunchesManagement />,
     '/dashboard/attendance/approvals': <RequestsApprovalsManagement />,
+    '/dashboard/reports/route-tracking': <EmployeeRouteTrackingReport />,
 
     // ── Kiosko ───────────────────────────────────────────────────────────────
     '/dashboard/kiosk/timeclock': <KioskPunch />,
