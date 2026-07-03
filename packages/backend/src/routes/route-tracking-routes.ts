@@ -75,7 +75,10 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
        AND ec.tenant_id = e.tenant_id
        AND ec.is_active = true
       LEFT JOIN public.companies c ON c.id = ec.company_id
-      LEFT JOIN public.work_locations wl ON wl.id = ec.work_location_id
+      LEFT JOIN public.work_locations wl
+        ON wl.id = ec.work_location_id
+       AND wl.tenant_id = ec.tenant_id
+       AND wl.company_id = ec.company_id
       LEFT JOIN public.departments d ON d.id = ec.department_id
       LEFT JOIN public.areas ar ON ar.id = ec.area_id
       WHERE e.tenant_id = $1::uuid
@@ -116,7 +119,10 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
      AND ec.tenant_id = e.tenant_id
      AND ec.is_active = true
     LEFT JOIN public.companies c ON c.id = ec.company_id
-    LEFT JOIN public.work_locations wl ON wl.id = ec.work_location_id
+    LEFT JOIN public.work_locations wl
+      ON wl.id = ec.work_location_id
+     AND wl.tenant_id = ec.tenant_id
+     AND wl.company_id = ec.company_id
     LEFT JOIN public.departments d ON d.id = ec.department_id
     LEFT JOIN public.areas ar ON ar.id = ec.area_id
     WHERE ur.tenant_id = $1::uuid
@@ -214,11 +220,15 @@ router.get('/employee-route', async (req: Request, res: Response) => {
           LEFT JOIN public.time_clock_devices d
             ON d.id = p.time_clock_device_id
            AND d.tenant_id = p.tenant_id
+           AND d.company_id = se.company_id
           LEFT JOIN public.work_locations dwl
             ON dwl.id = d.work_location_id
            AND dwl.tenant_id = d.tenant_id
+           AND dwl.company_id = se.company_id
           LEFT JOIN public.work_locations wl
             ON wl.id = se.work_location_id
+           AND wl.tenant_id = p.tenant_id
+           AND wl.company_id = se.company_id
           LEFT JOIN public.lookup_values st
             ON st.id = p.time_punch_status_id
           LEFT JOIN LATERAL (
@@ -232,6 +242,7 @@ router.get('/employee-route', async (req: Request, res: Response) => {
             LIMIT 1
           ) mv ON true
           WHERE p.tenant_id = $1::uuid
+            AND p.company_id = se.company_id
             AND p.is_active = true
             AND p.latitud IS NOT NULL
             AND p.longitud IS NOT NULL
@@ -260,7 +271,10 @@ router.get('/employee-route', async (req: Request, res: Response) => {
             ON st.id = rp.tracking_status_id
           LEFT JOIN public.work_locations wl
             ON wl.id = rp.nearest_work_location_id
+           AND wl.tenant_id = rp.tenant_id
+           AND wl.company_id = se.company_id
           WHERE rp.tenant_id = $1::uuid
+            AND rp.company_id = se.company_id
             AND rp.is_active = true
             AND rp.tracking_datetime >= $${fromParamIndex}::timestamptz
             AND rp.tracking_datetime <= $${toParamIndex}::timestamptz

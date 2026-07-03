@@ -161,7 +161,7 @@ export default function EmployeeRouteTrackingReport() {
   const attendanceCount = points.filter((point) => point.point_type === 'ATTENDANCE').length;
 
   return (
-    <div className="space-y-4">
+    <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
@@ -258,14 +258,14 @@ export default function EmployeeRouteTrackingReport() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+      <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <div className="min-h-0 overflow-hidden rounded-xl border bg-white shadow-sm">
           {positions.length === 0 ? (
-            <div className="flex h-[540px] items-center justify-center text-sm text-slate-500">
+            <div className="flex h-full items-center justify-center text-sm text-slate-500">
               Sin puntos geográficos para el rango seleccionado.
             </div>
           ) : (
-            <MapContainer center={positions[0]} zoom={14} className="h-[540px] w-full">
+            <MapContainer center={positions[0]} zoom={14} className="h-full w-full">
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -284,7 +284,7 @@ export default function EmployeeRouteTrackingReport() {
                       <p className="font-semibold">{index + 1}. {pointLabel(point)}</p>
                       <p>{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
                       <p>{point.location_label || 'Sin recinto asociado'}</p>
-                      {point.distance_to_nearest_location_meters !== null ? <p>Distancia a recinto: {Math.round(Number(point.distance_to_nearest_location_meters))} m</p> : null}
+                      {point.location_label && point.distance_to_nearest_location_meters !== null ? <p>Distancia a recinto: {Math.round(Number(point.distance_to_nearest_location_meters))} m</p> : null}
                     </div>
                   </Popup>
                 </CircleMarker>
@@ -293,10 +293,10 @@ export default function EmployeeRouteTrackingReport() {
           )}
         </div>
 
-        <div className="rounded-xl border bg-white p-4 shadow-sm">
+        <div className="flex min-h-0 flex-col rounded-xl border bg-white p-4 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-900">{employee ? fullEmployeeName(employee) : 'Detalle de puntos'}</h2>
           <p className="mb-3 text-sm text-slate-500">{employee?.company_name || ''}</p>
-          <div className="max-h-[500px] space-y-2 overflow-y-auto pr-1">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {points.length === 0 ? (
               <p className="rounded-lg border bg-slate-50 px-3 py-2 text-sm text-slate-500">Sin puntos para mostrar.</p>
             ) : points.map((point, index) => (
@@ -317,6 +317,10 @@ export default function EmployeeRouteTrackingReport() {
           </div>
         </div>
       </div>
+
+      <footer className="shrink-0 text-center text-sm text-slate-500">
+        Titanium Labs Corp.&trade; 2026 &copy; | Todos los derechos reservados
+      </footer>
     </div>
   );
 }
