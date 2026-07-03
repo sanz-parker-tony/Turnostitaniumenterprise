@@ -3571,16 +3571,40 @@ router.get('/employee-users', async (req: Request, res: Response) => {
     );
 
     let usersById = new Map<string, any>();
+    const employeeUserIds = new Set<string>();
     if (userIds.length > 0) {
-      const { data: users, error: usersError } = await Postgres
+      const { data: employeeRole } = await Postgres
+        .from('roles')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .eq('role_key', 'EMPLOYEE')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (employeeRole?.id) {
+        const { data: employeeUserRoles, error: employeeUserRolesError } = await Postgres
+          .from('user_roles')
+          .select('user_id')
+          .eq('tenant_id', tenantId)
+          .eq('role_id', employeeRole.id)
+          .eq('is_active', true)
+          .in('user_id', userIds);
+        if (employeeUserRolesError) return res.status(500).json({ error: employeeUserRolesError.message });
+        for (const row of employeeUserRoles || []) {
+          if (row.user_id) employeeUserIds.add(row.user_id);
+        }
+      }
+
+      const filteredUserIds = userIds.map((userId) => String(userId)).filter((userId) => employeeUserIds.has(userId));
+      const { data: users, error: usersError } = filteredUserIds.length > 0 ? await Postgres
         .from('users')
         .select('id, username, display_name, email, phone, preferred_language_code, is_active')
-        .in('id', userIds);
+        .in('id', filteredUserIds) : { data: [], error: null };
       if (usersError) return res.status(500).json({ error: usersError.message });
       usersById = new Map((users || []).map((u: any) => [u.id, u]));
     }
 
-    const rows = (employees || []).map((employee: any) => {
+    const rows = (employees || []).filter((employee: any) => !employee.user_id || employeeUserIds.has(employee.user_id)).map((employee: any) => {
       const linkedUser = employee.user_id ? usersById.get(employee.user_id) : null;
       return {
         employee_id: employee.id,
@@ -3658,6 +3682,30 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
         .maybeSingle();
       if (existingUserError) return res.status(500).json({ error: existingUserError.message });
       if (!existingUser) return res.status(404).json({ error: 'Usuario asociado no encontrado' });
+
+      const existingEmployeeRoleResult = await pool.query(
+        `
+          SELECT 1
+          FROM public.user_roles ur
+          INNER JOIN public.roles r
+            ON r.id = ur.role_id
+           AND r.tenant_id = ur.tenant_id
+           AND r.is_active = true
+          WHERE ur.tenant_id = $1
+            AND ur.user_id = $2
+            AND ur.is_active = true
+            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+            AND r.role_key = 'EMPLOYEE'
+          LIMIT 1
+        `,
+        [tenantId, existingUser.id]
+      );
+      if (existingEmployeeRoleResult.rowCount === 0) {
+        return res.status(409).json({
+          error: 'El empleado esta vinculado a un usuario que no tiene rol EMPLOYEE. Corrige la vinculacion antes de administrarlo desde esta pantalla.',
+        });
+      }
 
       const { data: duplicateUsername } = await Postgres
         .from('users')

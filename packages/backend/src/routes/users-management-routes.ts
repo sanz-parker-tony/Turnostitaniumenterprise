@@ -157,6 +157,7 @@ router.get('/catalogs/roles', async (req: Request, res: Response) => {
       .from('roles')
       .select('id, role_key, role_name, role_scope, tenant_id, is_active')
       .eq('is_active', true)
+      .neq('role_key', 'EMPLOYEE')
       .order('role_name');
 
     if (error) return res.status(500).json({ error: error.message });
@@ -514,7 +515,7 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
 
     const { data: duplicated } = await Postgres
       .from('user_roles')
-      .select('id')
+      .select('id, is_active')
       .eq('tenant_id', nextTenantId)
       .eq('user_id', currentUserRole.user_id)
       .eq('role_id', nextRoleId)
@@ -628,6 +629,31 @@ router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) =
 });
 
 // GET /user-roles/:user_role_id/scopes - Listar alcances de una asignación
+router.delete('/user-roles/:user_role_id/scopes/inactive', async (req: Request, res: Response) => {
+  try {
+    const userRoleId = req.params.user_role_id;
+    const Postgres = getPostgres();
+
+    const { data: deletedScopes, error } = await Postgres
+      .from('user_role_scopes')
+      .delete()
+      .eq('user_role_id', userRoleId)
+      .eq('is_active', false)
+      .select('id');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    return res.status(200).json({
+      success: true,
+      deleted_count: deletedScopes?.length || 0,
+      message: 'Alcances inactivos eliminados exitosamente',
+    });
+  } catch (err: any) {
+    console.error('[USERS-MGMT] Error en DELETE /user-roles/:id/scopes/inactive:', err);
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
 router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
@@ -640,11 +666,23 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
         scope_type:scope_types!user_role_scopes_scope_type_id_fkey(scope_type_key, scope_type_name)
       `)
       .eq('user_role_id', userRoleId)
+      .eq('is_active', true)
       .order('created_at', { ascending: false });
 
     if (error) {
       console.error('[USERS-MGMT] Error cargando user_role_scopes:', error);
       return res.status(500).json({ error: error.message });
+    }
+
+    const { data: inactiveScopes, error: inactiveCountError } = await Postgres
+      .from('user_role_scopes')
+      .select('id')
+      .eq('user_role_id', userRoleId)
+      .eq('is_active', false);
+
+    if (inactiveCountError) {
+      console.error('[USERS-MGMT] Error contando user_role_scopes inactivos:', inactiveCountError);
+      return res.status(500).json({ error: inactiveCountError.message });
     }
 
     const entityLabels = await resolveScopeEntityLabels(Postgres, scopes || []);
@@ -681,7 +719,12 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
       };
     });
 
-    return res.status(200).json({ success: true, scopes: scopesWithLabels, count: scopesWithLabels.length });
+    return res.status(200).json({
+      success: true,
+      scopes: scopesWithLabels,
+      count: scopesWithLabels.length,
+      inactive_count: inactiveScopes?.length || 0,
+    });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en GET /user-roles/:id/scopes:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
@@ -693,7 +736,7 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
   try {
     const userRoleId = req.params.user_role_id;
     const body = req.body;
-    const { tenant_id, scope_type_id, scope_entity_id, is_active = true } = body;
+    const { tenant_id, scope_type_id, scope_entity_id } = body;
 
     if (!tenant_id || !scope_type_id || !scope_entity_id) {
       return res.status(400).json({ error: 'Campos obligatorios: tenant_id, scope_type_id, scope_entity_id' });
@@ -703,15 +746,35 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
 
     const { data: existing } = await Postgres
       .from('user_role_scopes')
-      .select('id')
+      .select('id, is_active')
       .eq('tenant_id', tenant_id)
       .eq('user_role_id', userRoleId)
       .eq('scope_type_id', scope_type_id)
       .eq('scope_entity_id', scope_entity_id)
       .maybeSingle();
 
-    if (existing) {
+    if (existing?.is_active) {
       return res.status(409).json({ error: 'Ya existe ese alcance para esta asignación de rol' });
+    }
+
+    if (existing?.id) {
+      const { data: reactivatedScope, error: reactivateError } = await Postgres
+        .from('user_role_scopes')
+        .update({
+          is_active: true,
+          updated_by: 'system',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (reactivateError) {
+        console.error('[USERS-MGMT] Error reactivando user_role_scope:', reactivateError);
+        return res.status(500).json({ error: reactivateError.message });
+      }
+
+      return res.status(200).json({ success: true, scope: reactivatedScope, message: 'Alcance reactivado exitosamente' });
     }
 
     const { data: newScope, error } = await Postgres
@@ -721,7 +784,7 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
         user_role_id: userRoleId,
         scope_type_id,
         scope_entity_id,
-        is_active,
+        is_active: true,
         created_by: 'system',
       })
       .select()
@@ -744,7 +807,7 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
   try {
     const scopeId = req.params.scope_id;
     const body = req.body;
-    const { tenant_id, user_role_id, scope_type_id, scope_entity_id, is_active } = body;
+    const { tenant_id, user_role_id, scope_type_id, scope_entity_id } = body;
 
     if (!tenant_id || !user_role_id || !scope_type_id || !scope_entity_id) {
       return res.status(400).json({ error: 'Campos obligatorios: tenant_id, user_role_id, scope_type_id, scope_entity_id' });
@@ -768,6 +831,7 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
       .eq('user_role_id', user_role_id)
       .eq('scope_type_id', scope_type_id)
       .eq('scope_entity_id', scope_entity_id)
+      .eq('is_active', true)
       .neq('id', scopeId)
       .maybeSingle();
 
@@ -780,10 +844,10 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
       user_role_id,
       scope_type_id,
       scope_entity_id,
+      is_active: true,
       updated_by: 'system',
       updated_at: new Date().toISOString(),
     };
-    if (typeof is_active === 'boolean') updateData.is_active = is_active;
 
     const { data: updatedScope, error } = await Postgres
       .from('user_role_scopes')
@@ -840,6 +904,33 @@ router.patch('/scopes/:scope_id/status', async (req: Request, res: Response) => 
 // USERS — rutas dinámicas van AL FINAL
 // ============================================================================
 
+// DELETE /scopes/:scope_id - Eliminar alcance
+router.delete('/scopes/:scope_id', async (req: Request, res: Response) => {
+  try {
+    const scopeId = req.params.scope_id;
+    const Postgres = getPostgres();
+
+    const { data: deletedScope, error } = await Postgres
+      .from('user_role_scopes')
+      .delete()
+      .eq('id', scopeId)
+      .select('id, user_role_id')
+      .single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!deletedScope) return res.status(404).json({ error: 'Alcance no encontrado' });
+
+    return res.status(200).json({
+      success: true,
+      scope: deletedScope,
+      message: 'Alcance eliminado exitosamente',
+    });
+  } catch (err: any) {
+    console.error('[USERS-MGMT] Error en DELETE /scopes/:id:', err);
+    return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
+  }
+});
+
 // GET / - Listar usuarios
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -859,7 +950,51 @@ router.get('/', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    const usersWithLabels = (users || []).map((u: any) => ({
+    const { data: employeeRoles, error: employeeRolesError } = await Postgres
+      .from('roles')
+      .select('id')
+      .eq('role_key', 'EMPLOYEE')
+      .eq('is_active', true);
+
+    if (employeeRolesError) {
+      console.error('[USERS-MGMT] Error cargando roles EMPLOYEE:', employeeRolesError);
+      return res.status(500).json({ error: employeeRolesError.message });
+    }
+
+    const employeeRoleIds = (employeeRoles || []).map((role: any) => role.id).filter(Boolean);
+    const employeeUserIds = new Set<string>();
+    const { data: linkedEmployeeUsers, error: linkedEmployeeUsersError } = await Postgres
+      .from('employees')
+      .select('user_id')
+      .not('user_id', 'is', null);
+
+    if (linkedEmployeeUsersError) {
+      console.error('[USERS-MGMT] Error cargando usuarios vinculados a empleados:', linkedEmployeeUsersError);
+      return res.status(500).json({ error: linkedEmployeeUsersError.message });
+    }
+
+    for (const row of linkedEmployeeUsers || []) {
+      if (row.user_id) employeeUserIds.add(row.user_id);
+    }
+
+    if (employeeRoleIds.length > 0) {
+      const { data: employeeUserRoles, error: employeeUserRolesError } = await Postgres
+        .from('user_roles')
+        .select('user_id')
+        .in('role_id', employeeRoleIds)
+        .eq('is_active', true);
+
+      if (employeeUserRolesError) {
+        console.error('[USERS-MGMT] Error cargando usuarios EMPLOYEE:', employeeUserRolesError);
+        return res.status(500).json({ error: employeeUserRolesError.message });
+      }
+
+      for (const row of employeeUserRoles || []) {
+        if (row.user_id) employeeUserIds.add(row.user_id);
+      }
+    }
+
+    const usersWithLabels = (users || []).filter((u: any) => !employeeUserIds.has(u.id)).map((u: any) => ({
       ...u,
       tenant_key: u.tenant?.tenant_key || null,
       tenant_name: u.tenant?.tenant_name || null,

@@ -743,15 +743,11 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
 
     await client.query(
       `
-        UPDATE user_role_scope_rules
-           SET is_active = false,
-               updated_by = $3,
-               updated_at = now()
+        DELETE FROM user_role_scope_rules
          WHERE tenant_id = $1
            AND user_role_id = $2
-           AND is_active = true
       `,
-      [ctx.tenantId, userRoleId, 'TENANT_ADMIN']
+      [ctx.tenantId, userRoleId]
     );
 
     for (const rule of dedupedRules) {
@@ -956,15 +952,11 @@ router.put('/:user_role_id/scopes', async (req: Request, res: Response) => {
 
     await client.query(
       `
-        UPDATE user_role_scopes
-           SET is_active = false,
-               updated_by = $3,
-               updated_at = now()
+        DELETE FROM user_role_scopes
          WHERE tenant_id = $1
            AND user_role_id = $2
-           AND is_active = true
       `,
-      [ctx.tenantId, userRoleId, 'TENANT_ADMIN']
+      [ctx.tenantId, userRoleId]
     );
 
     for (const s of dedupedScopes) {

@@ -174,6 +174,7 @@ export function UsersManagement() {
   const [userRoles, setUserRoles] = useState<UserRole[]>([]);
   const [selectedUserRole, setSelectedUserRole] = useState<UserRole | null>(null);
   const [roleScopesByUserRoleId, setRoleScopesByUserRoleId] = useState<Record<string, UserRoleScope[]>>({});
+  const [inactiveScopeCountByUserRoleId, setInactiveScopeCountByUserRoleId] = useState<Record<string, number>>({});
 
   // UI state
   const [mainTab, setMainTab] = useState<MainTab>('users');
@@ -280,6 +281,11 @@ export function UsersManagement() {
     return summary.role_count > 1 ? `${roleName} +${summary.role_count - 1}` : roleName;
   };
 
+  const isEmployeeUser = (userId: string): boolean => {
+    const summary = userRoleSummaries[userId];
+    return (summary?.role_keys || []).some((roleKey) => String(roleKey || '').toUpperCase() === 'EMPLOYEE');
+  };
+
   // ============================================================================
   // CARGA INICIAL
   // ============================================================================
@@ -301,9 +307,11 @@ export function UsersManagement() {
     setError(null);
     try {
       await Promise.all([
-        loadUsers(), loadTenants(), loadRoles(),
-        loadScopeTypes(), loadCompanies(), loadLanguages(), loadUserRoleSummaries(),
+        loadTenants(), loadRoles(),
+        loadScopeTypes(), loadCompanies(), loadLanguages(),
       ]);
+      const summaries = await loadUserRoleSummaries();
+      await loadUsers(summaries);
     } catch (err: any) {
       setError(err.message || 'Error cargando datos');
     } finally {
@@ -311,14 +319,18 @@ export function UsersManagement() {
     }
   };
 
-  const loadUsers = async () => {
+  const loadUsers = async (summariesOverride?: Record<string, UserRoleSummary>) => {
     const res = await fetch(API_BASE, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) throw new Error(`Error ${res.status} cargando usuarios`);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Error cargando usuarios');
-    setUsers(data.users || []);
+    const summaries = summariesOverride || userRoleSummaries;
+    setUsers((data.users || []).filter((user: AppUser) => {
+      const summary = summaries[user.id];
+      return !(summary?.role_keys || []).some((roleKey) => String(roleKey || '').toUpperCase() === 'EMPLOYEE');
+    }));
   };
 
   const loadTenants = async () => {
@@ -377,9 +389,9 @@ export function UsersManagement() {
     setLanguages(data.languages || []);
   };
 
-  const loadUserRoleSummaries = async () => {
+  const loadUserRoleSummaries = async (): Promise<Record<string, UserRoleSummary>> => {
     const res = await fetch(`${API_BASE}/catalogs/user-role-summaries`, { headers: { Authorization: `Bearer ${getToken()}` } });
-    if (!res.ok) return;
+    if (!res.ok) return {};
     const data = await res.json();
     const summaries = Array.isArray(data.summaries) ? data.summaries : [];
     const byUser: Record<string, UserRoleSummary> = {};
@@ -387,6 +399,7 @@ export function UsersManagement() {
       if (summary?.user_id) byUser[summary.user_id] = summary;
     }
     setUserRoleSummaries(byUser);
+    return byUser;
   };
 
   const loadUserRoles = async (userId: string) => {
@@ -398,6 +411,7 @@ export function UsersManagement() {
       const rolesData: UserRole[] = data.userRoles || [];
       setUserRoles(rolesData);
       setRoleScopesByUserRoleId({});
+      setInactiveScopeCountByUserRoleId({});
       await Promise.all(rolesData.map((role) => loadRoleScopes(role.id)));
     } catch (err: any) {
       setError(err.message);
@@ -413,6 +427,7 @@ export function UsersManagement() {
       if (!res.ok) throw new Error(`Error ${res.status}`);
       const data = await res.json();
       setRoleScopesByUserRoleId((prev) => ({ ...prev, [userRoleId]: data.scopes || [] }));
+      setInactiveScopeCountByUserRoleId((prev) => ({ ...prev, [userRoleId]: Number(data.inactive_count || 0) }));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -428,6 +443,7 @@ export function UsersManagement() {
     setSelectedUser(user);
     setSelectedUserRole(null);
     setRoleScopesByUserRoleId({});
+    setInactiveScopeCountByUserRoleId({});
     setScopeLoadingByRoleId({});
     setUserDetailTab('info');
     await loadUserRoles(user.id);
@@ -443,7 +459,9 @@ export function UsersManagement() {
   // FILTRADO USUARIOS
   // ============================================================================
 
-  const filteredUsers = users
+  const manageableUsers = users.filter((user) => !isEmployeeUser(user.id));
+
+  const filteredUsers = manageableUsers
     .filter(u => {
       const summary = userRoleSummaries[u.id];
       const matchSearch = !searchTerm ||
@@ -465,7 +483,8 @@ export function UsersManagement() {
     });
 
   const totalRoleScopes = Object.values(roleScopesByUserRoleId).reduce((acc, scopes) => acc + scopes.length, 0);
-  const roleFilterOptions = [...roles].sort((a, b) => {
+  const administrativeRoles = roles.filter((role) => String(role.role_key || '').toUpperCase() !== 'EMPLOYEE');
+  const roleFilterOptions = [...administrativeRoles].sort((a, b) => {
     const aPriority = IMPORTANT_ROLE_ORDER.indexOf(String(a.role_key || '').toUpperCase());
     const bPriority = IMPORTANT_ROLE_ORDER.indexOf(String(b.role_key || '').toUpperCase());
     const normalizedAPriority = aPriority === -1 ? 999 : aPriority;
@@ -473,16 +492,16 @@ export function UsersManagement() {
     return normalizedAPriority - normalizedBPriority || a.role_name.localeCompare(b.role_name);
   });
   const availableRolesForForm: Role[] = (() => {
-    if (!editingUserRole) return roles;
-    const exists = roles.some((r) => r.id === editingUserRole.role_id);
-    if (exists) return roles;
+    if (!editingUserRole) return administrativeRoles;
+    const exists = administrativeRoles.some((r) => r.id === editingUserRole.role_id);
+    if (exists) return administrativeRoles;
     return [{
       id: editingUserRole.role_id,
       role_key: editingUserRole.role_key || `ROLE_${shortId(editingUserRole.role_id)}`,
       role_name: editingUserRole.role_name || `Rol ${shortId(editingUserRole.role_id)}`,
       role_scope: editingUserRole.role_scope || 'TENANT',
       tenant_id: editingUserRole.tenant_id,
-    }, ...roles];
+    }, ...administrativeRoles];
   })();
   const selectedRoleInForm = availableRolesForForm.find((r) => r.id === roleForm.role_id);
 
@@ -774,17 +793,42 @@ export function UsersManagement() {
     }
   };
 
-  const handleToggleScopeStatus = async (scope: UserRoleScope) => {
+  const handleDeleteScope = async (scope: UserRoleScope) => {
+    const label = resolveScopeEntityLabel(scope);
+    const confirmed = window.confirm(`¿Eliminar esta autorización de alcance?\n\n${label}`);
+    if (!confirmed) return;
+
     setTogglingId(scope.id);
     try {
-      const res = await fetch(`${API_BASE}/scopes/${scope.id}/status`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !scope.is_active }),
+      const res = await fetch(`${API_BASE}/scopes/${scope.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error');
+      if (!res.ok) throw new Error(data.error || 'Error al eliminar alcance');
       await loadRoleScopes(scope.user_role_id);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleDeleteInactiveScopes = async (userRoleId: string) => {
+    const count = inactiveScopeCountByUserRoleId[userRoleId] || 0;
+    if (count <= 0) return;
+    const confirmed = window.confirm(`¿Eliminar ${count} alcance${count === 1 ? '' : 's'} inactivo${count === 1 ? '' : 's'} de este rol?`);
+    if (!confirmed) return;
+
+    setTogglingId(`inactive-scopes-${userRoleId}`);
+    try {
+      const res = await fetch(`${API_BASE}/user-roles/${userRoleId}/scopes/inactive`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al eliminar alcances inactivos');
+      await loadRoleScopes(userRoleId);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -888,7 +932,7 @@ export function UsersManagement() {
               </select>
             </div>
             <p className="mt-3 text-sm text-gray-600">
-              Mostrando {filteredUsers.length} de {users.length} usuarios
+              Mostrando {filteredUsers.length} de {manageableUsers.length} usuarios administrativos
             </p>
           </div>
         </div>
@@ -1004,7 +1048,7 @@ export function UsersManagement() {
                 {selectedUser.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
               </button>
               <button
-                onClick={() => { setSelectedUser(null); setUserRoles([]); setSelectedUserRole(null); setRoleScopesByUserRoleId({}); setScopeLoadingByRoleId({}); }}
+                onClick={() => { setSelectedUser(null); setUserRoles([]); setSelectedUserRole(null); setRoleScopesByUserRoleId({}); setInactiveScopeCountByUserRoleId({}); setScopeLoadingByRoleId({}); }}
                 className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100"
                 title="Cerrar"
               >
@@ -1168,14 +1212,25 @@ export function UsersManagement() {
                           </div>
 
                           <div className="mt-3 pt-3 border-t border-gray-100">
-                            <div className="flex items-center justify-between mb-2">
-                              <p className="text-xs font-medium text-gray-600">Alcances del rol</p>
-                              <button
-                                onClick={() => loadRoleScopes(ur.id)}
-                                className="text-xs text-[#0074D9] hover:underline"
-                              >
-                                Recargar
-                              </button>
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <p className="text-xs font-medium text-gray-600">Autorizaciones activas del rol</p>
+                              <div className="flex items-center gap-2">
+                                {(inactiveScopeCountByUserRoleId[ur.id] || 0) > 0 && (
+                                  <button
+                                    onClick={() => handleDeleteInactiveScopes(ur.id)}
+                                    disabled={togglingId === `inactive-scopes-${ur.id}`}
+                                    className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                                  >
+                                    Eliminar inactivos ({inactiveScopeCountByUserRoleId[ur.id]})
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => loadRoleScopes(ur.id)}
+                                  className="text-xs text-[#0074D9] hover:underline"
+                                >
+                                  Recargar
+                                </button>
+                              </div>
                             </div>
                             {isScopeLoading ? (
                               <div className="py-2 text-xs text-gray-500">Cargando alcances...</div>
@@ -1186,18 +1241,12 @@ export function UsersManagement() {
                                 {roleScopes.map((scope) => {
                                   const entityDescription = resolveScopeEntityDescription(scope);
                                   return (
-                                    <div key={scope.id} className={`border rounded-lg p-2 bg-white ${!scope.is_active ? 'opacity-60' : ''}`}>
+                                    <div key={scope.id} className="border rounded-lg p-2 bg-white">
                                     <div className="flex items-start justify-between gap-2">
                                       <div>
                                         <div className="flex items-center gap-2">
                                           <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">
                                             {resolveScopeTypeLabel(scope)}
-                                          </span>
-                                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                                            scope.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                                          }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${scope.is_active ? 'bg-green-500' : 'bg-red-400'}`} />
-                                            {scope.is_active ? 'Activo' : 'Inactivo'}
                                           </span>
                                         </div>
                                         <p className="text-xs text-gray-500 mt-1">
@@ -1219,12 +1268,12 @@ export function UsersManagement() {
                                           <Edit2 className="w-3.5 h-3.5" />
                                         </button>
                                         <button
-                                          onClick={() => handleToggleScopeStatus(scope)}
+                                          onClick={() => handleDeleteScope(scope)}
                                           disabled={togglingId === scope.id}
-                                          className="p-1 rounded border border-[#D8BC9B] text-[#8B5E34] bg-[#F6ECDD] hover:text-white hover:bg-[#8B5E34] hover:border-[#7A4F2A] hover:shadow-[#B99167] hover:shadow-md hover:scale-110 transition-all duration-150 disabled:opacity-50"
-                                          title={scope.is_active ? 'Desactivar' : 'Activar'}
+                                          className="p-1 rounded border border-red-200 text-red-700 bg-red-50 hover:bg-red-100 transition-all duration-150 disabled:opacity-50"
+                                          title="Eliminar autorización"
                                         >
-                                          {scope.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
+                                          <Trash2 className="w-4 h-4" />
                                         </button>
                                       </div>
                                     </div>
@@ -1484,13 +1533,8 @@ export function UsersManagement() {
                   Se guardara internamente el UUID de la entidad seleccionada.
                 </p>
               </div>
-              <div className="flex items-center gap-3">
-                <label className="text-sm font-medium text-gray-700">Estado</label>
-                <button type="button" onClick={() => setScopeForm(f => ({ ...f, is_active: !f.is_active }))}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${scopeForm.is_active ? 'bg-[#2ECC71]' : 'bg-gray-300'}`}>
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${scopeForm.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
-                </button>
-                <span className="text-sm text-gray-600">{scopeForm.is_active ? 'Activo' : 'Inactivo'}</span>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+                Esta pantalla guarda únicamente autorizaciones activas. Para revocar una autorización, elimínala desde la lista del rol.
               </div>
             </div>
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

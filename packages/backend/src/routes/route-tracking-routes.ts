@@ -93,45 +93,40 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       e.employee_code,
       e.employee_name,
       e.employee_lastname,
-      ec.company_id,
+      scope.company_id,
       c.company_name,
-      ec.work_location_id,
+      scope.work_location_id,
       wl.work_location_name,
-      ec.department_id,
+      scope.department_id,
       d.department_name,
-      ec.area_id,
+      scope.area_id,
       ar.area_name
     FROM public.user_roles ur
     INNER JOIN public.roles r
       ON r.id = ur.role_id
      AND r.tenant_id = ur.tenant_id
      AND r.is_active = true
-    INNER JOIN public.user_role_employee_assignments ura
-      ON ura.tenant_id = ur.tenant_id
-     AND ura.user_role_id = ur.id
-     AND ura.is_active = true
+    INNER JOIN public.v_user_role_authorized_employees scope
+      ON scope.tenant_id = ur.tenant_id
+     AND scope.user_role_id = ur.id
     INNER JOIN public.employees e
-      ON e.id = ura.employee_id
-     AND e.tenant_id = ura.tenant_id
+      ON e.id = scope.employee_id
+     AND e.tenant_id = scope.tenant_id
      AND e.is_active = true
-    INNER JOIN public.employee_companies ec
-      ON ec.employee_id = e.id
-     AND ec.tenant_id = e.tenant_id
-     AND ec.is_active = true
-    LEFT JOIN public.companies c ON c.id = ec.company_id
+    LEFT JOIN public.companies c ON c.id = scope.company_id
     LEFT JOIN public.work_locations wl
-      ON wl.id = ec.work_location_id
-     AND wl.tenant_id = ec.tenant_id
-     AND wl.company_id = ec.company_id
-    LEFT JOIN public.departments d ON d.id = ec.department_id
-    LEFT JOIN public.areas ar ON ar.id = ec.area_id
+      ON wl.id = scope.work_location_id
+     AND wl.tenant_id = scope.tenant_id
+     AND wl.company_id = scope.company_id
+    LEFT JOIN public.departments d ON d.id = scope.department_id
+    LEFT JOIN public.areas ar ON ar.id = scope.area_id
     WHERE ur.tenant_id = $1::uuid
       AND ur.user_id = $2::uuid
       AND ur.is_active = true
       AND (ur.valid_from IS NULL OR ur.valid_from <= now())
       AND (ur.valid_to IS NULL OR ur.valid_to >= now())
       AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-    ORDER BY e.id, ec.created_at DESC NULLS LAST
+    ORDER BY e.id, c.company_name NULLS LAST, e.employee_lastname, e.employee_name
   `;
 }
 
