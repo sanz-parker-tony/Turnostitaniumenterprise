@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from 'lucide-react';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 
@@ -59,6 +59,24 @@ type ScopeRuleForm = {
   cost_center_id: string;
   work_group_id: string;
   employee_profile_id: string;
+};
+
+type ScopeRemovalConflict = {
+  company_id: string;
+  company_name: string | null;
+  assigned_employee_count: number;
+  employees: Array<{
+    employee_id: string;
+    employee_code: string | null;
+    employee_name: string | null;
+    employee_lastname: string | null;
+  }>;
+};
+
+type PendingCascadeConfirmation = {
+  rules: ScopeRuleForm[];
+  message: string;
+  conflicts: ScopeRemovalConflict[];
 };
 
 const API_BASE = buildApiUrl('/security-user-scopes');
@@ -131,6 +149,11 @@ function displayRule(rule: ScopeRule): string {
   return extra.length > 0 ? `${parts.join(' > ')} · ${extra.join(' · ')}` : parts.join(' > ');
 }
 
+function employeeConflictLabel(employee: ScopeRemovalConflict['employees'][number]): string {
+  const fullName = `${employee.employee_lastname || ''} ${employee.employee_name || ''}`.trim();
+  return `${fullName || employee.employee_id}${employee.employee_code ? ` (${employee.employee_code})` : ''}`;
+}
+
 function findCompany(tree: TreeCompanyNode[], companyId: string): TreeCompanyNode | null {
   return tree.find((company) => company.id === companyId) || null;
 }
@@ -176,6 +199,7 @@ export default function SecurityUserScopesManagement() {
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [pendingCascadeConfirmation, setPendingCascadeConfirmation] = useState<PendingCascadeConfirmation | null>(null);
 
   const companies = tree;
   const workLocationOptions = useMemo(() => getWorkLocations(tree, form), [tree, form]);
@@ -323,21 +347,41 @@ export default function SecurityUserScopesManagement() {
     };
   }
 
-  async function saveRules() {
+  async function submitRules(options?: { cascadeEmployeeAssignments?: boolean; rulesToSave?: ScopeRuleForm[] }) {
     if (!selectedUserRoleId) {
       toast.error('Selecciona un usuario objetivo');
       return;
     }
 
+    const rulesToSave = options?.rulesToSave || draftRules;
+    const cascadeEmployeeAssignments = options?.cascadeEmployeeAssignments === true;
+
     setIsSaving(true);
     try {
       const response = await authorizedFetch(`/${selectedUserRoleId}/scope-rules`, {
         method: 'PUT',
-        body: JSON.stringify({ rules: draftRules.map(toRulePayload) }),
+        body: JSON.stringify({
+          rules: rulesToSave.map(toRulePayload),
+          cascade_employee_assignments: cascadeEmployeeAssignments,
+        }),
       });
       const payload = await response.json();
+      if (response.status === 409 && payload?.requires_confirmation) {
+        setPendingCascadeConfirmation({
+          rules: rulesToSave,
+          message: payload?.message || 'Existen empleados asignados en empresas removidas.',
+          conflicts: (payload?.conflicts || []) as ScopeRemovalConflict[],
+        });
+        return;
+      }
       if (!response.ok) throw new Error(payload?.error || 'No se pudieron guardar las reglas');
-      toast.success('Reglas de alcance guardadas correctamente');
+      const revoked = Number(payload?.revoked_employee_assignments || 0);
+      toast.success(
+        revoked > 0
+          ? `Reglas guardadas. Se removieron ${revoked} empleados asignados.`
+          : 'Reglas de alcance guardadas correctamente'
+      );
+      setPendingCascadeConfirmation(null);
       await loadScopeRulesData(selectedUserRoleId);
     } catch (error: any) {
       toast.error(error?.message || 'Error guardando reglas de alcance');
@@ -346,8 +390,76 @@ export default function SecurityUserScopesManagement() {
     }
   }
 
+  async function saveRules() {
+    await submitRules();
+  }
+
+  async function confirmCascadeRemoval() {
+    if (!pendingCascadeConfirmation) return;
+    await submitRules({
+      cascadeEmployeeAssignments: true,
+      rulesToSave: pendingCascadeConfirmation.rules,
+    });
+  }
+
   return (
     <div className="p-6 max-w-full space-y-5">
+      {pendingCascadeConfirmation ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-amber-200 bg-amber-50 p-4">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <div>
+                <h3 className="text-base font-semibold text-amber-900">Confirmar remoción de empresa y empleados</h3>
+                <p className="mt-1 text-sm text-amber-800">{pendingCascadeConfirmation.message}</p>
+              </div>
+            </div>
+            <div className="max-h-[55vh] space-y-4 overflow-y-auto p-4">
+              {pendingCascadeConfirmation.conflicts.map((conflict) => (
+                <div key={conflict.company_id} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold text-slate-800">{conflict.company_name || conflict.company_id}</div>
+                    <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
+                      {conflict.assigned_employee_count} empleado{conflict.assigned_employee_count === 1 ? '' : 's'} se removerán
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-1 text-xs text-slate-600 md:grid-cols-2">
+                    {conflict.employees.slice(0, 40).map((employee) => (
+                      <div key={employee.employee_id} className="truncate rounded bg-slate-50 px-2 py-1">
+                        {employeeConflictLabel(employee)}
+                      </div>
+                    ))}
+                  </div>
+                  {conflict.employees.length > 40 ? (
+                    <div className="mt-2 text-xs text-slate-500">
+                      Y {conflict.employees.length - 40} empleado{conflict.employees.length - 40 === 1 ? '' : 's'} adicional{conflict.employees.length - 40 === 1 ? '' : 'es'}.
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t bg-slate-50 p-4 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPendingCascadeConfirmation(null)}
+                disabled={isSaving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="bg-red-600 text-white hover:bg-red-700"
+                onClick={() => void confirmCascadeRemoval()}
+                disabled={isSaving}
+              >
+                {isSaving ? 'Removiendo...' : 'Remover empresa y empleados'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <SystemAdminPageHeader
         icon={ShieldCheck}
         title="Alcances por Usuario"

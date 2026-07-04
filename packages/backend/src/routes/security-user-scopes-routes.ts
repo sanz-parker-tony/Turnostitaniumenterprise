@@ -17,6 +17,18 @@ type ScopeRulePayload = {
   employee_profile_id: string | null;
 };
 
+type ScopeRemovalConflict = {
+  company_id: string;
+  company_name: string | null;
+  assigned_employee_count: number;
+  employees: Array<{
+    employee_id: string;
+    employee_code: string | null;
+    employee_name: string | null;
+    employee_lastname: string | null;
+  }>;
+};
+
 const router = Router();
 
 async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
@@ -193,6 +205,65 @@ async function validateRuleReferencesBelongTenant(
   }
 
   return { ok: true };
+}
+
+async function getRemovedCompanyAssignmentConflicts(
+  tenantId: string,
+  userRoleId: string,
+  removedCompanyIds: string[]
+): Promise<ScopeRemovalConflict[]> {
+  if (removedCompanyIds.length === 0) return [];
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT
+        c.id::text AS company_id,
+        c.company_name,
+        e.id::text AS employee_id,
+        e.employee_code,
+        e.employee_name,
+        e.employee_lastname
+      FROM user_role_employee_assignments ura
+      JOIN employees e
+        ON e.id = ura.employee_id
+       AND e.tenant_id = ura.tenant_id
+       AND e.is_active = true
+      JOIN employee_companies ec
+        ON ec.employee_id = ura.employee_id
+       AND ec.tenant_id = ura.tenant_id
+       AND ec.is_active = true
+       AND ec.company_id = ANY($3::uuid[])
+      JOIN companies c
+        ON c.id = ec.company_id
+      WHERE ura.tenant_id = $1
+        AND ura.user_role_id = $2
+        AND ura.is_active = true
+      ORDER BY c.company_name ASC, e.employee_lastname ASC, e.employee_name ASC, e.employee_code ASC
+    `,
+    [tenantId, userRoleId, removedCompanyIds]
+  );
+
+  const byCompany = new Map<string, ScopeRemovalConflict>();
+  for (const row of result.rows) {
+    const companyId = String(row.company_id);
+    const current: ScopeRemovalConflict = byCompany.get(companyId) || {
+      company_id: companyId,
+      company_name: row.company_name || null,
+      assigned_employee_count: 0,
+      employees: [],
+    };
+
+    current.assigned_employee_count += 1;
+    current.employees.push({
+      employee_id: String(row.employee_id),
+      employee_code: row.employee_code || null,
+      employee_name: row.employee_name || null,
+      employee_lastname: row.employee_lastname || null,
+    });
+    byCompany.set(companyId, current);
+  }
+
+  return Array.from(byCompany.values());
 }
 
 function normalizeRuleId(raw: unknown): string | null {
@@ -696,6 +767,7 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
     if (rules === null) {
       return res.status(400).json({ error: 'Body invalido: rules debe ser un arreglo' });
     }
+    const cascadeEmployeeAssignments = req.body?.cascade_employee_assignments === true;
 
     const parsedRules: ScopeRulePayload[] = rules.map((raw: any) => ({
       company_id: normalizeRuleId(raw?.company_id),
@@ -739,6 +811,33 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
         .values()
     );
 
+    const currentCompaniesResult = await pool.query(
+      `
+        SELECT DISTINCT company_id::text AS company_id
+        FROM user_role_scope_rules
+        WHERE tenant_id = $1
+          AND user_role_id = $2
+          AND is_active = true
+          AND company_id IS NOT NULL
+      `,
+      [ctx.tenantId, userRoleId]
+    );
+    const nextCompanyIds = new Set(dedupedRules.map((rule) => String(rule.company_id || '')).filter(Boolean));
+    const removedCompanyIds = currentCompaniesResult.rows
+      .map((row) => String(row.company_id || '').trim())
+      .filter((companyId) => companyId && !nextCompanyIds.has(companyId));
+
+    const conflicts = await getRemovedCompanyAssignmentConflicts(ctx.tenantId, userRoleId, removedCompanyIds);
+    if (conflicts.length > 0 && !cascadeEmployeeAssignments) {
+      return res.status(409).json({
+        success: false,
+        code: 'SCOPE_COMPANY_HAS_ASSIGNED_EMPLOYEES',
+        requires_confirmation: true,
+        message: 'Una o mas empresas removidas tienen empleados asignados al usuario. Confirma para remover tambien esos empleados.',
+        conflicts,
+      });
+    }
+
     await client.query('BEGIN');
 
     await client.query(
@@ -749,6 +848,31 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
       `,
       [ctx.tenantId, userRoleId]
     );
+
+    let revokedEmployeeAssignments = 0;
+    if (conflicts.length > 0 && cascadeEmployeeAssignments) {
+      const cascadeResult = await client.query(
+        `
+          UPDATE user_role_employee_assignments ura
+             SET is_active = false,
+                 updated_by = $4,
+                 updated_at = now()
+           WHERE ura.tenant_id = $1
+             AND ura.user_role_id = $2
+             AND ura.is_active = true
+             AND EXISTS (
+               SELECT 1
+               FROM employee_companies ec
+               WHERE ec.tenant_id = ura.tenant_id
+                 AND ec.employee_id = ura.employee_id
+                 AND ec.is_active = true
+                 AND ec.company_id = ANY($3::uuid[])
+             )
+        `,
+        [ctx.tenantId, userRoleId, removedCompanyIds, 'TENANT_ADMIN']
+      );
+      revokedEmployeeAssignments = cascadeResult.rowCount || 0;
+    }
 
     for (const rule of dedupedRules) {
       await client.query(
@@ -803,6 +927,7 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
       success: true,
       message: 'Reglas de alcance actualizadas exitosamente',
       applied_count: dedupedRules.length,
+      revoked_employee_assignments: revokedEmployeeAssignments,
     });
   } catch (error: any) {
     await client.query('ROLLBACK');
