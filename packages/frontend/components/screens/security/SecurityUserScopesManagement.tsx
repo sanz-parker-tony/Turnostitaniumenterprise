@@ -79,6 +79,12 @@ type PendingCascadeConfirmation = {
   conflicts: ScopeRemovalConflict[];
 };
 
+type PendingDraftRemovalConfirmation = {
+  index: number;
+  companyIds: string[];
+  conflicts: ScopeRemovalConflict[];
+};
+
 const API_BASE = buildApiUrl('/security-user-scopes');
 
 const emptyRuleForm: ScopeRuleForm = {
@@ -199,7 +205,10 @@ export default function SecurityUserScopesManagement() {
   const [isLoadingTargets, setIsLoadingTargets] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCheckingRemoval, setIsCheckingRemoval] = useState(false);
   const [pendingCascadeConfirmation, setPendingCascadeConfirmation] = useState<PendingCascadeConfirmation | null>(null);
+  const [pendingDraftRemovalConfirmation, setPendingDraftRemovalConfirmation] = useState<PendingDraftRemovalConfirmation | null>(null);
+  const [confirmedCascadeCompanyIds, setConfirmedCascadeCompanyIds] = useState<Set<string>>(new Set());
 
   const companies = tree;
   const workLocationOptions = useMemo(() => getWorkLocations(tree, form), [tree, form]);
@@ -279,6 +288,9 @@ export default function SecurityUserScopesManagement() {
         }))
       );
       setForm(emptyRuleForm);
+      setPendingCascadeConfirmation(null);
+      setPendingDraftRemovalConfirmation(null);
+      setConfirmedCascadeCompanyIds(new Set());
     } catch (error: any) {
       toast.error(error?.message || 'Error cargando reglas de alcance');
     } finally {
@@ -316,8 +328,65 @@ export default function SecurityUserScopesManagement() {
     setForm({ ...emptyRuleForm, company_id: form.company_id });
   }
 
-  function removeDraftRule(index: number) {
+  function removeDraftRuleAt(index: number) {
     setDraftRules((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  function isPersistedRule(rule: ScopeRuleForm): boolean {
+    return rules.some((savedRule) => ruleKey(savedRule) === ruleKey(rule));
+  }
+
+  function wouldRemoveCompanyFromDraft(rule: ScopeRuleForm, index: number): boolean {
+    return !draftRules.some((candidate, currentIndex) => (
+      currentIndex !== index && candidate.company_id === rule.company_id
+    ));
+  }
+
+  async function requestRemoveDraftRule(index: number) {
+    const rule = draftRules[index];
+    if (!rule) return;
+
+    if (!selectedUserRoleId || !isPersistedRule(rule) || !wouldRemoveCompanyFromDraft(rule, index)) {
+      removeDraftRuleAt(index);
+      return;
+    }
+
+    setIsCheckingRemoval(true);
+    try {
+      const response = await authorizedFetch(`/${selectedUserRoleId}/scope-rules/removal-preview`, {
+        method: 'POST',
+        body: JSON.stringify({ company_ids: [rule.company_id] }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || 'No se pudo validar la remoción del alcance');
+
+      const conflicts = (payload?.conflicts || []) as ScopeRemovalConflict[];
+      if (conflicts.length === 0) {
+        removeDraftRuleAt(index);
+        return;
+      }
+
+      setPendingDraftRemovalConfirmation({
+        index,
+        companyIds: conflicts.map((conflict) => conflict.company_id),
+        conflicts,
+      });
+    } catch (error: any) {
+      toast.error(error?.message || 'Error validando remoción del alcance');
+    } finally {
+      setIsCheckingRemoval(false);
+    }
+  }
+
+  function confirmDraftRuleRemoval() {
+    if (!pendingDraftRemovalConfirmation) return;
+    removeDraftRuleAt(pendingDraftRemovalConfirmation.index);
+    setConfirmedCascadeCompanyIds((prev) => {
+      const next = new Set(prev);
+      pendingDraftRemovalConfirmation.companyIds.forEach((companyId) => next.add(companyId));
+      return next;
+    });
+    setPendingDraftRemovalConfirmation(null);
   }
 
   function findRuleDisplay(rule: ScopeRuleForm): ScopeRule {
@@ -347,14 +416,22 @@ export default function SecurityUserScopesManagement() {
     };
   }
 
-  async function submitRules(options?: { cascadeEmployeeAssignments?: boolean; rulesToSave?: ScopeRuleForm[] }) {
+  function getRemovedPersistedCompanyIds(rulesToSave: ScopeRuleForm[]): string[] {
+    const currentCompanyIds = new Set(rules.map((rule) => rule.company_id).filter(Boolean));
+    const nextCompanyIds = new Set(rulesToSave.map((rule) => rule.company_id).filter(Boolean));
+    return Array.from(currentCompanyIds).filter((companyId) => !nextCompanyIds.has(companyId));
+  }
+
+  async function submitRules(options?: { cascadeCompanyIds?: string[]; rulesToSave?: ScopeRuleForm[] }) {
     if (!selectedUserRoleId) {
       toast.error('Selecciona un usuario objetivo');
       return;
     }
 
     const rulesToSave = options?.rulesToSave || draftRules;
-    const cascadeEmployeeAssignments = options?.cascadeEmployeeAssignments === true;
+    const removedPersistedCompanyIds = getRemovedPersistedCompanyIds(rulesToSave);
+    const cascadeCompanyIds = options?.cascadeCompanyIds || Array.from(confirmedCascadeCompanyIds)
+      .filter((companyId) => removedPersistedCompanyIds.includes(companyId));
 
     setIsSaving(true);
     try {
@@ -362,7 +439,7 @@ export default function SecurityUserScopesManagement() {
         method: 'PUT',
         body: JSON.stringify({
           rules: rulesToSave.map(toRulePayload),
-          cascade_employee_assignments: cascadeEmployeeAssignments,
+          cascade_company_ids: cascadeCompanyIds,
         }),
       });
       const payload = await response.json();
@@ -397,7 +474,7 @@ export default function SecurityUserScopesManagement() {
   async function confirmCascadeRemoval() {
     if (!pendingCascadeConfirmation) return;
     await submitRules({
-      cascadeEmployeeAssignments: true,
+      cascadeCompanyIds: pendingCascadeConfirmation.conflicts.map((conflict) => conflict.company_id),
       rulesToSave: pendingCascadeConfirmation.rules,
     });
   }
@@ -454,6 +531,64 @@ export default function SecurityUserScopesManagement() {
                 disabled={isSaving}
               >
                 {isSaving ? 'Removiendo...' : 'Remover empresa y empleados'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingDraftRemovalConfirmation ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-2xl">
+            <div className="flex items-start gap-3 border-b border-amber-200 bg-amber-50 p-4">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />
+              <div>
+                <h3 className="text-base font-semibold text-amber-900">Quitar alcance del borrador</h3>
+                <p className="mt-1 text-sm text-amber-800">
+                  Esta empresa ya tiene empleados autorizados. Si quitas el alcance y luego guardas, esos empleados también se removerán del usuario.
+                </p>
+              </div>
+            </div>
+            <div className="max-h-[55vh] space-y-4 overflow-y-auto p-4">
+              {pendingDraftRemovalConfirmation.conflicts.map((conflict) => (
+                <div key={conflict.company_id} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold text-slate-800">{conflict.company_name || conflict.company_id}</div>
+                    <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-medium text-red-700">
+                      {conflict.assigned_employee_count} empleado{conflict.assigned_employee_count === 1 ? '' : 's'} se removerán al guardar
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-1 text-xs text-slate-600 md:grid-cols-2">
+                    {conflict.employees.slice(0, 40).map((employee) => (
+                      <div key={employee.employee_id} className="truncate rounded bg-slate-50 px-2 py-1">
+                        {employeeConflictLabel(employee)}
+                      </div>
+                    ))}
+                  </div>
+                  {conflict.employees.length > 40 ? (
+                    <div className="mt-2 text-xs text-slate-500">
+                      Y {conflict.employees.length - 40} empleado{conflict.employees.length - 40 === 1 ? '' : 's'} adicional{conflict.employees.length - 40 === 1 ? '' : 'es'}.
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t bg-slate-50 p-4 sm:flex-row sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPendingDraftRemovalConfirmation(null)}
+                disabled={isSaving}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="bg-red-600 text-white hover:bg-red-700"
+                onClick={confirmDraftRuleRemoval}
+                disabled={isSaving}
+              >
+                Quitar de la lista
               </Button>
             </div>
           </div>
@@ -672,7 +807,8 @@ export default function SecurityUserScopesManagement() {
                         <button
                           type="button"
                           className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
-                          onClick={() => removeDraftRule(index)}
+                          onClick={() => void requestRemoveDraftRule(index)}
+                          disabled={isCheckingRemoval || isSaving}
                           title="Quitar regla"
                         >
                           <Trash2 className="h-4 w-4" />

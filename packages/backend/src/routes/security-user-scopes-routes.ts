@@ -748,6 +748,48 @@ router.get('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
   }
 });
 
+router.post('/:user_role_id/scope-rules/removal-preview', async (req: Request, res: Response) => {
+  try {
+    const ctx = await resolveAuthContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+
+    const isTenantAdmin = await ensureTenantAdmin(ctx);
+    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+
+    const userRoleId = String(req.params.user_role_id || '').trim();
+    if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
+
+    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
+    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+
+    const companyIds = Array.isArray(req.body?.company_ids)
+      ? Array.from(new Set(req.body.company_ids.map((value: any) => normalizeRuleId(value)).filter(Boolean) as string[]))
+      : [];
+
+    if (companyIds.length === 0) {
+      return res.status(400).json({ error: 'company_ids debe contener al menos una empresa' });
+    }
+
+    for (const companyId of companyIds) {
+      const belongsToTenant = await validateScopeEntityBelongsTenant(ctx.tenantId, 'COMPANY', companyId);
+      if (!belongsToTenant) {
+        return res.status(400).json({ error: 'Una empresa no pertenece al tenant o no existe', company_id: companyId });
+      }
+    }
+
+    const conflicts = await getRemovedCompanyAssignmentConflicts(ctx.tenantId, userRoleId, companyIds);
+
+    return res.status(200).json({
+      success: true,
+      conflicts,
+      has_conflicts: conflicts.length > 0,
+    });
+  } catch (error: any) {
+    console.error('[SECURITY-SCOPES] POST /:user_role_id/scope-rules/removal-preview error:', error);
+    return res.status(500).json({ error: 'Error interno del servidor', details: error.message });
+  }
+});
+
 router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => {
   const client = await pool.connect();
   try {
@@ -768,6 +810,9 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'Body invalido: rules debe ser un arreglo' });
     }
     const cascadeEmployeeAssignments = req.body?.cascade_employee_assignments === true;
+    const requestedCascadeCompanyIds = Array.isArray(req.body?.cascade_company_ids)
+      ? Array.from(new Set(req.body.cascade_company_ids.map((value: any) => normalizeRuleId(value)).filter(Boolean) as string[]))
+      : [];
 
     const parsedRules: ScopeRulePayload[] = rules.map((raw: any) => ({
       company_id: normalizeRuleId(raw?.company_id),
@@ -828,13 +873,17 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
       .filter((companyId) => companyId && !nextCompanyIds.has(companyId));
 
     const conflicts = await getRemovedCompanyAssignmentConflicts(ctx.tenantId, userRoleId, removedCompanyIds);
-    if (conflicts.length > 0 && !cascadeEmployeeAssignments) {
+    const requestedCascadeCompanySet = new Set(
+      cascadeEmployeeAssignments ? removedCompanyIds : requestedCascadeCompanyIds
+    );
+    const unconfirmedConflicts = conflicts.filter((conflict) => !requestedCascadeCompanySet.has(conflict.company_id));
+    if (unconfirmedConflicts.length > 0) {
       return res.status(409).json({
         success: false,
         code: 'SCOPE_COMPANY_HAS_ASSIGNED_EMPLOYEES',
         requires_confirmation: true,
         message: 'Una o mas empresas removidas tienen empleados asignados al usuario. Confirma para remover tambien esos empleados.',
-        conflicts,
+        conflicts: unconfirmedConflicts,
       });
     }
 
@@ -850,7 +899,8 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
     );
 
     let revokedEmployeeAssignments = 0;
-    if (conflicts.length > 0 && cascadeEmployeeAssignments) {
+    const confirmedCascadeCompanyIds = removedCompanyIds.filter((companyId) => requestedCascadeCompanySet.has(companyId));
+    if (confirmedCascadeCompanyIds.length > 0) {
       const cascadeResult = await client.query(
         `
           UPDATE user_role_employee_assignments ura
@@ -869,7 +919,7 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
                  AND ec.company_id = ANY($3::uuid[])
              )
         `,
-        [ctx.tenantId, userRoleId, removedCompanyIds, 'TENANT_ADMIN']
+        [ctx.tenantId, userRoleId, confirmedCascadeCompanyIds, 'TENANT_ADMIN']
       );
       revokedEmployeeAssignments = cascadeResult.rowCount || 0;
     }
