@@ -2,8 +2,9 @@
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, CircleMarker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, Marker, Tooltip, useMap } from 'react-leaflet';
 import type { LatLngBoundsExpression, LatLngExpression } from 'leaflet';
+import { divIcon } from 'leaflet';
 import { MapPinned, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
@@ -35,6 +36,18 @@ interface RoutePoint {
   snapshot_path: string | null;
 }
 
+interface NumberedRoutePoint {
+  point: RoutePoint;
+  sequence: number;
+  position: [number, number];
+  duplicateCount: number;
+}
+
+interface MapFocusTarget {
+  position: [number, number];
+  sequence: number;
+}
+
 function getToken() {
   return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
 }
@@ -60,6 +73,64 @@ function pointLabel(point: RoutePoint): string {
   return point.point_type === 'ROUTE_TRACKING' ? 'Recorrido' : (point.event_label || 'Asistencia');
 }
 
+function coordinateKey(point: RoutePoint): string {
+  return `${Number(point.latitud).toFixed(6)},${Number(point.longitud).toFixed(6)}`;
+}
+
+function duplicateMarkerOffset(duplicateIndex: number, duplicateCount: number): { x: number; y: number } {
+  if (duplicateCount <= 1) return { x: 0, y: 0 };
+  const angle = ((Math.PI * 2) / duplicateCount) * duplicateIndex - Math.PI / 2;
+  const radius = duplicateCount <= 4 ? 36 : 48;
+  return {
+    x: Math.round(Math.cos(angle) * radius),
+    y: Math.round(Math.sin(angle) * radius),
+  };
+}
+
+function visualDuplicatePosition(point: RoutePoint, duplicateIndex: number, duplicateCount: number): [number, number] {
+  const latitud = Number(point.latitud);
+  const longitud = Number(point.longitud);
+  if (duplicateCount <= 1) return [latitud, longitud];
+
+  const offset = duplicateMarkerOffset(duplicateIndex, duplicateCount);
+  const metersPerDegreeLat = 111_320;
+  const metersPerDegreeLng = metersPerDegreeLat * Math.cos((latitud * Math.PI) / 180);
+  const metersPerPixel = 6;
+
+  return [
+    latitud - (offset.y * metersPerPixel) / metersPerDegreeLat,
+    longitud + (offset.x * metersPerPixel) / metersPerDegreeLng,
+  ];
+}
+
+function numberedPointIcon(point: RoutePoint, sequence: number) {
+  const color = pointColor(point.point_type);
+
+  return divIcon({
+    className: 'employee-route-numbered-marker',
+    html: `
+      <div style="
+        align-items:center;
+        background:${color};
+        border:2px solid #ffffff;
+        border-radius:9999px;
+        box-shadow:0 2px 8px rgba(15,23,42,0.35);
+        color:#ffffff;
+        display:flex;
+        font-size:11px;
+        font-weight:700;
+        height:28px;
+        justify-content:center;
+        line-height:1;
+        width:28px;
+      ">${sequence}</div>
+    `,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    tooltipAnchor: [0, -16],
+  });
+}
+
 function MapBounds({ positions }: { positions: LatLngExpression[] }) {
   const map = useMap();
 
@@ -75,6 +146,35 @@ function MapBounds({ positions }: { positions: LatLngExpression[] }) {
   return null;
 }
 
+function MapFocusController({ target }: { target: MapFocusTarget | null }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!target) return;
+    const mapMaxZoom = map.getMaxZoom();
+    const zoom = Number.isFinite(mapMaxZoom) ? mapMaxZoom : 19;
+    map.flyTo(target.position, zoom, { animate: true, duration: 0.8 });
+  }, [map, target]);
+
+  return null;
+}
+
+function PointDetails({ point, sequence, duplicateCount }: { point: RoutePoint; sequence: number; duplicateCount?: number }) {
+  return (
+    <div className="space-y-1 text-xs">
+      <p className="font-semibold">{sequence}. {pointLabel(point)}</p>
+      <p>{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
+      <p>{point.location_label || 'Sin recinto asociado'}</p>
+      {point.status_label ? <p>Estado: {point.status_label}</p> : null}
+      <p>{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
+      {point.location_accuracy_meters !== null ? <p>Precisión GPS: {Math.round(Number(point.location_accuracy_meters))} m</p> : null}
+      {point.location_label && point.distance_to_nearest_location_meters !== null ? <p>Distancia a recinto: {Math.round(Number(point.distance_to_nearest_location_meters))} m</p> : null}
+      {duplicateCount && duplicateCount > 1 ? <p className="text-slate-500">Hay {duplicateCount} puntos en esta misma coordenada.</p> : null}
+      {point.notes ? <p>Notas: {point.notes}</p> : null}
+    </div>
+  );
+}
+
 export default function EmployeeRouteTrackingReport() {
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
@@ -86,6 +186,7 @@ export default function EmployeeRouteTrackingReport() {
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingRoute, setLoadingRoute] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mapFocusTarget, setMapFocusTarget] = useState<MapFocusTarget | null>(null);
 
   const request = async (path: string) => {
     const response = await fetch(buildApiUrl(path), {
@@ -153,9 +254,35 @@ export default function EmployeeRouteTrackingReport() {
     if (selectedEmployeeId) void loadRoute();
   }, [selectedEmployeeId]);
 
+  const numberedPoints = useMemo<NumberedRoutePoint[]>(() => {
+    const totals = new Map<string, number>();
+    const occurrences = new Map<string, number>();
+
+    points.forEach((point) => {
+      const key = coordinateKey(point);
+      totals.set(key, (totals.get(key) || 0) + 1);
+    });
+
+    return points.map((point, index) => {
+      const key = coordinateKey(point);
+      const duplicateIndex = occurrences.get(key) || 0;
+      occurrences.set(key, duplicateIndex + 1);
+
+      return {
+        point,
+        sequence: index + 1,
+        position: visualDuplicatePosition(point, duplicateIndex, totals.get(key) || 1),
+        duplicateCount: totals.get(key) || 1,
+      };
+    });
+  }, [points]);
   const positions = useMemo<LatLngExpression[]>(
-    () => points.map((point) => [Number(point.latitud), Number(point.longitud)]),
-    [points]
+    () => numberedPoints.map((point) => point.position),
+    [numberedPoints]
+  );
+  const routeLinePositions = useMemo<LatLngExpression[]>(
+    () => numberedPoints.map((point) => point.position),
+    [numberedPoints]
   );
   const routeTrackingCount = points.filter((point) => point.point_type === 'ROUTE_TRACKING').length;
   const attendanceCount = points.filter((point) => point.point_type === 'ATTENDANCE').length;
@@ -265,29 +392,25 @@ export default function EmployeeRouteTrackingReport() {
               Sin puntos geográficos para el rango seleccionado.
             </div>
           ) : (
-            <MapContainer center={positions[0]} zoom={14} className="h-full w-full">
+            <MapContainer center={positions[0]} zoom={14} maxZoom={19} className="h-full w-full">
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                maxZoom={19}
               />
               <MapBounds positions={positions} />
-              {positions.length > 1 ? <Polyline positions={positions} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.75 }} /> : null}
-              {points.map((point, index) => (
-                <CircleMarker
+              <MapFocusController target={mapFocusTarget} />
+              {routeLinePositions.length > 1 ? <Polyline positions={routeLinePositions} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.75 }} /> : null}
+              {numberedPoints.map(({ point, sequence, position, duplicateCount }) => (
+                <Marker
                   key={`${point.point_type}-${point.id}`}
-                  center={[Number(point.latitud), Number(point.longitud)]}
-                  radius={index === 0 || index === points.length - 1 ? 8 : 6}
-                  pathOptions={{ color: pointColor(point.point_type), fillColor: pointColor(point.point_type), fillOpacity: 0.9 }}
+                  position={position}
+                  icon={numberedPointIcon(point, sequence)}
                 >
-                  <Popup>
-                    <div className="space-y-1 text-xs">
-                      <p className="font-semibold">{index + 1}. {pointLabel(point)}</p>
-                      <p>{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
-                      <p>{point.location_label || 'Sin recinto asociado'}</p>
-                      {point.location_label && point.distance_to_nearest_location_meters !== null ? <p>Distancia a recinto: {Math.round(Number(point.distance_to_nearest_location_meters))} m</p> : null}
-                    </div>
-                  </Popup>
-                </CircleMarker>
+                  <Tooltip direction="top" opacity={1} sticky>
+                    <PointDetails point={point} sequence={sequence} duplicateCount={duplicateCount} />
+                  </Tooltip>
+                </Marker>
               ))}
             </MapContainer>
           )}
@@ -299,12 +422,32 @@ export default function EmployeeRouteTrackingReport() {
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {points.length === 0 ? (
               <p className="rounded-lg border bg-slate-50 px-3 py-2 text-sm text-slate-500">Sin puntos para mostrar.</p>
-            ) : points.map((point, index) => (
-              <div key={`${point.point_type}-list-${point.id}`} className="rounded-lg border px-3 py-2 text-sm">
+            ) : numberedPoints.map(({ point, sequence, position, duplicateCount }) => (
+              <div
+                key={`${point.point_type}-list-${point.id}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setMapFocusTarget({ position, sequence })}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    setMapFocusTarget({ position, sequence });
+                  }
+                }}
+                className="cursor-pointer rounded-lg border px-3 py-2 text-left text-sm transition hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium text-slate-900">{index + 1}. {pointLabel(point)}</p>
-                    <p className="text-xs text-slate-500">{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
+                  <div className="flex min-w-0 gap-2">
+                    <span
+                      className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full border-2 border-white text-xs font-bold text-white shadow-sm"
+                      style={{ backgroundColor: pointColor(point.point_type) }}
+                    >
+                      {sequence}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900">{pointLabel(point)}</p>
+                      <p className="text-xs text-slate-500">{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
+                    </div>
                   </div>
                   <span className={`rounded-full px-2 py-1 text-xs font-semibold ${point.point_type === 'ROUTE_TRACKING' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
                     {point.point_type === 'ROUTE_TRACKING' ? 'Recorrido' : 'Asistencia'}
@@ -312,6 +455,7 @@ export default function EmployeeRouteTrackingReport() {
                 </div>
                 <p className="mt-1 text-xs text-slate-600">{point.location_label || 'Sin recinto asociado'}</p>
                 <p className="text-xs text-slate-500">{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
+                {duplicateCount > 1 ? <p className="text-xs text-amber-700">Comparte coordenada con {duplicateCount - 1} punto(s).</p> : null}
               </div>
             ))}
           </div>

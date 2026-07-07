@@ -224,6 +224,11 @@ function toHour48(minutes: number): string {
   return `${pad2(hh)}:${pad2(mm)}`;
 }
 
+function timelineTickLabel(hours: number): string {
+  const normalizedHour = hours % 24;
+  return `${pad2(normalizedHour)}h00`;
+}
+
 function percentOfTimeline(minutes: number): number {
   return (Math.max(0, Math.min(MINUTES_IN_48H, minutes)) / MINUTES_IN_48H) * 100;
 }
@@ -1302,7 +1307,7 @@ export function ShiftConstructorManagement() {
                     </div>
                     <div className="mb-2 flex justify-between text-[11px] text-gray-500">
                       {Array.from({ length: 9 }).map((_, index) => (
-                        <span key={index}>{pad2(index * 6)}:00</span>
+                        <span key={index}>{timelineTickLabel(index * 6)}</span>
                       ))}
                     </div>
 
