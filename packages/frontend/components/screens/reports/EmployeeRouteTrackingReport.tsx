@@ -159,18 +159,25 @@ function MapFocusController({ target }: { target: MapFocusTarget | null }) {
   return null;
 }
 
-function PointDetails({ point, sequence, duplicateCount }: { point: RoutePoint; sequence: number; duplicateCount?: number }) {
+function PointDetails({ point, sequence }: { point: RoutePoint; sequence: number }) {
+  const contextLabel = point.point_type === 'ROUTE_TRACKING'
+    ? 'Fuera de recinto autorizado'
+    : point.location_label || 'Sin recinto asociado';
+  const statusLabel = point.point_type === 'ROUTE_TRACKING'
+    ? point.status_label || 'Punto de recorrido registrado'
+    : point.status_label;
+  const notesLabel = point.point_type === 'ROUTE_TRACKING'
+    ? 'marcación de recorrido'
+    : point.notes;
+
   return (
     <div className="space-y-1 text-xs">
       <p className="font-semibold">{sequence}. {pointLabel(point)}</p>
       <p>{formatClientDateTime(point.event_datetime, 'es-EC', point.event_time_zone || undefined)}</p>
-      <p>{point.location_label || 'Sin recinto asociado'}</p>
-      {point.status_label ? <p>Estado: {point.status_label}</p> : null}
+      <p>{contextLabel}</p>
+      {statusLabel ? <p>Estado: {statusLabel}</p> : null}
       <p>{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
-      {point.location_accuracy_meters !== null ? <p>Precisión GPS: {Math.round(Number(point.location_accuracy_meters))} m</p> : null}
-      {point.location_label && point.distance_to_nearest_location_meters !== null ? <p>Distancia a recinto: {Math.round(Number(point.distance_to_nearest_location_meters))} m</p> : null}
-      {duplicateCount && duplicateCount > 1 ? <p className="text-slate-500">Hay {duplicateCount} puntos en esta misma coordenada.</p> : null}
-      {point.notes ? <p>Notas: {point.notes}</p> : null}
+      {notesLabel ? <p>Notas: {notesLabel}</p> : null}
     </div>
   );
 }
@@ -408,7 +415,7 @@ export default function EmployeeRouteTrackingReport() {
                   icon={numberedPointIcon(point, sequence)}
                 >
                   <Tooltip direction="top" opacity={1} sticky>
-                    <PointDetails point={point} sequence={sequence} duplicateCount={duplicateCount} />
+                    <PointDetails point={point} sequence={sequence} />
                   </Tooltip>
                 </Marker>
               ))}
@@ -453,9 +460,17 @@ export default function EmployeeRouteTrackingReport() {
                     {point.point_type === 'ROUTE_TRACKING' ? 'Recorrido' : 'Asistencia'}
                   </span>
                 </div>
-                <p className="mt-1 text-xs text-slate-600">{point.location_label || 'Sin recinto asociado'}</p>
-                <p className="text-xs text-slate-500">{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
-                {duplicateCount > 1 ? <p className="text-xs text-amber-700">Comparte coordenada con {duplicateCount - 1} punto(s).</p> : null}
+                {point.point_type === 'ROUTE_TRACKING' ? (
+                  <>
+                    <p className="mt-1 text-xs text-slate-600">fuera de recinto autorizado</p>
+                    <p className="text-xs text-slate-500">{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-1 text-xs text-slate-600">{point.location_label || 'Sin recinto asociado'}</p>
+                    <p className="text-xs text-slate-500">{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
+                  </>
+                )}
               </div>
             ))}
           </div>
