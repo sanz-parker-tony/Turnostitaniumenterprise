@@ -132,6 +132,8 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'RPT_PARAMETERS': '/dashboard/reports/parameters',
   'RPT_PERMISSIONS': '/dashboard/reports/permissions',
   'RPT_EXECUTIONS': '/dashboard/reports/executions',
+  'ATTENDANCE_REPORTS': '/dashboard/reports/attendance',
+  'OVERTIME_REPORTS': '/dashboard/reports/overtime',
 
   // ========== KIOSK (fuera de dashboard) ==========
   'KIOSK_PUNCH': '/kiosk/punch',

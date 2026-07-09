@@ -77,6 +77,7 @@ import systemMessageKeysRouter from './routes/system-message-keys-routes';
 import translationsManagementRouter from './routes/translations-management-routes';
 import systemReportsRouter from './routes/system-reports-routes';
 import routeTrackingRouter from './routes/route-tracking-routes';
+import overtimeReportsRouter from './routes/overtime-reports-routes';
 
 const router = Router();
 
@@ -5185,6 +5186,7 @@ router.use('/employee-absence-requests', requireAuth, employeeAbsenceRequestsRou
 // Kiosk (employee self-service)
 router.use('/kiosk', requireAuth, kioskRouter);
 router.use('/route-tracking', requireAuth, routeTrackingRouter);
+router.use('/overtime-reports', requireAuth, overtimeReportsRouter);
 router.use('/notifications', requireAuth, notificationsRouter);
 router.use('/system-message-keys', requireAuth, systemMessageKeysRouter);
 router.use('/messages-management', requireAuth, systemMessageKeysRouter); // Legacy alias
