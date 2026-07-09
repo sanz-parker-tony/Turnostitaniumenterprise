@@ -55,6 +55,7 @@ import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsM
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 import EmployeeRouteTrackingReport from './screens/reports/EmployeeRouteTrackingReport';
 import EmployeeOvertimeReports from './screens/reports/EmployeeOvertimeReports';
+import EmployeeAnomalyReports from './screens/reports/EmployeeAnomalyReports';
 
 function InvalidRouteFallback({ path }: { path: string }) {
   return (
@@ -196,6 +197,7 @@ export function Router() {
     '/dashboard/reports/attendance': <EmployeeOvertimeReports />,
     '/dashboard/reports/route-tracking': <EmployeeRouteTrackingReport />,
     '/dashboard/reports/overtime': <EmployeeOvertimeReports />,
+    '/dashboard/reports/anomalies': <EmployeeAnomalyReports />,
 
     // ── Kiosko ───────────────────────────────────────────────────────────────
     '/dashboard/kiosk/timeclock': <KioskPunch />,
@@ -233,14 +235,30 @@ export function Router() {
     '/dashboard/security/system-reports':      <SystemReportsManagement />,
   };
 
+  const screenComponentMap: Record<string, JSX.Element> = {
+    OVERTIME_REPORTS: <EmployeeOvertimeReports />,
+    ATTENDANCE_ANOMALY_REPORTS: <EmployeeAnomalyReports />,
+    ROUTE_TRACKING_REPORT: <EmployeeRouteTrackingReport />,
+  };
+
+  const menuScreen = menuScreens.find((screen) => normalizePath(screen.route_path) === currentPath);
+  const configuredComponent = menuScreen ? screenComponentMap[menuScreen.screen_key] : null;
+  const isShellRoute = currentPath === '/dashboard';
+  const isKioskRoute = currentPath === '/kiosk/punch' || currentPath === '/kiosk/timeclock';
+  const isConfiguredRoute = Boolean(menuScreen);
+
+  if (configuredComponent) {
+    console.log('âœ… Renderizando componente configurado para:', menuScreen?.screen_key);
+    return configuredComponent;
+  }
+
   // Si la ruta existe en el mapa, renderizarla
-  if (routeMap[currentPath]) {
+  if (routeMap[currentPath] && (isConfiguredRoute || isShellRoute || isKioskRoute)) {
     console.log('✅ Renderizando componente para:', currentPath);
     return routeMap[currentPath];
   }
 
   // Si la ruta existe en permisos pero no tiene componente implementado
-  const menuScreen = menuScreens.find((screen) => normalizePath(screen.route_path) === currentPath);
   if (menuScreen) {
     return (
       <div className="min-h-[520px] w-full flex items-center justify-center p-6">

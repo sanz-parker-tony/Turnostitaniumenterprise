@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { BarChart3, Download, RefreshCw, Search } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { buildApiUrl } from '../../../utils/api-config';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
@@ -88,26 +89,7 @@ interface OvertimeSummaryRow {
   net_extra_100_minutes: number;
 }
 
-interface OvertimeAnomalyRow {
-  employee_id: string;
-  employee_code: string | null;
-  employee_full_name: string;
-  company_name: string | null;
-  department_name: string | null;
-  area_name: string | null;
-  payroll_group_name: string | null;
-  cost_center_name: string | null;
-  work_group_name: string | null;
-  issue_date: string;
-  anomaly_key: string;
-  anomaly_label: string;
-  anomaly_detail: string;
-  punch_count: number;
-  first_punch: string | null;
-  last_punch: string | null;
-}
-
-type ReportTab = 'detail' | 'summary' | 'anomalies';
+type ReportTab = 'detail' | 'summary';
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
@@ -196,29 +178,19 @@ function xlsRow(cells: XlsCell[]): string {
 }
 
 function downloadXls(filename: string, worksheetName: string, tableRows: string[]) {
-  const html = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head>
-  <meta charset="UTF-8" />
-  <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>${htmlEscape(worksheetName)}</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
-  <style>
-    body, table { font-family: Arial, sans-serif; font-size: 10pt; }
-    table { border-collapse: collapse; }
-    td { padding: 3px 5px; white-space: nowrap; }
-    .title { font-size: 13pt; font-weight: 700; text-align: center; }
-    .label { font-weight: 700; }
-    .group { font-weight: 700; background: #eef2ff; }
-    .header { font-weight: 700; border-top: 1px solid #666; border-bottom: 1px solid #666; background: #f3f4f6; text-align: center; }
-    .number { text-align: right; }
-    .total { font-weight: 700; border-top: 1px solid #999; }
-  </style>
-</head>
-<body><table>${tableRows.join('')}</table></body></html>`;
-  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  const table = document.createElement('table');
+  table.innerHTML = tableRows.join('');
+  const workbook = XLSX.utils.table_to_book(table, { sheet: worksheetName });
+  const worksheet = workbook.Sheets[worksheetName];
+  if (worksheet) {
+    worksheet['!cols'] = Array.from({ length: 18 }, () => ({ wch: 14 }));
+  }
+  const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename;
+  link.download = filename.replace(/\.xls$/i, '.xlsx');
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -346,7 +318,6 @@ export default function EmployeeOvertimeReports() {
   const [filters, setFilters] = useState<ReportFilters>({ payroll_groups: [], cost_centers: [], departments: [], areas: [], work_groups: [] });
   const [detailRows, setDetailRows] = useState<OvertimeDetailRow[]>([]);
   const [summaryRows, setSummaryRows] = useState<OvertimeSummaryRow[]>([]);
-  const [anomalyRows, setAnomalyRows] = useState<OvertimeAnomalyRow[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -408,18 +379,15 @@ export default function EmployeeOvertimeReports() {
       if (areaId) query.set('area_id', areaId);
       if (workGroupId) query.set('work_group_id', workGroupId);
 
-      const [detailPayload, summaryPayload, anomaliesPayload] = await Promise.all([
+      const [detailPayload, summaryPayload] = await Promise.all([
         request(`/overtime-reports/detail?${query.toString()}`),
         request(`/overtime-reports/summary?${query.toString()}`),
-        request(`/overtime-reports/anomalies?${query.toString()}`),
       ]);
       setDetailRows(consolidateDetailRows((detailPayload?.rows || []) as OvertimeDetailRow[]));
       setSummaryRows(((summaryPayload?.rows || []) as Array<OvertimeSummaryRow & { shift_date?: unknown }>).filter((row) => !row.shift_date));
-      setAnomalyRows((anomaliesPayload?.rows || []) as OvertimeAnomalyRow[]);
     } catch (requestError: any) {
       setDetailRows([]);
       setSummaryRows([]);
-      setAnomalyRows([]);
       setError(requestError?.message || 'No se pudieron cargar reportes');
     } finally {
       setLoadingReport(false);
@@ -802,7 +770,7 @@ export default function EmployeeOvertimeReports() {
   };
 
   const exportDetailXlsV2 = () => {
-    const columnCount = 17;
+    const columnCount = 16;
     const tableRows = reportHeaderRows('RPT_HORA_EXTRA_DETA', columnCount);
     const rowsByEmployee = new Map<string, OvertimeDetailRow[]>();
 
@@ -841,11 +809,11 @@ export default function EmployeeOvertimeReports() {
         ]));
       });
 
-      tableRows.push(xlsRow([{ value: 'Subtotal empleado', colspan: 7, className: 'total' }, ...totalValueCells(employeeRows)]));
+      tableRows.push(xlsRow([{ value: 'Subtotal empleado', colspan: 6, className: 'total' }, ...totalValueCells(employeeRows)]));
       tableRows.push(xlsRow(Array.from({ length: columnCount }, () => '')));
     });
 
-    tableRows.push(xlsRow([{ value: 'Total global', colspan: 7, className: 'total' }, ...totalValueCells(detailRows)]));
+    tableRows.push(xlsRow([{ value: 'Total global', colspan: 6, className: 'total' }, ...totalValueCells(detailRows)]));
     downloadXls(`rpt_hora_extra_deta_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_DETA', tableRows);
   };
 
@@ -874,54 +842,9 @@ export default function EmployeeOvertimeReports() {
     downloadXls(`rpt_hora_extra_resu_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_RESU', tableRows);
   };
 
-  const exportAnomaliesXls = () => {
-    const columnCount = 13;
-    const tableRows = reportHeaderRows('RPT_ANOMALIAS_ASISTENCIA', columnCount);
-    tableRows.push(xlsRow([
-      { value: 'Empleado', className: 'header' },
-      { value: 'Departamento', className: 'header' },
-      { value: 'Area', className: 'header' },
-      { value: 'Rol pago', className: 'header' },
-      { value: 'Centro costo', className: 'header' },
-      { value: 'Grupo trabajo', className: 'header' },
-      { value: 'Fecha', className: 'header' },
-      { value: 'Anomalia', className: 'header' },
-      { value: 'Detalle', className: 'header' },
-      { value: 'Marcaciones', className: 'header' },
-      { value: 'Primera marca', className: 'header' },
-      { value: 'Ultima marca', className: 'header' },
-      { value: 'Empresa', className: 'header' },
-    ]));
-
-    anomalyRows.forEach((row) => {
-      tableRows.push(xlsRow([
-        `${row.employee_code || row.employee_id} - ${row.employee_full_name}`,
-        row.department_name || '-',
-        row.area_name || '-',
-        row.payroll_group_name || '-',
-        row.cost_center_name || '-',
-        row.work_group_name || '-',
-        formatDate(row.issue_date),
-        row.anomaly_label,
-        row.anomaly_detail,
-        row.punch_count,
-        formatTime24(row.first_punch),
-        formatTime24(row.last_punch),
-        row.company_name || '-',
-      ]));
-    });
-
-    tableRows.push(xlsRow([{ value: `Total anomalías: ${anomalyRows.length}`, colspan: columnCount, className: 'total' }]));
-    downloadXls(`rpt_anomalias_asistencia_${dateFrom}_${dateTo}.xls`, 'RPT_ANOMALIAS_ASISTENCIA', tableRows);
-  };
-
   const exportCurrentTab = () => {
     if (activeTab === 'detail') {
       exportDetailXlsV2();
-      return;
-    }
-    if (activeTab === 'anomalies') {
-      exportAnomaliesXls();
       return;
     }
     exportSummaryXlsV2();
@@ -1073,7 +996,7 @@ export default function EmployeeOvertimeReports() {
             <button
               type="button"
               onClick={exportCurrentTab}
-              disabled={loadingReport || (activeTab === 'detail' ? detailRows.length === 0 : activeTab === 'summary' ? summaryDisplayRows.length === 0 : anomalyRows.length === 0)}
+              disabled={loadingReport || (activeTab === 'detail' ? detailRows.length === 0 : summaryDisplayRows.length === 0)}
               className="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm hover:bg-slate-50 disabled:opacity-50"
             >
               <Download className="size-4" />
@@ -1220,13 +1143,6 @@ export default function EmployeeOvertimeReports() {
           >
             Resumido por empleado
           </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('anomalies')}
-            className={`rounded-md px-3 py-2 text-sm font-semibold ${activeTab === 'anomalies' ? 'bg-indigo-600 text-white' : 'border text-slate-700 hover:bg-slate-50'}`}
-          >
-            Anomalías
-          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
@@ -1312,7 +1228,7 @@ export default function EmployeeOvertimeReports() {
                 )}
               </tbody>
             </table>
-          ) : activeTab === 'summary' ? (
+          ) : (
             <table className="min-w-[1500px] w-full text-left text-sm">
               <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
@@ -1370,44 +1286,6 @@ export default function EmployeeOvertimeReports() {
                     ))}
                   </tr>
                 ) : null}
-              </tbody>
-            </table>
-          ) : (
-            <table className="min-w-[1300px] w-full text-left text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">Empleado</th>
-                  <th className="px-3 py-2">Fecha</th>
-                  <th className="px-3 py-2">Anomalía</th>
-                  <th className="px-3 py-2">Detalle</th>
-                  <th className="px-3 py-2">Organización</th>
-                  <th className="px-3 py-2 text-right">Marc.</th>
-                  <th className="px-3 py-2">Primera marca</th>
-                  <th className="px-3 py-2">Última marca</th>
-                </tr>
-              </thead>
-              <tbody>
-                {anomalyRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-3 py-8 text-center text-slate-500">Sin anomalías para el periodo seleccionado.</td>
-                  </tr>
-                ) : anomalyRows.map((row, index) => (
-                  <tr key={`${row.employee_id}-${row.issue_date}-${row.anomaly_key}-${index}`} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-slate-900">{row.employee_full_name}</div>
-                      <div className="text-xs text-slate-500">{row.employee_code || '-'} · {row.company_name || '-'}</div>
-                    </td>
-                    <td className="px-3 py-2">{formatDate(row.issue_date)}</td>
-                    <td className="px-3 py-2 font-medium text-amber-700">{row.anomaly_label}</td>
-                    <td className="px-3 py-2 text-slate-600">{row.anomaly_detail}</td>
-                    <td className="px-3 py-2 text-xs text-slate-600">
-                      {[row.department_name, row.area_name, row.payroll_group_name, row.cost_center_name, row.work_group_name].filter(Boolean).join(' / ') || '-'}
-                    </td>
-                    <td className="px-3 py-2 text-right">{row.punch_count || 0}</td>
-                    <td className="px-3 py-2">{formatTime(row.first_punch)}</td>
-                    <td className="px-3 py-2">{formatTime(row.last_punch)}</td>
-                  </tr>
-                ))}
               </tbody>
             </table>
           )}

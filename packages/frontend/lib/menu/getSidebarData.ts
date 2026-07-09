@@ -5,7 +5,6 @@
  */
 
 import { ApiClient } from '../api-client';
-import { SCREEN_ROUTE_MAP } from '../auth/role-router';
 
 // ============================================================================
 // TIPOS
@@ -88,7 +87,7 @@ export async function getSidebarDataFromRPC(languageCode: string = 'es'): Promis
         screenName: screen.screen_name,
         screenTranslation: null, // No viene de la función actual
         iconKey: screen.screen_icon_key,
-        routePath: screen.screen_route || SCREEN_ROUTE_MAP[screen.screen_key] || '/dashboard',
+        routePath: screen.screen_route || '',
         sortOrder: screen.screen_display_order || 0,
       });
     });
