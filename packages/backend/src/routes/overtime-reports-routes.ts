@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 
 const router = Router();
@@ -13,7 +13,7 @@ function isIsoDate(value: string): boolean {
 }
 
 function parseBool(value: any): boolean {
-  return ['1', 'true', 'yes', 'si', 'sí'].includes(String(value ?? '').trim().toLowerCase());
+  return ['1', 'true', 'yes', 'si', 'sÃ­'].includes(String(value ?? '').trim().toLowerCase());
 }
 
 async function resolveViewerContext(req: Request) {
@@ -73,6 +73,9 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
         c.company_name,
         ec.work_location_id,
         wl.work_location_name,
+        COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
+        COALESCE(wl.state_id, c.company_state_id) AS employee_state_id,
+        COALESCE(wl.city_id, c.company_city_id) AS employee_city_id,
         ec.department_id,
         d.department_name,
         ec.area_id,
@@ -84,7 +87,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
         ec.work_group_id,
         wg.work_group_name,
         ec.hire_date,
-        ec.termination_date
+        ec.termination_date,
+        COALESCE(ec.work_on_holidays, false) AS work_on_holidays
       FROM public.employees e
       INNER JOIN public.employee_companies ec
         ON ec.employee_id = e.id
@@ -116,6 +120,9 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       c.company_name,
       scope.work_location_id,
       wl.work_location_name,
+      COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
+      COALESCE(wl.state_id, c.company_state_id) AS employee_state_id,
+      COALESCE(wl.city_id, c.company_city_id) AS employee_city_id,
       scope.department_id,
       d.department_name,
       scope.area_id,
@@ -127,7 +134,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       ec.work_group_id,
       wg.work_group_name,
       ec.hire_date,
-      ec.termination_date
+      ec.termination_date,
+      COALESCE(ec.work_on_holidays, false) AS work_on_holidays
     FROM public.user_roles ur
     INNER JOIN public.roles r
       ON r.id = ur.role_id
@@ -192,7 +200,11 @@ function buildOvertimeCtes(
         CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
         ae.company_id,
         ae.company_name,
+        ae.work_location_id,
         ae.work_location_name,
+        ae.employee_country_id,
+        ae.employee_state_id,
+        ae.employee_city_id,
         ae.cost_center_id,
         ae.cost_center_name,
         ae.payroll_group_id,
@@ -211,7 +223,10 @@ function buildOvertimeCtes(
         sc.tenant_id AS constructor_tenant_id,
         sw.work_start_minutes,
         sw.work_end_minutes,
-        sw.work_minutes
+        sw.work_minutes,
+        holiday.id AS holiday_id,
+        holiday.holiday_name,
+        (holiday.id IS NOT NULL AND COALESCE(holiday.is_working_day, false) = false) AS is_non_working_day
       FROM assigned_employees ae
       INNER JOIN public.employee_shift_plans p
         ON p.employee_id = ae.employee_id
@@ -226,6 +241,29 @@ function buildOvertimeCtes(
         ON sc.shift_id = s.id
        AND sc.tenant_id = s.tenant_id
        AND sc.is_active = true
+      LEFT JOIN LATERAL (
+        SELECT h.id, h.holiday_name, h.is_working_day
+        FROM public.holidays h
+        WHERE h.tenant_id = p.tenant_id
+          AND h.is_active = true
+          AND (
+            (COALESCE(h.is_recurring, false) = true AND EXTRACT(MONTH FROM h.holiday_date) = EXTRACT(MONTH FROM p.shift_date) AND EXTRACT(DAY FROM h.holiday_date) = EXTRACT(DAY FROM p.shift_date))
+            OR (COALESCE(h.is_recurring, false) = false AND h.holiday_date = p.shift_date)
+          )
+          AND (h.company_id IS NULL OR h.company_id = ae.company_id)
+          AND (h.country_id IS NULL OR h.country_id = ae.employee_country_id)
+          AND (h.state_id IS NULL OR h.state_id = ae.employee_state_id)
+          AND (h.city_id IS NULL OR h.city_id = ae.employee_city_id)
+          AND (h.work_location_id IS NULL OR h.work_location_id = ae.work_location_id)
+        ORDER BY
+          CASE WHEN h.work_location_id IS NOT NULL THEN 16 ELSE 0 END +
+          CASE WHEN h.city_id IS NOT NULL THEN 8 ELSE 0 END +
+          CASE WHEN h.state_id IS NOT NULL THEN 4 ELSE 0 END +
+          CASE WHEN h.country_id IS NOT NULL THEN 2 ELSE 0 END +
+          CASE WHEN h.company_id IS NOT NULL THEN 1 ELSE 0 END DESC,
+          h.holiday_name ASC
+        LIMIT 1
+      ) holiday ON true
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS active_block_count,
@@ -296,7 +334,10 @@ function buildOvertimeCtes(
         COALESCE(ps.last_exit, ps.last_punch) AS last_exit,
         GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int)::int AS worked_minutes,
         CASE
-          WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL THEN COALESCE(pl.work_minutes, 0)
+          WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
+           AND pl.work_minutes > 0
+           AND pl.is_non_working_day = false
+            THEN COALESCE(pl.work_minutes, 0)
           ELSE 0
         END::int AS absence_minutes,
         CASE
@@ -316,6 +357,55 @@ function buildOvertimeCtes(
       LEFT JOIN punch_summary ps
         ON ps.employee_id = pl.employee_id
        AND ps.shift_date = pl.shift_date
+    ),
+    approved_leave_by_day AS (
+      SELECT
+        attendance.employee_id,
+        attendance.shift_date,
+        SUM(leave_minutes.minutes) FILTER (
+          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
+             OR UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
+        )::int AS approved_late_minutes,
+        SUM(leave_minutes.minutes) FILTER (
+          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
+             OR UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
+        )::int AS approved_early_departure_minutes,
+        SUM(leave_minutes.minutes) FILTER (
+          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('FAL', 'FALTA')
+             OR UPPER(COALESCE(ae.event_name, '')) IN ('FALTA', 'INASISTENCIA')
+        )::int AS approved_absence_minutes,
+        SUM(leave_minutes.minutes) FILTER (
+          WHERE UPPER(COALESCE(jm.lookup_key, '')) = 'UNPAID_LEAVE'
+        )::int AS unpaid_leave_minutes,
+        SUM(leave_minutes.minutes)::int AS approved_leave_minutes
+      FROM attendance
+      INNER JOIN public.employee_absence_requests r
+        ON r.tenant_id = $1::uuid
+       AND r.employee_id = attendance.employee_id
+       AND r.is_active = true
+       AND r.start_datetime::date <= attendance.shift_date
+       AND COALESCE(r.end_datetime, r.start_datetime)::date >= attendance.shift_date
+      INNER JOIN public.lookup_values rs
+        ON rs.id = r.request_status_id
+       AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+      INNER JOIN public.attendance_events ae
+        ON ae.id = r.attendance_event_id
+      LEFT JOIN public.lookup_values jm
+        ON jm.id = r.justify_method_id
+      LEFT JOIN LATERAL (
+        SELECT CASE
+          WHEN attendance.work_minutes > 0 THEN GREATEST(
+            0,
+            EXTRACT(EPOCH FROM (
+              LEAST(COALESCE(r.end_datetime, r.start_datetime), attendance.shift_date::timestamp + (attendance.work_end_minutes || ' minutes')::interval)
+              - GREATEST(r.start_datetime, attendance.shift_date::timestamp + (attendance.work_start_minutes || ' minutes')::interval)
+            )) / 60
+          )::int
+          ELSE GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(r.end_datetime, r.start_datetime) - r.start_datetime)) / 60)::int
+        END AS minutes
+      ) leave_minutes ON true
+      WHERE leave_minutes.minutes > 0
+      GROUP BY attendance.employee_id, attendance.shift_date
     ),
     constructor_surcharges AS (
       SELECT
@@ -360,11 +450,22 @@ function buildOvertimeCtes(
       WHERE attendance.first_entry IS NOT NULL
         AND attendance.last_exit IS NOT NULL
         AND attendance.last_exit > attendance.first_entry
+        AND attendance.constructor_id IS NULL
     ),
     surcharge_by_day AS (
-      SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM constructor_surcharges
-      UNION ALL
-      SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM fallback_surcharges
+      SELECT
+        employee_id,
+        shift_date,
+        SUM(ordinary_minutes)::int AS ordinary_minutes,
+        SUM(night_minutes)::int AS night_minutes,
+        SUM(extra_50_minutes)::int AS extra_50_minutes,
+        SUM(extra_100_minutes)::int AS extra_100_minutes
+      FROM (
+        SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM constructor_surcharges
+        UNION ALL
+        SELECT employee_id, shift_date, ordinary_minutes, night_minutes, extra_50_minutes, extra_100_minutes FROM fallback_surcharges
+      ) surcharges
+      GROUP BY employee_id, shift_date
     ),
     metrics_by_day AS (
       SELECT
@@ -386,23 +487,29 @@ function buildOvertimeCtes(
         attendance.shift_date,
         attendance.shift_name,
         attendance.shift_short_name,
+        attendance.shift_date::timestamp + (attendance.work_start_minutes || ' minutes')::interval AS shift_work_start,
+        attendance.shift_date::timestamp + (attendance.work_end_minutes || ' minutes')::interval AS shift_work_end,
         attendance.first_entry,
         attendance.last_exit,
         attendance.worked_minutes,
-        COALESCE(surcharge_by_day.ordinary_minutes, 0)::int AS ordinary_minutes,
-        COALESCE(surcharge_by_day.night_minutes, 0)::int AS night_25_minutes,
-        COALESCE(surcharge_by_day.extra_50_minutes, 0)::int AS extra_50_minutes,
-        COALESCE(surcharge_by_day.extra_100_minutes, 0)::int AS extra_100_minutes,
-        attendance.absence_minutes,
-        attendance.late_minutes,
-        attendance.early_departure_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.ordinary_minutes, 0) END::int AS ordinary_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.night_minutes, 0) END::int AS night_25_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_50_minutes, 0) END::int AS extra_50_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_100_minutes, 0) END::int AS extra_100_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN attendance.worked_minutes ELSE 0 END::int AS non_working_100_minutes,
+        GREATEST(attendance.absence_minutes, COALESCE(approved_leave_by_day.approved_absence_minutes, 0))::int AS absence_minutes,
+        GREATEST(attendance.late_minutes, COALESCE(approved_leave_by_day.approved_late_minutes, 0))::int AS late_minutes,
+        GREATEST(attendance.early_departure_minutes, COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0))::int AS early_departure_minutes,
         0::int AS lunch_excess_minutes,
         0::int AS unjustified_incident_minutes,
-        0::int AS unpaid_leave_minutes
+        COALESCE(approved_leave_by_day.unpaid_leave_minutes, 0)::int AS unpaid_leave_minutes
       FROM attendance
       LEFT JOIN surcharge_by_day
         ON surcharge_by_day.employee_id = attendance.employee_id
        AND surcharge_by_day.shift_date = attendance.shift_date
+      LEFT JOIN approved_leave_by_day
+        ON approved_leave_by_day.employee_id = attendance.employee_id
+       AND approved_leave_by_day.shift_date = attendance.shift_date
     )
   `;
 }
@@ -577,7 +684,7 @@ router.get('/detail', async (req: Request, res: Response) => {
         FROM metrics_by_day
         WHERE $${params.length + 1}::boolean = true
            OR worked_minutes > 0
-           OR night_25_minutes + extra_50_minutes + extra_100_minutes + late_minutes + early_departure_minutes + absence_minutes > 0
+           OR ordinary_minutes + night_25_minutes + extra_50_minutes + extra_100_minutes + non_working_100_minutes + late_minutes + early_departure_minutes + absence_minutes > 0
         ORDER BY employee_full_name ASC, shift_date ASC
       `,
       [...params, includeZeroRows]
@@ -610,22 +717,24 @@ router.get('/summary', async (req: Request, res: Response) => {
           employee_id,
           employee_code,
           employee_full_name,
-          company_name,
-          work_location_name,
-          cost_center_id,
-          cost_center_name,
-          payroll_group_id,
-          payroll_group_name,
-          work_group_id,
-          work_group_name,
-          department_name,
-          area_name,
+          MAX(company_name) AS company_name,
+          MAX(work_location_name) AS work_location_name,
+          MAX(cost_center_id::text)::uuid AS cost_center_id,
+          MAX(cost_center_name) AS cost_center_name,
+          MAX(payroll_group_id::text)::uuid AS payroll_group_id,
+          MAX(payroll_group_name) AS payroll_group_name,
+          MAX(work_group_id::text)::uuid AS work_group_id,
+          MAX(work_group_name) AS work_group_name,
+          MAX(department_name) AS department_name,
+          MAX(area_name) AS area_name,
           COUNT(*)::int AS planned_days,
           COUNT(*) FILTER (WHERE worked_minutes > 0)::int AS worked_days,
           SUM(worked_minutes)::int AS worked_minutes,
+          SUM(ordinary_minutes)::int AS ordinary_minutes,
           SUM(night_25_minutes)::int AS night_25_minutes,
           SUM(extra_50_minutes)::int AS extra_50_minutes,
           SUM(extra_100_minutes)::int AS extra_100_minutes,
+          SUM(non_working_100_minutes)::int AS non_working_100_minutes,
           SUM(late_minutes)::int AS late_minutes,
           SUM(early_departure_minutes)::int AS early_departure_minutes,
           SUM(absence_minutes)::int AS absence_minutes,
@@ -635,12 +744,353 @@ router.get('/summary', async (req: Request, res: Response) => {
           (SUM(late_minutes) + SUM(early_departure_minutes) + SUM(absence_minutes) + SUM(lunch_excess_minutes) + SUM(unjustified_incident_minutes) + SUM(unpaid_leave_minutes))::int AS discount_minutes,
           GREATEST(0, SUM(extra_100_minutes) - SUM(unpaid_leave_minutes))::int AS net_extra_100_minutes
         FROM metrics_by_day
-        GROUP BY employee_id, employee_code, employee_full_name, company_name, work_location_name, cost_center_id, cost_center_name, payroll_group_id, payroll_group_name, work_group_id, work_group_name, department_name, area_name
+        GROUP BY employee_id, employee_code, employee_full_name
         HAVING SUM(worked_minutes) > 0
-            OR SUM(night_25_minutes + extra_50_minutes + extra_100_minutes + late_minutes + early_departure_minutes + absence_minutes) > 0
+            OR SUM(ordinary_minutes + night_25_minutes + extra_50_minutes + extra_100_minutes + non_working_100_minutes + late_minutes + early_departure_minutes + absence_minutes) > 0
         ORDER BY employee_full_name ASC
       `,
       params
+    );
+
+    return res.status(200).json({
+      success: true,
+      rows: result.rows,
+      filters,
+    });
+  } catch (error: any) {
+    if (String(error?.message || '').includes('formato YYYY-MM-DD')) {
+      return res.status(400).json({ error: error.message });
+    }
+    return res.status(500).json({ error: error?.message || 'Internal server error' });
+  }
+});
+
+router.get('/anomalies', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveViewerContext(req);
+    if (!context) return res.status(403).json({ error: 'Reporte disponible para Supervisor/RRHH' });
+
+    const { ctes, params, filters } = buildReportQueryParts(context, req);
+
+    const result = await pool.query(
+      `
+        ${ctes},
+        punch_by_calendar_day AS (
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
+            ae.company_name,
+            ae.department_name,
+            ae.area_name,
+            ae.payroll_group_name,
+            ae.cost_center_name,
+            ae.work_group_name,
+            p.punch_datetime::date AS issue_date,
+            COUNT(*)::int AS punch_count,
+            MIN(p.punch_datetime) AS first_punch,
+            MAX(p.punch_datetime) AS last_punch
+          FROM assigned_employees ae
+          CROSS JOIN filters
+          INNER JOIN public.employee_time_punches p
+            ON p.employee_id = ae.employee_id
+           AND p.tenant_id = $1::uuid
+           AND p.is_active = true
+           AND p.punch_datetime >= filters.date_from::timestamp
+           AND p.punch_datetime < filters.date_to::timestamp + INTERVAL '1 day'
+          WHERE ($${params.length + 1}::uuid IS NULL OR ae.employee_id = $${params.length + 1}::uuid)
+            AND ($${params.length + 2}::uuid IS NULL OR ae.payroll_group_id = $${params.length + 2}::uuid)
+            AND ($${params.length + 3}::uuid IS NULL OR ae.cost_center_id = $${params.length + 3}::uuid)
+            AND ($${params.length + 4}::uuid IS NULL OR ae.department_id = $${params.length + 4}::uuid)
+            AND ($${params.length + 5}::uuid IS NULL OR ae.area_id = $${params.length + 5}::uuid)
+            AND ($${params.length + 6}::uuid IS NULL OR ae.work_group_id = $${params.length + 6}::uuid)
+          GROUP BY ae.employee_id, ae.employee_code, ae.employee_lastname, ae.employee_name, ae.company_name, ae.department_name, ae.area_name, ae.payroll_group_name, ae.cost_center_name, ae.work_group_name, p.punch_datetime::date
+        ),
+        anomaly_rows AS (
+          SELECT
+            employee_id,
+            employee_code,
+            employee_full_name,
+            company_name,
+            department_name,
+            area_name,
+            payroll_group_name,
+            cost_center_name,
+            work_group_name,
+            issue_date,
+            'ODD_PUNCHES' AS anomaly_key,
+            'Marcaciones impares' AS anomaly_label,
+            ('Cantidad de marcaciones: ' || punch_count)::text AS anomaly_detail,
+            punch_count,
+            first_punch,
+            last_punch
+          FROM punch_by_calendar_day
+          WHERE MOD(punch_count, 2) = 1
+
+          UNION ALL
+
+          SELECT
+            pbd.employee_id,
+            pbd.employee_code,
+            pbd.employee_full_name,
+            pbd.company_name,
+            pbd.department_name,
+            pbd.area_name,
+            pbd.payroll_group_name,
+            pbd.cost_center_name,
+            pbd.work_group_name,
+            pbd.issue_date,
+            'UNASSIGNED_SHIFT' AS anomaly_key,
+            'Turno no asignado' AS anomaly_label,
+            'Existen marcaciones en una fecha sin turno activo asignado' AS anomaly_detail,
+            pbd.punch_count,
+            pbd.first_punch,
+            pbd.last_punch
+          FROM punch_by_calendar_day pbd
+          LEFT JOIN public.employee_shift_plans plan
+            ON plan.employee_id = pbd.employee_id
+           AND plan.tenant_id = $1::uuid
+           AND plan.shift_date = pbd.issue_date
+           AND plan.is_active = true
+          WHERE plan.id IS NULL
+
+          UNION ALL
+
+          SELECT
+            pbd.employee_id,
+            pbd.employee_code,
+            pbd.employee_full_name,
+            pbd.company_name,
+            pbd.department_name,
+            pbd.area_name,
+            pbd.payroll_group_name,
+            pbd.cost_center_name,
+            pbd.work_group_name,
+            pbd.issue_date,
+            'OUT_OF_SHIFT_PUNCHES' AS anomaly_key,
+            'Marcaciones fuera del turno asignado' AS anomaly_label,
+            'Existen marcaciones en la fecha, pero no corresponden al turno asignado ni a un cambio aprobado' AS anomaly_detail,
+            pbd.punch_count,
+            pbd.first_punch,
+            pbd.last_punch
+          FROM punch_by_calendar_day pbd
+          INNER JOIN plans pl
+            ON pl.employee_id = pbd.employee_id
+           AND pl.shift_date = pbd.issue_date
+           AND pl.work_minutes > 0
+          WHERE NOT EXISTS (
+              SELECT 1
+              FROM public.employee_time_punches p
+              WHERE p.employee_id = pbd.employee_id
+                AND p.tenant_id = $1::uuid
+                AND p.is_active = true
+                AND p.punch_datetime >= pl.shift_date::timestamp + (pl.work_start_minutes || ' minutes')::interval - INTERVAL '6 hours'
+                AND p.punch_datetime <= pl.shift_date::timestamp + (pl.work_end_minutes || ' minutes')::interval + INTERVAL '6 hours'
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM public.employee_shift_change_requests scr
+              INNER JOIN public.lookup_values status
+                ON status.id = scr.request_status_id
+              WHERE scr.tenant_id = $1::uuid
+                AND scr.employee_id = pbd.employee_id
+                AND scr.shift_date = pbd.issue_date
+                AND scr.is_active = true
+                AND UPPER(COALESCE(status.lookup_key, '')) IN ('APPROVED', 'APROBADO')
+            )
+
+          UNION ALL
+
+          SELECT
+            attendance.employee_id,
+            attendance.employee_code,
+            attendance.employee_full_name,
+            attendance.company_name,
+            attendance.department_name,
+            attendance.area_name,
+            attendance.payroll_group_name,
+            attendance.cost_center_name,
+            attendance.work_group_name,
+            attendance.shift_date AS issue_date,
+            'UNAPPROVED_LATE' AS anomaly_key,
+            'Tiempo no laborado por atraso no justificado o no aprobado' AS anomaly_label,
+            ('Tiempo no laborado por atraso: ' || attendance.late_minutes || ' min; aprobado: ' || COALESCE(approved_leave_by_day.approved_late_minutes, 0) || ' min') AS anomaly_detail,
+            0::int AS punch_count,
+            attendance.first_entry AS first_punch,
+            attendance.last_exit AS last_punch
+          FROM attendance
+          LEFT JOIN approved_leave_by_day
+            ON approved_leave_by_day.employee_id = attendance.employee_id
+           AND approved_leave_by_day.shift_date = attendance.shift_date
+          WHERE attendance.work_minutes > 0
+            AND attendance.is_non_working_day = false
+            AND attendance.late_minutes > 0
+            AND COALESCE(approved_leave_by_day.approved_late_minutes, 0) < attendance.late_minutes
+
+          UNION ALL
+
+          SELECT
+            attendance.employee_id,
+            attendance.employee_code,
+            attendance.employee_full_name,
+            attendance.company_name,
+            attendance.department_name,
+            attendance.area_name,
+            attendance.payroll_group_name,
+            attendance.cost_center_name,
+            attendance.work_group_name,
+            attendance.shift_date AS issue_date,
+            'UNAPPROVED_ABSENCE' AS anomaly_key,
+            'Tiempo no laborado por falta no justificada o no aprobada' AS anomaly_label,
+            ('Tiempo no laborado por falta: ' || attendance.absence_minutes || ' min; aprobado: ' || COALESCE(approved_leave_by_day.approved_absence_minutes, 0) || ' min') AS anomaly_detail,
+            0::int AS punch_count,
+            NULL::timestamptz AS first_punch,
+            NULL::timestamptz AS last_punch
+          FROM attendance
+          LEFT JOIN approved_leave_by_day
+            ON approved_leave_by_day.employee_id = attendance.employee_id
+           AND approved_leave_by_day.shift_date = attendance.shift_date
+          WHERE attendance.work_minutes > 0
+            AND attendance.is_non_working_day = false
+            AND attendance.first_entry IS NULL
+            AND attendance.absence_minutes > 0
+            AND COALESCE(approved_leave_by_day.approved_absence_minutes, 0) < attendance.absence_minutes
+
+          UNION ALL
+
+          SELECT
+            attendance.employee_id,
+            attendance.employee_code,
+            attendance.employee_full_name,
+            attendance.company_name,
+            attendance.department_name,
+            attendance.area_name,
+            attendance.payroll_group_name,
+            attendance.cost_center_name,
+            attendance.work_group_name,
+            attendance.shift_date AS issue_date,
+            'UNAPPROVED_EARLY_DEPARTURE' AS anomaly_key,
+            'Tiempo no laborado por salida anticipada no justificada o no aprobada' AS anomaly_label,
+            ('Tiempo no laborado por salida anticipada: ' || attendance.early_departure_minutes || ' min; aprobado: ' || COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0) || ' min') AS anomaly_detail,
+            0::int AS punch_count,
+            attendance.first_entry AS first_punch,
+            attendance.last_exit AS last_punch
+          FROM attendance
+          LEFT JOIN approved_leave_by_day
+            ON approved_leave_by_day.employee_id = attendance.employee_id
+           AND approved_leave_by_day.shift_date = attendance.shift_date
+          WHERE attendance.work_minutes > 0
+            AND attendance.is_non_working_day = false
+            AND attendance.early_departure_minutes > 0
+            AND COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0) < attendance.early_departure_minutes
+
+          UNION ALL
+
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
+            ae.company_name,
+            ae.department_name,
+            ae.area_name,
+            ae.payroll_group_name,
+            ae.cost_center_name,
+            ae.work_group_name,
+            scr.shift_date AS issue_date,
+            'UNAPPROVED_SHIFT_CHANGE_REQUEST' AS anomaly_key,
+            'Solicitud de cambio de turno no aprobada' AS anomaly_label,
+            ('Estado: ' || COALESCE(status.lookup_label, status.lookup_key, '-') || '; de ' || COALESCE(current_shift.shift_short_name, current_shift.shift_name, '-') || ' a ' || COALESCE(requested_shift.shift_short_name, requested_shift.shift_name, '-')) AS anomaly_detail,
+            0::int AS punch_count,
+            NULL::timestamptz AS first_punch,
+            NULL::timestamptz AS last_punch
+          FROM assigned_employees ae
+          CROSS JOIN filters
+          INNER JOIN public.employee_shift_change_requests scr
+            ON scr.employee_id = ae.employee_id
+           AND scr.tenant_id = $1::uuid
+           AND scr.is_active = true
+          INNER JOIN public.lookup_values status
+            ON status.id = scr.request_status_id
+          LEFT JOIN public.shifts current_shift
+            ON current_shift.id = scr.current_shift_id
+          LEFT JOIN public.shifts requested_shift
+            ON requested_shift.id = scr.requested_shift_id
+          WHERE scr.shift_date BETWEEN filters.date_from AND filters.date_to
+            AND UPPER(COALESCE(status.lookup_key, '')) NOT IN ('APPROVED', 'APROBADO')
+            AND ($${params.length + 1}::uuid IS NULL OR ae.employee_id = $${params.length + 1}::uuid)
+            AND ($${params.length + 2}::uuid IS NULL OR ae.payroll_group_id = $${params.length + 2}::uuid)
+            AND ($${params.length + 3}::uuid IS NULL OR ae.cost_center_id = $${params.length + 3}::uuid)
+            AND ($${params.length + 4}::uuid IS NULL OR ae.department_id = $${params.length + 4}::uuid)
+            AND ($${params.length + 5}::uuid IS NULL OR ae.area_id = $${params.length + 5}::uuid)
+            AND ($${params.length + 6}::uuid IS NULL OR ae.work_group_id = $${params.length + 6}::uuid)
+
+          UNION ALL
+
+          SELECT
+            ae.employee_id,
+            ae.employee_code,
+            CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
+            ae.company_name,
+            ae.department_name,
+            ae.area_name,
+            ae.payroll_group_name,
+            ae.cost_center_name,
+            ae.work_group_name,
+            request_time.issue_date,
+            CASE WHEN UPPER(COALESCE(request_type.lookup_key, '')) = 'CREATE_PUNCH' THEN 'UNAPPROVED_CREATE_PUNCH_REQUEST' ELSE 'UNAPPROVED_UPDATE_PUNCH_REQUEST' END AS anomaly_key,
+            CASE WHEN UPPER(COALESCE(request_type.lookup_key, '')) = 'CREATE_PUNCH' THEN 'Solicitud de añadir marcación no aprobada' ELSE 'Solicitud de cambio de marcación no aprobada' END AS anomaly_label,
+            ('Estado: ' || COALESCE(status.lookup_label, status.lookup_key, '-') || '; tipo: ' || COALESCE(request_type.lookup_label, request_type.lookup_key, '-')) AS anomaly_detail,
+            0::int AS punch_count,
+            request_ts.issue_timestamp AS first_punch,
+            request_ts.issue_timestamp AS last_punch
+          FROM assigned_employees ae
+          CROSS JOIN filters
+          INNER JOIN public.employee_time_punch_change_requests tpr
+            ON tpr.employee_id = ae.employee_id
+           AND tpr.tenant_id = $1::uuid
+           AND tpr.is_active = true
+          INNER JOIN public.lookup_values status
+            ON status.id = tpr.request_status_id
+          INNER JOIN public.lookup_values request_type
+            ON request_type.id = tpr.request_type_id
+          LEFT JOIN public.employee_time_punches target_punch
+            ON target_punch.id = tpr.target_punch_id
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(
+              CASE
+                WHEN NULLIF(tpr.requested_values->>'punch_datetime', '') IS NOT NULL THEN (tpr.requested_values->>'punch_datetime')::timestamptz
+                ELSE NULL::timestamptz
+              END,
+              target_punch.punch_datetime,
+              tpr.created_at
+            ) AS issue_timestamp
+          ) request_ts ON true
+          LEFT JOIN LATERAL (
+            SELECT request_ts.issue_timestamp::date AS issue_date
+          ) request_time ON true
+          WHERE request_time.issue_date BETWEEN filters.date_from AND filters.date_to
+            AND UPPER(COALESCE(status.lookup_key, '')) NOT IN ('APPROVED', 'APROBADO')
+            AND UPPER(COALESCE(request_type.lookup_key, '')) IN ('CREATE_PUNCH', 'UPDATE_PUNCH')
+            AND ($${params.length + 1}::uuid IS NULL OR ae.employee_id = $${params.length + 1}::uuid)
+            AND ($${params.length + 2}::uuid IS NULL OR ae.payroll_group_id = $${params.length + 2}::uuid)
+            AND ($${params.length + 3}::uuid IS NULL OR ae.cost_center_id = $${params.length + 3}::uuid)
+            AND ($${params.length + 4}::uuid IS NULL OR ae.department_id = $${params.length + 4}::uuid)
+            AND ($${params.length + 5}::uuid IS NULL OR ae.area_id = $${params.length + 5}::uuid)
+            AND ($${params.length + 6}::uuid IS NULL OR ae.work_group_id = $${params.length + 6}::uuid)
+        )
+        SELECT *
+        FROM anomaly_rows
+        ORDER BY employee_full_name ASC, issue_date ASC, anomaly_key ASC
+      `,
+      [
+        ...params,
+        filters.employee_id,
+        filters.payroll_group_id,
+        filters.cost_center_id,
+        filters.department_id,
+        filters.area_id,
+        filters.work_group_id,
+      ]
     );
 
     return res.status(200).json({

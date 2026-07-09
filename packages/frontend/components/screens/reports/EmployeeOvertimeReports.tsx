@@ -1,6 +1,6 @@
-'use client';
+﻿'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { BarChart3, Download, RefreshCw, Search } from 'lucide-react';
 import { buildApiUrl } from '../../../utils/api-config';
 import { publicApiToken } from '../../../utils/backend/info';
@@ -41,6 +41,8 @@ interface OvertimeDetailRow {
   shift_date: string;
   shift_name: string | null;
   shift_short_name: string | null;
+  shift_work_start: string | null;
+  shift_work_end: string | null;
   first_entry: string | null;
   last_exit: string | null;
   worked_minutes: number;
@@ -48,6 +50,7 @@ interface OvertimeDetailRow {
   night_25_minutes: number;
   extra_50_minutes: number;
   extra_100_minutes: number;
+  non_working_100_minutes: number;
   late_minutes: number;
   early_departure_minutes: number;
   absence_minutes: number;
@@ -70,9 +73,11 @@ interface OvertimeSummaryRow {
   planned_days: number;
   worked_days: number;
   worked_minutes: number;
+  ordinary_minutes: number;
   night_25_minutes: number;
   extra_50_minutes: number;
   extra_100_minutes: number;
+  non_working_100_minutes: number;
   late_minutes: number;
   early_departure_minutes: number;
   absence_minutes: number;
@@ -83,7 +88,26 @@ interface OvertimeSummaryRow {
   net_extra_100_minutes: number;
 }
 
-type ReportTab = 'detail' | 'summary';
+interface OvertimeAnomalyRow {
+  employee_id: string;
+  employee_code: string | null;
+  employee_full_name: string;
+  company_name: string | null;
+  department_name: string | null;
+  area_name: string | null;
+  payroll_group_name: string | null;
+  cost_center_name: string | null;
+  work_group_name: string | null;
+  issue_date: string;
+  anomaly_key: string;
+  anomaly_label: string;
+  anomaly_detail: string;
+  punch_count: number;
+  first_punch: string | null;
+  last_punch: string | null;
+}
+
+type ReportTab = 'detail' | 'summary' | 'anomalies';
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
@@ -211,6 +235,102 @@ function sumMinutes<T>(rows: T[], selector: (row: T) => unknown): number {
   return rows.reduce((total, row) => total + asNumber(selector(row)), 0);
 }
 
+function hasDailyDetailShape(row: Record<string, unknown>): boolean {
+  return Boolean(
+    row.shift_date ||
+    row.shift_name ||
+    row.shift_short_name ||
+    row.shift_work_start ||
+    row.shift_work_end ||
+    row.first_entry ||
+    row.last_exit
+  );
+}
+
+function aggregateRowsByEmployee(rows: Array<OvertimeSummaryRow & Record<string, unknown>>): OvertimeSummaryRow[] {
+  const byEmployee = new Map<string, OvertimeSummaryRow>();
+  const numericKeys: Array<keyof Pick<
+    OvertimeSummaryRow,
+    | 'planned_days'
+    | 'worked_days'
+    | 'worked_minutes'
+    | 'ordinary_minutes'
+    | 'night_25_minutes'
+    | 'extra_50_minutes'
+    | 'extra_100_minutes'
+    | 'non_working_100_minutes'
+    | 'late_minutes'
+    | 'early_departure_minutes'
+    | 'absence_minutes'
+    | 'lunch_excess_minutes'
+    | 'unjustified_incident_minutes'
+    | 'unpaid_leave_minutes'
+    | 'discount_minutes'
+    | 'net_extra_100_minutes'
+  >> = [
+    'planned_days',
+    'worked_days',
+    'worked_minutes',
+    'ordinary_minutes',
+    'night_25_minutes',
+    'extra_50_minutes',
+    'extra_100_minutes',
+    'non_working_100_minutes',
+    'late_minutes',
+    'early_departure_minutes',
+    'absence_minutes',
+    'lunch_excess_minutes',
+    'unjustified_incident_minutes',
+    'unpaid_leave_minutes',
+    'discount_minutes',
+    'net_extra_100_minutes',
+  ];
+
+  rows.forEach((row) => {
+    const existing = byEmployee.get(row.employee_id);
+    if (!existing) {
+      byEmployee.set(row.employee_id, { ...row });
+      return;
+    }
+
+    numericKeys.forEach((key) => {
+      existing[key] = asNumber(existing[key]) + asNumber(row[key]) as never;
+    });
+  });
+
+  return Array.from(byEmployee.values());
+}
+
+function consolidateDetailRows(rows: OvertimeDetailRow[]): OvertimeDetailRow[] {
+  const byEmployeeDate = new Map<string, OvertimeDetailRow>();
+
+  rows.forEach((row) => {
+    const key = `${row.employee_id}-${row.shift_date}`;
+    const existing = byEmployeeDate.get(key);
+    if (!existing) {
+      byEmployeeDate.set(key, { ...row });
+      return;
+    }
+
+    existing.first_entry = existing.first_entry || row.first_entry;
+    existing.last_exit = existing.last_exit || row.last_exit;
+    existing.worked_minutes = Math.max(asNumber(existing.worked_minutes), asNumber(row.worked_minutes));
+    existing.ordinary_minutes = Math.max(asNumber(existing.ordinary_minutes), asNumber(row.ordinary_minutes));
+    existing.night_25_minutes = Math.max(asNumber(existing.night_25_minutes), asNumber(row.night_25_minutes));
+    existing.extra_50_minutes = Math.max(asNumber(existing.extra_50_minutes), asNumber(row.extra_50_minutes));
+    existing.extra_100_minutes = Math.max(asNumber(existing.extra_100_minutes), asNumber(row.extra_100_minutes));
+    existing.non_working_100_minutes = Math.max(asNumber(existing.non_working_100_minutes), asNumber(row.non_working_100_minutes));
+    existing.late_minutes = Math.max(asNumber(existing.late_minutes), asNumber(row.late_minutes));
+    existing.early_departure_minutes = Math.max(asNumber(existing.early_departure_minutes), asNumber(row.early_departure_minutes));
+    existing.absence_minutes = Math.max(asNumber(existing.absence_minutes), asNumber(row.absence_minutes));
+    existing.lunch_excess_minutes = Math.max(asNumber(existing.lunch_excess_minutes), asNumber(row.lunch_excess_minutes));
+    existing.unjustified_incident_minutes = Math.max(asNumber(existing.unjustified_incident_minutes), asNumber(row.unjustified_incident_minutes));
+    existing.unpaid_leave_minutes = Math.max(asNumber(existing.unpaid_leave_minutes), asNumber(row.unpaid_leave_minutes));
+  });
+
+  return Array.from(byEmployeeDate.values());
+}
+
 export default function EmployeeOvertimeReports() {
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
@@ -226,6 +346,7 @@ export default function EmployeeOvertimeReports() {
   const [filters, setFilters] = useState<ReportFilters>({ payroll_groups: [], cost_centers: [], departments: [], areas: [], work_groups: [] });
   const [detailRows, setDetailRows] = useState<OvertimeDetailRow[]>([]);
   const [summaryRows, setSummaryRows] = useState<OvertimeSummaryRow[]>([]);
+  const [anomalyRows, setAnomalyRows] = useState<OvertimeAnomalyRow[]>([]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -287,15 +408,18 @@ export default function EmployeeOvertimeReports() {
       if (areaId) query.set('area_id', areaId);
       if (workGroupId) query.set('work_group_id', workGroupId);
 
-      const [detailPayload, summaryPayload] = await Promise.all([
+      const [detailPayload, summaryPayload, anomaliesPayload] = await Promise.all([
         request(`/overtime-reports/detail?${query.toString()}`),
         request(`/overtime-reports/summary?${query.toString()}`),
+        request(`/overtime-reports/anomalies?${query.toString()}`),
       ]);
-      setDetailRows((detailPayload?.rows || []) as OvertimeDetailRow[]);
-      setSummaryRows((summaryPayload?.rows || []) as OvertimeSummaryRow[]);
+      setDetailRows(consolidateDetailRows((detailPayload?.rows || []) as OvertimeDetailRow[]));
+      setSummaryRows(((summaryPayload?.rows || []) as Array<OvertimeSummaryRow & { shift_date?: unknown }>).filter((row) => !row.shift_date));
+      setAnomalyRows((anomaliesPayload?.rows || []) as OvertimeAnomalyRow[]);
     } catch (requestError: any) {
       setDetailRows([]);
       setSummaryRows([]);
+      setAnomalyRows([]);
       setError(requestError?.message || 'No se pudieron cargar reportes');
     } finally {
       setLoadingReport(false);
@@ -311,8 +435,34 @@ export default function EmployeeOvertimeReports() {
     void loadReports();
   }, []);
 
+  const summaryDisplayRows = useMemo(() => {
+    const rows = summaryRows as Array<OvertimeSummaryRow & Record<string, unknown>>;
+    const consolidatedRows = rows.filter((row) => !hasDailyDetailShape(row));
+    return consolidatedRows.length > 0 ? consolidatedRows : aggregateRowsByEmployee(rows);
+  }, [summaryRows]);
+
+  const detailGroups = useMemo(() => {
+    const byEmployee = new Map<string, OvertimeDetailRow[]>();
+    detailRows.forEach((row) => {
+      const employeeRows = byEmployee.get(row.employee_id) || [];
+      employeeRows.push(row);
+      byEmployee.set(row.employee_id, employeeRows);
+    });
+
+    return Array.from(byEmployee.values())
+      .map((rows) => ({
+        employee: rows[0],
+        rows: [...rows].sort((left, right) => String(left.shift_date || '').localeCompare(String(right.shift_date || ''))),
+      }))
+      .sort((left, right) => {
+        const nameCompare = String(left.employee.employee_full_name || '').localeCompare(String(right.employee.employee_full_name || ''), 'es');
+        if (nameCompare !== 0) return nameCompare;
+        return String(left.employee.employee_code || '').localeCompare(String(right.employee.employee_code || ''), 'es');
+      });
+  }, [detailRows]);
+
   const totals = useMemo(() => {
-    return summaryRows.reduce(
+    return summaryDisplayRows.reduce(
       (acc, row) => {
         acc.worked += asNumber(row.worked_minutes);
         acc.night25 += asNumber(row.night_25_minutes);
@@ -323,7 +473,7 @@ export default function EmployeeOvertimeReports() {
       },
       { worked: 0, night25: 0, extra50: 0, extra100: 0, discounts: 0 }
     );
-  }, [summaryRows]);
+  }, [summaryDisplayRows]);
 
   const getFilterLabel = (options: ReportFilterOption[], selectedId: string, emptyLabel = 'Todos') => {
     if (!selectedId) return emptyLabel;
@@ -377,6 +527,51 @@ export default function EmployeeOvertimeReports() {
 
   const detailEmployeeLabel = (row: OvertimeDetailRow) => `${row.employee_code || row.employee_id} - ${row.employee_full_name}`;
   const summaryEmployeeLabel = (row: OvertimeSummaryRow) => `${row.employee_code || row.employee_id} - ${row.employee_full_name}`;
+  const discountMinutes = (row: Pick<OvertimeDetailRow | OvertimeSummaryRow, 'late_minutes' | 'early_departure_minutes' | 'absence_minutes'>) =>
+    asNumber(row.late_minutes) + asNumber(row.early_departure_minutes) + asNumber(row.absence_minutes);
+  const positionCells = (row: Pick<OvertimeSummaryRow, 'department_name' | 'area_name' | 'payroll_group_name' | 'cost_center_name' | 'work_group_name'>) => [
+    row.department_name || '-',
+    row.area_name || '-',
+    row.payroll_group_name || '-',
+    row.cost_center_name || '-',
+    row.work_group_name || '-',
+  ];
+  const valueHeaderCells = [
+    { value: 'Trab.', className: 'header' },
+    { value: '0%', className: 'header' },
+    { value: '25%', className: 'header' },
+    { value: '50%', className: 'header' },
+    { value: '100%', className: 'header' },
+    { value: '100% No Lab.', className: 'header' },
+    { value: 'Atraso', className: 'header' },
+    { value: 'SAnt.', className: 'header' },
+    { value: 'Falta', className: 'header' },
+    { value: 'Descuentos', className: 'header' },
+  ];
+  const valueCells = (row: OvertimeDetailRow | OvertimeSummaryRow, className = 'number') => [
+    { value: formatHours(row.worked_minutes), className },
+    { value: formatHours(row.ordinary_minutes), className },
+    { value: formatHours(row.night_25_minutes), className },
+    { value: formatHours(row.extra_50_minutes), className },
+    { value: formatHours(row.extra_100_minutes), className },
+    { value: formatHours(row.non_working_100_minutes), className },
+    { value: formatHours(row.late_minutes), className },
+    { value: formatHours(row.early_departure_minutes), className },
+    { value: formatHours(row.absence_minutes), className },
+    { value: formatHours(discountMinutes(row)), className },
+  ];
+  const totalValueCells = (rows: Array<OvertimeDetailRow | OvertimeSummaryRow>) => [
+    { value: formatHours(sumMinutes(rows, (row) => row.worked_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.ordinary_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.night_25_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.extra_50_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.extra_100_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.non_working_100_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.late_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.early_departure_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, (row) => row.absence_minutes)), className: 'number total' },
+    { value: formatHours(sumMinutes(rows, discountMinutes)), className: 'number total' },
+  ];
 
   const exportDetailXls = () => {
     const columnCount = 18;
@@ -606,12 +801,130 @@ export default function EmployeeOvertimeReports() {
     downloadXls(`rpt_hora_extra_resu_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_RESU', tableRows);
   };
 
+  const exportDetailXlsV2 = () => {
+    const columnCount = 17;
+    const tableRows = reportHeaderRows('RPT_HORA_EXTRA_DETA', columnCount);
+    const rowsByEmployee = new Map<string, OvertimeDetailRow[]>();
+
+    detailRows.forEach((row) => {
+      const employeeRows = rowsByEmployee.get(row.employee_id) || [];
+      employeeRows.push(row);
+      rowsByEmployee.set(row.employee_id, employeeRows);
+    });
+
+    rowsByEmployee.forEach((employeeRows) => {
+      const firstRow = employeeRows[0];
+      tableRows.push(xlsRow([{
+        value: `Empleado : ${detailEmployeeLabel(firstRow)} | ${firstRow.department_name || '-'} / ${firstRow.area_name || '-'} / ${firstRow.payroll_group_name || '-'} / ${firstRow.cost_center_name || '-'} / ${firstRow.work_group_name || '-'}`,
+        colspan: columnCount,
+        className: 'group',
+      }]));
+      tableRows.push(xlsRow([
+        { value: 'Fecha', className: 'header' },
+        { value: 'Turno', className: 'header' },
+        { value: 'Inicio turno', className: 'header' },
+        { value: 'Fin turno', className: 'header' },
+        { value: 'Entrada', className: 'header' },
+        { value: 'Salida', className: 'header' },
+        ...valueHeaderCells,
+      ]));
+
+      employeeRows.forEach((row) => {
+        tableRows.push(xlsRow([
+          formatDate(row.shift_date),
+          row.shift_short_name || row.shift_name || '',
+          formatTime24(row.shift_work_start),
+          formatTime24(row.shift_work_end),
+          formatTime24(row.first_entry),
+          formatTime24(row.last_exit),
+          ...valueCells(row),
+        ]));
+      });
+
+      tableRows.push(xlsRow([{ value: 'Subtotal empleado', colspan: 7, className: 'total' }, ...totalValueCells(employeeRows)]));
+      tableRows.push(xlsRow(Array.from({ length: columnCount }, () => '')));
+    });
+
+    tableRows.push(xlsRow([{ value: 'Total global', colspan: 7, className: 'total' }, ...totalValueCells(detailRows)]));
+    downloadXls(`rpt_hora_extra_deta_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_DETA', tableRows);
+  };
+
+  const exportSummaryXlsV2 = () => {
+    const columnCount = 16;
+    const tableRows = reportHeaderRows('RPT_HORA_EXTRA_RESU', columnCount);
+    tableRows.push(xlsRow([
+      { value: 'Empleado', className: 'header' },
+      { value: 'Departamento', className: 'header' },
+      { value: 'Area', className: 'header' },
+      { value: 'Rol pago', className: 'header' },
+      { value: 'Centro costo', className: 'header' },
+      { value: 'Grupo trabajo', className: 'header' },
+      ...valueHeaderCells,
+    ]));
+
+    summaryDisplayRows.forEach((row) => {
+      tableRows.push(xlsRow([
+        summaryEmployeeLabel(row),
+        ...positionCells(row),
+        ...valueCells(row),
+      ]));
+    });
+
+    tableRows.push(xlsRow([{ value: 'Total global', colspan: 6, className: 'total' }, ...totalValueCells(summaryDisplayRows)]));
+    downloadXls(`rpt_hora_extra_resu_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_RESU', tableRows);
+  };
+
+  const exportAnomaliesXls = () => {
+    const columnCount = 13;
+    const tableRows = reportHeaderRows('RPT_ANOMALIAS_ASISTENCIA', columnCount);
+    tableRows.push(xlsRow([
+      { value: 'Empleado', className: 'header' },
+      { value: 'Departamento', className: 'header' },
+      { value: 'Area', className: 'header' },
+      { value: 'Rol pago', className: 'header' },
+      { value: 'Centro costo', className: 'header' },
+      { value: 'Grupo trabajo', className: 'header' },
+      { value: 'Fecha', className: 'header' },
+      { value: 'Anomalia', className: 'header' },
+      { value: 'Detalle', className: 'header' },
+      { value: 'Marcaciones', className: 'header' },
+      { value: 'Primera marca', className: 'header' },
+      { value: 'Ultima marca', className: 'header' },
+      { value: 'Empresa', className: 'header' },
+    ]));
+
+    anomalyRows.forEach((row) => {
+      tableRows.push(xlsRow([
+        `${row.employee_code || row.employee_id} - ${row.employee_full_name}`,
+        row.department_name || '-',
+        row.area_name || '-',
+        row.payroll_group_name || '-',
+        row.cost_center_name || '-',
+        row.work_group_name || '-',
+        formatDate(row.issue_date),
+        row.anomaly_label,
+        row.anomaly_detail,
+        row.punch_count,
+        formatTime24(row.first_punch),
+        formatTime24(row.last_punch),
+        row.company_name || '-',
+      ]));
+    });
+
+    tableRows.push(xlsRow([{ value: `Total anomalías: ${anomalyRows.length}`, colspan: columnCount, className: 'total' }]));
+    downloadXls(`rpt_anomalias_asistencia_${dateFrom}_${dateTo}.xls`, 'RPT_ANOMALIAS_ASISTENCIA', tableRows);
+  };
+
   const exportCurrentTab = () => {
     if (activeTab === 'detail') {
-      exportDetailXls();
+      exportDetailXlsV2();
       return;
     }
-    exportSummaryXls();
+    if (activeTab === 'anomalies') {
+      exportAnomaliesXls();
+      return;
+    }
+    exportSummaryXlsV2();
     return;
 
     if (activeTab === 'detail') {
@@ -760,7 +1073,7 @@ export default function EmployeeOvertimeReports() {
             <button
               type="button"
               onClick={exportCurrentTab}
-              disabled={loadingReport || (activeTab === 'detail' ? detailRows.length === 0 : summaryRows.length === 0)}
+              disabled={loadingReport || (activeTab === 'detail' ? detailRows.length === 0 : activeTab === 'summary' ? summaryDisplayRows.length === 0 : anomalyRows.length === 0)}
               className="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm hover:bg-slate-50 disabled:opacity-50"
             >
               <Download className="size-4" />
@@ -907,64 +1220,33 @@ export default function EmployeeOvertimeReports() {
           >
             Resumido por empleado
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('anomalies')}
+            className={`rounded-md px-3 py-2 text-sm font-semibold ${activeTab === 'anomalies' ? 'bg-indigo-600 text-white' : 'border text-slate-700 hover:bg-slate-50'}`}
+          >
+            Anomalías
+          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto">
           {activeTab === 'detail' ? (
-            <table className="min-w-[1200px] w-full text-left text-sm">
+            <table className="min-w-[1500px] w-full text-left text-sm">
               <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Empleado</th>
                   <th className="px-3 py-2">Fecha</th>
                   <th className="px-3 py-2">Turno</th>
+                  <th className="px-3 py-2">Inicio turno</th>
+                  <th className="px-3 py-2">Fin turno</th>
                   <th className="px-3 py-2">Entrada</th>
                   <th className="px-3 py-2">Salida</th>
                   <th className="px-3 py-2 text-right">H.Trab.</th>
+                  <th className="px-3 py-2 text-right">0%</th>
                   <th className="px-3 py-2 text-right">25%</th>
                   <th className="px-3 py-2 text-right">50%</th>
                   <th className="px-3 py-2 text-right">100%</th>
-                  <th className="px-3 py-2 text-right">Atraso</th>
-                  <th className="px-3 py-2 text-right">SAnt</th>
-                  <th className="px-3 py-2 text-right">Falta</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detailRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={12} className="px-3 py-8 text-center text-slate-500">Sin datos para el periodo seleccionado.</td>
-                  </tr>
-                ) : detailRows.map((row) => (
-                  <tr key={`${row.employee_id}-${row.shift_date}`} className="border-t hover:bg-slate-50">
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-slate-900">{row.employee_full_name}</div>
-                      <div className="text-xs text-slate-500">{row.employee_code || '-'} · {row.company_name || '-'}</div>
-                    </td>
-                    <td className="px-3 py-2">{formatDate(row.shift_date)}</td>
-                    <td className="px-3 py-2">{row.shift_short_name || row.shift_name || '-'}</td>
-                    <td className="px-3 py-2">{formatTime(row.first_entry)}</td>
-                    <td className="px-3 py-2">{formatTime(row.last_exit)}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{formatHours(row.worked_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.night_25_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.extra_50_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.extra_100_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.late_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.early_departure_minutes)}</td>
-                    <td className="px-3 py-2 text-right">{formatHours(row.absence_minutes)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <table className="min-w-[1100px] w-full text-left text-sm">
-              <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">Empleado</th>
-                  <th className="px-3 py-2">Área</th>
-                  <th className="px-3 py-2 text-right">Días</th>
-                  <th className="px-3 py-2 text-right">Trab.</th>
-                  <th className="px-3 py-2 text-right">25%</th>
-                  <th className="px-3 py-2 text-right">50%</th>
-                  <th className="px-3 py-2 text-right">100%</th>
+                  <th className="px-3 py-2 text-right">100% No Lab.</th>
                   <th className="px-3 py-2 text-right">Atraso</th>
                   <th className="px-3 py-2 text-right">SAnt</th>
                   <th className="px-3 py-2 text-right">Falta</th>
@@ -972,26 +1254,158 @@ export default function EmployeeOvertimeReports() {
                 </tr>
               </thead>
               <tbody>
-                {summaryRows.length === 0 ? (
+                {detailGroups.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-3 py-8 text-center text-slate-500">Sin datos para el periodo seleccionado.</td>
+                    <td colSpan={17} className="px-3 py-8 text-center text-slate-500">Sin datos para el periodo seleccionado.</td>
                   </tr>
-                ) : summaryRows.map((row) => (
+                ) : (
+                  <>
+                    {detailGroups.map((group) => (
+                      <Fragment key={group.employee.employee_id}>
+                        <tr className="border-t bg-indigo-50">
+                          <td colSpan={17} className="px-3 py-2 font-semibold text-indigo-900">
+                            {group.employee.employee_full_name}
+                            <span className="ml-2 text-xs font-normal text-indigo-700">
+                              {group.employee.employee_code || '-'} · {group.employee.company_name || '-'} · {group.employee.department_name || '-'} / {group.employee.area_name || '-'} / {group.employee.work_group_name || '-'}
+                            </span>
+                          </td>
+                        </tr>
+                        {group.rows.map((row, index) => (
+                          <tr key={`${row.employee_id}-${row.shift_date}-${index}`} className="border-t hover:bg-slate-50">
+                            <td className="px-3 py-2">
+                              <div className="font-medium text-slate-900">{row.employee_full_name}</div>
+                              <div className="text-xs text-slate-500">{row.employee_code || '-'} · {row.company_name || '-'}</div>
+                            </td>
+                            <td className="px-3 py-2">{formatDate(row.shift_date)}</td>
+                            <td className="px-3 py-2">{row.shift_short_name || row.shift_name || '-'}</td>
+                            <td className="px-3 py-2">{formatTime(row.shift_work_start)}</td>
+                            <td className="px-3 py-2">{formatTime(row.shift_work_end)}</td>
+                            <td className="px-3 py-2">{formatTime(row.first_entry)}</td>
+                            <td className="px-3 py-2">{formatTime(row.last_exit)}</td>
+                            <td className="px-3 py-2 text-right font-semibold">{formatHours(row.worked_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.ordinary_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.night_25_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.extra_50_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.extra_100_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.non_working_100_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.late_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.early_departure_minutes)}</td>
+                            <td className="px-3 py-2 text-right">{formatHours(row.absence_minutes)}</td>
+                            <td className="px-3 py-2 text-right text-red-700">{formatHours(discountMinutes(row))}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t bg-slate-50 font-semibold">
+                          <td colSpan={7} className="px-3 py-2">Subtotal empleado</td>
+                          {totalValueCells(group.rows).map((cell, index) => (
+                            <td key={index} className="px-3 py-2 text-right">{cell.value}</td>
+                          ))}
+                        </tr>
+                      </Fragment>
+                    ))}
+                    <tr className="border-t bg-slate-100 font-semibold">
+                      <td colSpan={7} className="px-3 py-2">Total general</td>
+                      {totalValueCells(detailRows).map((cell, index) => (
+                        <td key={index} className="px-3 py-2 text-right">{cell.value}</td>
+                      ))}
+                    </tr>
+                  </>
+                )}
+              </tbody>
+            </table>
+          ) : activeTab === 'summary' ? (
+            <table className="min-w-[1500px] w-full text-left text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Empleado</th>
+                  <th className="px-3 py-2">Departamento</th>
+                  <th className="px-3 py-2">Área</th>
+                  <th className="px-3 py-2">Rol de pago</th>
+                  <th className="px-3 py-2">Centro de costo</th>
+                  <th className="px-3 py-2">Grupo de trabajo</th>
+                  <th className="px-3 py-2 text-right">Trab.</th>
+                  <th className="px-3 py-2 text-right">0%</th>
+                  <th className="px-3 py-2 text-right">25%</th>
+                  <th className="px-3 py-2 text-right">50%</th>
+                  <th className="px-3 py-2 text-right">100%</th>
+                  <th className="px-3 py-2 text-right">100% No Lab.</th>
+                  <th className="px-3 py-2 text-right">Atraso</th>
+                  <th className="px-3 py-2 text-right">SAnt</th>
+                  <th className="px-3 py-2 text-right">Falta</th>
+                  <th className="px-3 py-2 text-right">Descuentos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryDisplayRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={16} className="px-3 py-8 text-center text-slate-500">Sin datos para el periodo seleccionado.</td>
+                  </tr>
+                ) : summaryDisplayRows.map((row) => (
                   <tr key={row.employee_id} className="border-t hover:bg-slate-50">
                     <td className="px-3 py-2">
                       <div className="font-medium text-slate-900">{row.employee_full_name}</div>
                       <div className="text-xs text-slate-500">{row.employee_code || '-'} · {row.company_name || '-'}</div>
                     </td>
-                    <td className="px-3 py-2 text-slate-600">{row.area_name || row.department_name || '-'}</td>
-                    <td className="px-3 py-2 text-right">{row.worked_days}/{row.planned_days}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.department_name || '-'}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.area_name || '-'}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.payroll_group_name || '-'}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.cost_center_name || '-'}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.work_group_name || '-'}</td>
                     <td className="px-3 py-2 text-right font-semibold">{formatHours(row.worked_minutes)}</td>
+                    <td className="px-3 py-2 text-right">{formatHours(row.ordinary_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.night_25_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.extra_50_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.extra_100_minutes)}</td>
+                    <td className="px-3 py-2 text-right">{formatHours(row.non_working_100_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.late_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.early_departure_minutes)}</td>
                     <td className="px-3 py-2 text-right">{formatHours(row.absence_minutes)}</td>
-                    <td className="px-3 py-2 text-right text-red-700">{formatHours(row.discount_minutes)}</td>
+                    <td className="px-3 py-2 text-right text-red-700">{formatHours(discountMinutes(row))}</td>
+                  </tr>
+                ))}
+                {summaryDisplayRows.length > 0 ? (
+                  <tr className="border-t bg-slate-50 font-semibold">
+                    <td colSpan={6} className="px-3 py-2">Total global</td>
+                    {totalValueCells(summaryDisplayRows).map((cell, index) => (
+                      <td key={index} className="px-3 py-2 text-right">{cell.value}</td>
+                    ))}
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          ) : (
+            <table className="min-w-[1300px] w-full text-left text-sm">
+              <thead className="sticky top-0 bg-slate-50 text-xs uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">Empleado</th>
+                  <th className="px-3 py-2">Fecha</th>
+                  <th className="px-3 py-2">Anomalía</th>
+                  <th className="px-3 py-2">Detalle</th>
+                  <th className="px-3 py-2">Organización</th>
+                  <th className="px-3 py-2 text-right">Marc.</th>
+                  <th className="px-3 py-2">Primera marca</th>
+                  <th className="px-3 py-2">Última marca</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anomalyRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-3 py-8 text-center text-slate-500">Sin anomalías para el periodo seleccionado.</td>
+                  </tr>
+                ) : anomalyRows.map((row, index) => (
+                  <tr key={`${row.employee_id}-${row.issue_date}-${row.anomaly_key}-${index}`} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-900">{row.employee_full_name}</div>
+                      <div className="text-xs text-slate-500">{row.employee_code || '-'} · {row.company_name || '-'}</div>
+                    </td>
+                    <td className="px-3 py-2">{formatDate(row.issue_date)}</td>
+                    <td className="px-3 py-2 font-medium text-amber-700">{row.anomaly_label}</td>
+                    <td className="px-3 py-2 text-slate-600">{row.anomaly_detail}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">
+                      {[row.department_name, row.area_name, row.payroll_group_name, row.cost_center_name, row.work_group_name].filter(Boolean).join(' / ') || '-'}
+                    </td>
+                    <td className="px-3 py-2 text-right">{row.punch_count || 0}</td>
+                    <td className="px-3 py-2">{formatTime(row.first_punch)}</td>
+                    <td className="px-3 py-2">{formatTime(row.last_punch)}</td>
                   </tr>
                 ))}
               </tbody>
