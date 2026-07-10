@@ -1,9 +1,16 @@
 import { Pool } from 'pg';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
 
-const DEFAULT_DATABASE_URL = 'postgresql://postgres:51mul4cr05.5n9r-2025@192.168.71.104:5432/tt_db';
-const databaseUrl = process.env.DATABASE_URL || DEFAULT_DATABASE_URL;
+config({ path: fileURLToPath(new URL('../../.env.local', import.meta.url)) });
 
-process.env.DATABASE_URL = databaseUrl;
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error(
+    'DATABASE_URL no esta configurada. Define la variable en packages/backend/.env.local.'
+  );
+}
 
 export const pool = new Pool({
   connectionString: databaseUrl,
