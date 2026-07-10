@@ -546,7 +546,7 @@ export default function SystemReportsManagement() {
       <SystemAdminPageHeader
         icon={FileText}
         title="Reportes del Sistema"
-        subtitle="CRUD de system_reports y sus parametros"
+        subtitle="Catalogo de reportes, clave tecnica y parametros de busqueda"
         rightSlot={(
           <div className="flex items-center gap-2">
             <HeaderInfoTips
@@ -615,7 +615,7 @@ export default function SystemReportsManagement() {
                     Nombre<SortIcon field="report_name" />
                   </th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Modulo</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Tipo Handler</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Tipo ejecucion</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Handler</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Estado</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Acciones</th>
@@ -728,8 +728,8 @@ export default function SystemReportsManagement() {
                 <tr>
                   <th className="text-left px-4 py-2 font-medium text-gray-600">Clave</th>
                   <th className="text-left px-4 py-2 font-medium text-gray-600">Etiqueta</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-600">Tipo de Dato</th>
-                  <th className="text-left px-4 py-2 font-medium text-gray-600">Control UI</th>
+                  <th className="text-left px-4 py-2 font-medium text-gray-600">Tipo de valor</th>
+                  <th className="text-left px-4 py-2 font-medium text-gray-600">Control visual</th>
                   <th className="text-left px-4 py-2 font-medium text-gray-600">Valor por Defecto</th>
                   <th className="text-center px-4 py-2 font-medium text-gray-600">Req.</th>
                   <th className="text-center px-4 py-2 font-medium text-gray-600">Multi</th>
@@ -855,7 +855,7 @@ export default function SystemReportsManagement() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo Handler *</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de ejecucion *</label>
                     <select
                       value={form.handler_type_id}
                       onChange={(e) => setForm({ ...form, handler_type_id: e.target.value })}
@@ -870,7 +870,7 @@ export default function SystemReportsManagement() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Modulo Aplicacion</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Modulo de aplicacion</label>
                     <select
                       value={form.application_module_id}
                       onChange={(e) => setForm({ ...form, application_module_id: e.target.value })}
@@ -886,13 +886,16 @@ export default function SystemReportsManagement() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Report Handler *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Clave tecnica del reporte *</label>
                   <input
                     value={form.report_handler}
                     onChange={(e) => setForm({ ...form, report_handler: e.target.value })}
-                    placeholder="handlers/attendance-summary"
+                    placeholder="attendance.anomalies"
                     className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Esta clave conecta el reporte configurado en base con la logica que genera la informacion. Ejemplos: attendance.anomalies, overtime.detail, overtime.summary.
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <input id="report-active" type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })} className="w-4 h-4 rounded border-gray-300 text-blue-600" />
@@ -932,7 +935,7 @@ export default function SystemReportsManagement() {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Clave *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Clave interna *</label>
                   <input
                     value={parameterForm.parameter_key}
                     onChange={(e) => setParameterForm({ ...parameterForm, parameter_key: e.target.value.toUpperCase() })}
@@ -959,7 +962,7 @@ export default function SystemReportsManagement() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Dato *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de valor *</label>
                   <select
                     value={parameterForm.data_type_id}
                     onChange={(e) => {
@@ -978,7 +981,7 @@ export default function SystemReportsManagement() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Control UI *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Control visual *</label>
                   <select
                     value={parameterForm.ui_control_id}
                     onChange={(e) => setParameterForm({ ...parameterForm, ui_control_id: e.target.value })}
@@ -1011,7 +1014,7 @@ export default function SystemReportsManagement() {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Grupo Lookup {isLookupDataType(parameterDataTypes, parameterForm.data_type_id) ? '*' : ''}
+                    Grupo lookup {isLookupDataType(parameterDataTypes, parameterForm.data_type_id) ? '*' : ''}
                   </label>
                   <select
                     value={parameterForm.lookup_group_id}
@@ -1026,6 +1029,9 @@ export default function SystemReportsManagement() {
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Solo aplica para parametros que leen opciones desde lookup_groups. Los catalogos dinamicos como empleados, departamentos o areas se resolveran por la pantalla del reporte.
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <input id="parameter-required" type="checkbox" checked={parameterForm.is_required} onChange={(e) => setParameterForm({ ...parameterForm, is_required: e.target.checked })} className="w-4 h-4 rounded border-gray-300 text-blue-600" />

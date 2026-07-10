@@ -8,6 +8,14 @@ import { divIcon } from 'leaflet';
 import { MapPinned, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
+import {
+  defaultSystemReportConfig,
+  fetchSystemReportConfig,
+  getReportParameterLabel,
+  getSystemReportName,
+  isReportParameterEnabled,
+  type SystemReportConfig,
+} from '../../../utils/system-report-config';
 
 interface EmployeeOption {
   employee_id: string;
@@ -47,6 +55,11 @@ interface MapFocusTarget {
   position: [number, number];
   sequence: number;
 }
+
+const ROUTE_TRACKING_REPORT = {
+  code: 'RPT_RUTA_RECORRIDA',
+  name: 'Ruta recorrida',
+};
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
@@ -194,6 +207,7 @@ export default function EmployeeRouteTrackingReport() {
   const [loadingRoute, setLoadingRoute] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mapFocusTarget, setMapFocusTarget] = useState<MapFocusTarget | null>(null);
+  const [reportConfig, setReportConfig] = useState<SystemReportConfig>(() => defaultSystemReportConfig(ROUTE_TRACKING_REPORT));
 
   const request = async (path: string) => {
     const response = await fetch(buildApiUrl(path), {
@@ -227,6 +241,18 @@ export default function EmployeeRouteTrackingReport() {
     }
   };
 
+  const loadReportMetadata = async () => {
+    try {
+      setReportConfig(await fetchSystemReportConfig(ROUTE_TRACKING_REPORT, getToken()));
+    } catch {
+      setReportConfig(defaultSystemReportConfig(ROUTE_TRACKING_REPORT));
+    }
+  };
+
+  const reportName = getSystemReportName(reportConfig);
+  const parameterLabel = (key: string, fallback: string) => getReportParameterLabel(reportConfig, key, fallback);
+  const showParameter = (key: string) => isReportParameterEnabled(reportConfig, key);
+
   const loadRoute = async () => {
     if (!selectedEmployeeId) {
       setPoints([]);
@@ -255,6 +281,7 @@ export default function EmployeeRouteTrackingReport() {
 
   useEffect(() => {
     void loadEmployees('');
+    void loadReportMetadata();
   }, []);
 
   useEffect(() => {
@@ -304,7 +331,7 @@ export default function EmployeeRouteTrackingReport() {
                 <MapPinned className="size-5" />
               </span>
               <div>
-                <h1 className="text-2xl font-bold text-slate-900">Ruta recorrida por empleado</h1>
+                <h1 className="text-2xl font-bold text-slate-900">{reportName}</h1>
                 <p className="text-sm text-slate-600">Une puntos de recorrido y marcaciones de asistencia solo para visualización geográfica.</p>
               </div>
             </div>
@@ -330,10 +357,10 @@ export default function EmployeeRouteTrackingReport() {
 
       <div className="rounded-xl border bg-white p-4 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[1.5fr_1fr_1fr_auto]">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Empleado</label>
+          {(showParameter('EMPLOYEE_ID') || showParameter('EMPLOYEE_SEARCH')) ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('EMPLOYEE_ID', 'Empleado')}</label>
             <div className="mt-1 flex gap-2">
-              <select
+              {showParameter('EMPLOYEE_ID') ? <select
                 value={selectedEmployeeId}
                 onChange={(event) => setSelectedEmployeeId(event.target.value)}
                 className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm"
@@ -345,8 +372,8 @@ export default function EmployeeRouteTrackingReport() {
                     {fullEmployeeName(row)}{row.employee_code ? ` (${row.employee_code})` : ''}
                   </option>
                 ))}
-              </select>
-              <div className="relative w-48">
+              </select> : null}
+              {showParameter('EMPLOYEE_SEARCH') ? <div className="relative w-48">
                 <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
                 <input
                   value={searchTerm}
@@ -354,30 +381,30 @@ export default function EmployeeRouteTrackingReport() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void loadEmployees();
                   }}
-                  placeholder="Buscar"
+                  placeholder={parameterLabel('EMPLOYEE_SEARCH', 'Buscar')}
                   className="h-10 w-full rounded-md border py-2 pl-8 pr-2 text-sm"
                 />
-              </div>
+              </div> : null}
             </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Desde</label>
+          </div> : null}
+          {showParameter('DATE_FROM') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_FROM', 'Desde')}</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(event) => setDateFrom(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Hasta</label>
+          </div> : null}
+          {showParameter('DATE_TO') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_TO', 'Hasta')}</label>
             <input
               type="date"
               value={dateTo}
               onChange={(event) => setDateTo(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
+          </div> : null}
           <div className="flex items-end">
             <button
               type="button"

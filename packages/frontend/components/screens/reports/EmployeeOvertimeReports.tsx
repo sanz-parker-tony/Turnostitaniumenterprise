@@ -1,11 +1,21 @@
-﻿'use client';
+'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { BarChart3, Download, RefreshCw, Search } from 'lucide-react';
+import { BarChart3, Download, FileText, RefreshCw, Search } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { buildApiUrl } from '../../../utils/api-config';
 import { publicApiToken } from '../../../utils/backend/info';
-import { formatClientDateTime } from '../../../utils/date-time';
+import { useAuth } from '../../../contexts/AuthContext';
+import { formatClientDateTime, formatClientTime24 } from '../../../utils/date-time';
+import {
+  defaultSystemReportConfig,
+  fetchSystemReportConfig,
+  getReportParameterLabel,
+  getSystemReportName,
+  isReportParameterEnabled,
+  type SystemReportConfig,
+} from '../../../utils/system-report-config';
 
 interface EmployeeOption {
   employee_id: string;
@@ -32,7 +42,10 @@ interface OvertimeDetailRow {
   employee_id: string;
   employee_code: string | null;
   employee_full_name: string;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
   work_location_name: string | null;
   cost_center_name: string | null;
   payroll_group_name: string | null;
@@ -64,7 +77,10 @@ interface OvertimeSummaryRow {
   employee_id: string;
   employee_code: string | null;
   employee_full_name: string;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
   work_location_name: string | null;
   cost_center_name: string | null;
   payroll_group_name: string | null;
@@ -90,6 +106,16 @@ interface OvertimeSummaryRow {
 }
 
 type ReportTab = 'detail' | 'summary';
+
+const OVERTIME_DETAIL_REPORT = {
+  code: 'RPT_HORA_EXTRA_DETA',
+  name: 'Horas y sobretiempos detallado',
+};
+
+const OVERTIME_SUMMARY_REPORT = {
+  code: 'RPT_HORA_EXTRA_RESU',
+  name: 'Horas y sobretiempos resumido',
+};
 
 function getToken() {
   return localStorage.getItem('tt-access-token') || localStorage.getItem('access_token') || publicApiToken;
@@ -132,16 +158,15 @@ function formatDate(value: string | null): string {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
-function formatTime(value: string | null): string {
+function formatDateShort(value: string | null): string {
   if (!value) return '-';
-  return formatClientDateTime(value, 'es-EC').split(',').pop()?.trim() || '-';
+  const [date] = String(value).split('T');
+  const [year, month, day] = date.split('-');
+  return year && month && day ? `${Number(day)}/${Number(month)}/${year}` : value;
 }
 
 function formatTime24(value: string | null): string {
-  if (!value) return '';
-  const text = String(value);
-  const match = text.match(/[T ](\d{2}:\d{2}:\d{2})/);
-  return match?.[1] || formatTime(value);
+  return formatClientTime24(value, 'es-EC');
 }
 
 function htmlEscape(value: unknown): string {
@@ -205,6 +230,10 @@ function downloadCsv(filename: string, headers: string[], rows: Array<Array<unkn
 
 function sumMinutes<T>(rows: T[], selector: (row: T) => unknown): number {
   return rows.reduce((total, row) => total + asNumber(selector(row)), 0);
+}
+
+function decimalHours(minutes: unknown): number {
+  return Number((asNumber(minutes) / 60).toFixed(2));
 }
 
 function hasDailyDetailShape(row: Record<string, unknown>): boolean {
@@ -304,6 +333,8 @@ function consolidateDetailRows(rows: OvertimeDetailRow[]): OvertimeDetailRow[] {
 }
 
 export default function EmployeeOvertimeReports() {
+  const { profile } = useAuth();
+  const reportUserName = profile?.display_name || profile?.email || 'Usuario';
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -318,6 +349,8 @@ export default function EmployeeOvertimeReports() {
   const [filters, setFilters] = useState<ReportFilters>({ payroll_groups: [], cost_centers: [], departments: [], areas: [], work_groups: [] });
   const [detailRows, setDetailRows] = useState<OvertimeDetailRow[]>([]);
   const [summaryRows, setSummaryRows] = useState<OvertimeSummaryRow[]>([]);
+  const [detailReportConfig, setDetailReportConfig] = useState<SystemReportConfig>(() => defaultSystemReportConfig(OVERTIME_DETAIL_REPORT));
+  const [summaryReportConfig, setSummaryReportConfig] = useState<SystemReportConfig>(() => defaultSystemReportConfig(OVERTIME_SUMMARY_REPORT));
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -365,6 +398,26 @@ export default function EmployeeOvertimeReports() {
     }
   };
 
+  const loadReportMetadata = async () => {
+    try {
+      const [detailConfig, summaryConfig] = await Promise.all([
+        fetchSystemReportConfig(OVERTIME_DETAIL_REPORT, getToken()),
+        fetchSystemReportConfig(OVERTIME_SUMMARY_REPORT, getToken()),
+      ]);
+      setDetailReportConfig(detailConfig);
+      setSummaryReportConfig(summaryConfig);
+    } catch {
+      setDetailReportConfig(defaultSystemReportConfig(OVERTIME_DETAIL_REPORT));
+      setSummaryReportConfig(defaultSystemReportConfig(OVERTIME_SUMMARY_REPORT));
+    }
+  };
+
+  const activeReportConfig = activeTab === 'summary' ? summaryReportConfig : detailReportConfig;
+  const detailReportName = getSystemReportName(detailReportConfig);
+  const summaryReportName = getSystemReportName(summaryReportConfig);
+  const parameterLabel = (key: string, fallback: string) => getReportParameterLabel(activeReportConfig, key, fallback);
+  const showParameter = (key: string) => isReportParameterEnabled(activeReportConfig, key);
+
   const loadReports = async () => {
     setLoadingReport(true);
     setError(null);
@@ -397,6 +450,7 @@ export default function EmployeeOvertimeReports() {
   useEffect(() => {
     void loadEmployees('');
     void loadFilters();
+    void loadReportMetadata();
   }, []);
 
   useEffect(() => {
@@ -454,13 +508,93 @@ export default function EmployeeOvertimeReports() {
     return selectedEmployee ? fullEmployeeName(selectedEmployee) : selectedEmployeeId;
   };
 
+  const applyReportHeader = (worksheet: ExcelJS.Worksheet, title: string) => {
+    worksheet.getCell('A1').value = title;
+    worksheet.getCell('C2').value = 'Usuario :';
+    worksheet.getCell('D2').value = reportUserName;
+    worksheet.getCell('F2').value = 'Fecha :';
+    worksheet.getCell('G2').value = formatClientDateTime(new Date().toISOString(), 'es-EC');
+    worksheet.getCell('C3').value = 'Fecha Inic :';
+    worksheet.getCell('D3').value = formatDateShort(dateFrom);
+    worksheet.getCell('F3').value = 'Fecha Final :';
+    worksheet.getCell('G3').value = formatDateShort(dateTo);
+    worksheet.getCell('A4').value = 'Departamento :';
+    worksheet.getCell('B4').value = getFilterLabel(filters.departments, departmentId);
+    worksheet.getCell('C4').value = 'Área :';
+    worksheet.getCell('D4').value = getFilterLabel(filters.areas, areaId);
+    worksheet.getCell('E4').value = 'Rol Pago :';
+    worksheet.getCell('F4').value = getFilterLabel(filters.payroll_groups, payrollGroupId);
+    worksheet.getCell('G4').value = 'C.Costo :';
+    worksheet.getCell('H4').value = getFilterLabel(filters.cost_centers, costCenterId);
+    worksheet.getCell('I4').value = 'Grupo Trabajo :';
+    worksheet.getCell('J4').value = getFilterLabel(filters.work_groups, workGroupId);
+    worksheet.getCell('A5').value = 'Empleado :';
+    worksheet.getCell('B5').value = selectedEmployeeLabel();
+
+    ['A1', 'C2', 'F2', 'C3', 'F3', 'A4', 'C4', 'E4', 'G4', 'I4', 'A5'].forEach((address) => {
+      worksheet.getCell(address).font = { bold: true };
+    });
+  };
+
+  const setSheetColumns = (worksheet: ExcelJS.Worksheet, widths: number[]) => {
+    worksheet.columns = widths.map((width) => ({ width }));
+  };
+
+  const styleHeaderRow = (row: ExcelJS.Row) => {
+    row.height = 30;
+    row.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      };
+    });
+  };
+
+  const styleGroupRow = (worksheet: ExcelJS.Worksheet, rowNumber: number, columnCount: number) => {
+    worksheet.mergeCells(rowNumber, 1, rowNumber, columnCount);
+    const row = worksheet.getRow(rowNumber);
+    row.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
+    });
+  };
+
+  const styleTotalRow = (row: ExcelJS.Row) => {
+    row.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    });
+  };
+
+  const setNumberCells = (row: ExcelJS.Row, startColumn: number, endColumn: number) => {
+    for (let columnIndex = startColumn; columnIndex <= endColumn; columnIndex += 1) {
+      const cell = row.getCell(columnIndex);
+      cell.numFmt = '0.00';
+      cell.alignment = { horizontal: 'right' };
+    }
+  };
+
+  const writeXlsxWorkbook = async (workbook: ExcelJS.Workbook, filename: string) => {
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename.replace(/\.xls$/i, '.xlsx');
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const reportHeaderRows = (title: string, columnCount: number) => [
     xlsRow([{ value: title, colspan: columnCount, className: 'title' }]),
     xlsRow([
       '',
       '',
       { value: 'Usuario :', className: 'label' },
-      'Supervisor',
+      reportUserName,
       '',
       { value: 'Fecha :', className: 'label' },
       formatClientDateTime(new Date().toISOString(), 'es-EC'),
@@ -510,12 +644,13 @@ export default function EmployeeOvertimeReports() {
     { value: '25%', className: 'header' },
     { value: '50%', className: 'header' },
     { value: '100%', className: 'header' },
-    { value: '100% No Lab.', className: 'header' },
+    { value: '100%\nNo Laboral', className: 'header' },
     { value: 'Atraso', className: 'header' },
     { value: 'SAnt.', className: 'header' },
     { value: 'Falta', className: 'header' },
-    { value: 'Descuentos', className: 'header' },
+    { value: 'Todos los\ndescuentos', className: 'header' },
   ];
+  const headersFromValueCells = () => valueHeaderCells.map((cell) => String(cell.value));
   const valueCells = (row: OvertimeDetailRow | OvertimeSummaryRow, className = 'number') => [
     { value: formatHours(row.worked_minutes), className },
     { value: formatHours(row.ordinary_minutes), className },
@@ -769,9 +904,12 @@ export default function EmployeeOvertimeReports() {
     downloadXls(`rpt_hora_extra_resu_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_RESU', tableRows);
   };
 
-  const exportDetailXlsV2 = () => {
+  const exportDetailXlsV2 = async () => {
     const columnCount = 16;
-    const tableRows = reportHeaderRows('RPT_HORA_EXTRA_DETA', columnCount);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('RPT_HORA_EXTRA_DETA');
+    setSheetColumns(worksheet, [14, 13, 14, 14, 14, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 16]);
+    applyReportHeader(worksheet, 'RPT_HORA_EXTRA_DETA');
     const rowsByEmployee = new Map<string, OvertimeDetailRow[]>();
 
     detailRows.forEach((row) => {
@@ -780,74 +918,158 @@ export default function EmployeeOvertimeReports() {
       rowsByEmployee.set(row.employee_id, employeeRows);
     });
 
+    let rowNumber = 7;
+    const headers = ['Fecha', 'Turno', 'Inicio turno', 'Fin turno', 'Entrada', 'Salida', 'Trab.', '0%', '25%', '50%', '100%', '100%\nNo Laboral', 'Atraso', 'SAnt.', 'Falta', 'Todos los\ndescuentos'];
+
     rowsByEmployee.forEach((employeeRows) => {
       const firstRow = employeeRows[0];
-      tableRows.push(xlsRow([{
-        value: `Empleado : ${detailEmployeeLabel(firstRow)} | ${firstRow.department_name || '-'} / ${firstRow.area_name || '-'} / ${firstRow.payroll_group_name || '-'} / ${firstRow.cost_center_name || '-'} / ${firstRow.work_group_name || '-'}`,
-        colspan: columnCount,
-        className: 'group',
-      }]));
-      tableRows.push(xlsRow([
-        { value: 'Fecha', className: 'header' },
-        { value: 'Turno', className: 'header' },
-        { value: 'Inicio turno', className: 'header' },
-        { value: 'Fin turno', className: 'header' },
-        { value: 'Entrada', className: 'header' },
-        { value: 'Salida', className: 'header' },
-        ...valueHeaderCells,
-      ]));
+      worksheet.getRow(rowNumber).values = [
+        `Empleado : ${detailEmployeeLabel(firstRow)} | ${firstRow.department_name || '-'} / ${firstRow.area_name || '-'} / ${firstRow.payroll_group_name || '-'} / ${firstRow.cost_center_name || '-'} / ${firstRow.work_group_name || '-'}`,
+      ];
+      styleGroupRow(worksheet, rowNumber, columnCount);
+      rowNumber += 1;
+
+      worksheet.getRow(rowNumber).values = headers;
+      styleHeaderRow(worksheet.getRow(rowNumber));
+      rowNumber += 1;
 
       employeeRows.forEach((row) => {
-        tableRows.push(xlsRow([
-          formatDate(row.shift_date),
+        const excelRow = worksheet.getRow(rowNumber);
+        excelRow.values = [
+          formatDateShort(row.shift_date),
           row.shift_short_name || row.shift_name || '',
           formatTime24(row.shift_work_start),
           formatTime24(row.shift_work_end),
           formatTime24(row.first_entry),
           formatTime24(row.last_exit),
-          ...valueCells(row),
-        ]));
+          decimalHours(row.worked_minutes),
+          decimalHours(row.ordinary_minutes),
+          decimalHours(row.night_25_minutes),
+          decimalHours(row.extra_50_minutes),
+          decimalHours(row.extra_100_minutes),
+          decimalHours(row.non_working_100_minutes),
+          decimalHours(row.late_minutes),
+          decimalHours(row.early_departure_minutes),
+          decimalHours(row.absence_minutes),
+          decimalHours(discountMinutes(row)),
+        ];
+        setNumberCells(excelRow, 7, 16);
+        rowNumber += 1;
       });
 
-      tableRows.push(xlsRow([{ value: 'Subtotal empleado', colspan: 6, className: 'total' }, ...totalValueCells(employeeRows)]));
-      tableRows.push(xlsRow(Array.from({ length: columnCount }, () => '')));
+      const subtotalRow = worksheet.getRow(rowNumber);
+      subtotalRow.values = [
+        'Subtotal empleado',
+        '',
+        '',
+        '',
+        '',
+        '',
+        decimalHours(sumMinutes(employeeRows, (row) => row.worked_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.ordinary_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.night_25_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.extra_50_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.extra_100_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.non_working_100_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.late_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.early_departure_minutes)),
+        decimalHours(sumMinutes(employeeRows, (row) => row.absence_minutes)),
+        decimalHours(sumMinutes(employeeRows, discountMinutes)),
+      ];
+      worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
+      styleTotalRow(subtotalRow);
+      setNumberCells(subtotalRow, 7, 16);
+      rowNumber += 2;
     });
 
-    tableRows.push(xlsRow([{ value: 'Total global', colspan: 6, className: 'total' }, ...totalValueCells(detailRows)]));
-    downloadXls(`rpt_hora_extra_deta_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_DETA', tableRows);
+    const totalRow = worksheet.getRow(rowNumber);
+    totalRow.values = [
+      'Total global',
+      '',
+      '',
+      '',
+      '',
+      '',
+      decimalHours(sumMinutes(detailRows, (row) => row.worked_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.ordinary_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.night_25_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.extra_50_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.extra_100_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.non_working_100_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.late_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.early_departure_minutes)),
+      decimalHours(sumMinutes(detailRows, (row) => row.absence_minutes)),
+      decimalHours(sumMinutes(detailRows, discountMinutes)),
+    ];
+    worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
+    styleTotalRow(totalRow);
+    setNumberCells(totalRow, 7, 16);
+
+    await writeXlsxWorkbook(workbook, `rpt_hora_extra_deta_${dateFrom}_${dateTo}.xlsx`);
   };
 
-  const exportSummaryXlsV2 = () => {
+  const exportSummaryXlsV2 = async () => {
     const columnCount = 16;
-    const tableRows = reportHeaderRows('RPT_HORA_EXTRA_RESU', columnCount);
-    tableRows.push(xlsRow([
-      { value: 'Empleado', className: 'header' },
-      { value: 'Departamento', className: 'header' },
-      { value: 'Area', className: 'header' },
-      { value: 'Rol pago', className: 'header' },
-      { value: 'Centro costo', className: 'header' },
-      { value: 'Grupo trabajo', className: 'header' },
-      ...valueHeaderCells,
-    ]));
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('RPT_HORA_EXTRA_RESU');
+    setSheetColumns(worksheet, [36, 16, 16, 16, 16, 16, 12, 12, 12, 12, 12, 14, 12, 12, 12, 16]);
+    applyReportHeader(worksheet, 'RPT_HORA_EXTRA_RESU');
+    worksheet.getRow(7).values = ['Empleado', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo', ...headersFromValueCells()];
+    styleHeaderRow(worksheet.getRow(7));
 
+    let rowNumber = 8;
     summaryDisplayRows.forEach((row) => {
-      tableRows.push(xlsRow([
+      const excelRow = worksheet.getRow(rowNumber);
+      excelRow.values = [
         summaryEmployeeLabel(row),
         ...positionCells(row),
-        ...valueCells(row),
-      ]));
+        decimalHours(row.worked_minutes),
+        decimalHours(row.ordinary_minutes),
+        decimalHours(row.night_25_minutes),
+        decimalHours(row.extra_50_minutes),
+        decimalHours(row.extra_100_minutes),
+        decimalHours(row.non_working_100_minutes),
+        decimalHours(row.late_minutes),
+        decimalHours(row.early_departure_minutes),
+        decimalHours(row.absence_minutes),
+        decimalHours(discountMinutes(row)),
+      ];
+      setNumberCells(excelRow, 7, 16);
+      rowNumber += 1;
     });
 
-    tableRows.push(xlsRow([{ value: 'Total global', colspan: 6, className: 'total' }, ...totalValueCells(summaryDisplayRows)]));
-    downloadXls(`rpt_hora_extra_resu_${dateFrom}_${dateTo}.xls`, 'RPT_HORA_EXTRA_RESU', tableRows);
+    const totalRow = worksheet.getRow(rowNumber);
+    totalRow.values = [
+      'Total global',
+      '',
+      '',
+      '',
+      '',
+      '',
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.worked_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.ordinary_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.night_25_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.extra_50_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.extra_100_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.non_working_100_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.late_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.early_departure_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.absence_minutes)),
+      decimalHours(sumMinutes(summaryDisplayRows, discountMinutes)),
+    ];
+    worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
+    styleTotalRow(totalRow);
+    setNumberCells(totalRow, 7, 16);
+
+    await writeXlsxWorkbook(workbook, `rpt_hora_extra_resu_${dateFrom}_${dateTo}.xlsx`);
   };
 
   const exportCurrentTab = () => {
     if (activeTab === 'detail') {
-      exportDetailXlsV2();
+      void exportDetailXlsV2();
       return;
     }
-    exportSummaryXlsV2();
+    void exportSummaryXlsV2();
     return;
 
     if (activeTab === 'detail') {
@@ -859,8 +1081,8 @@ export default function EmployeeOvertimeReports() {
           row.employee_code,
           formatDate(row.shift_date),
           row.shift_short_name || row.shift_name || '',
-          formatTime(row.first_entry),
-          formatTime(row.last_exit),
+          formatTime24(row.first_entry),
+          formatTime24(row.last_exit),
           formatHours(row.worked_minutes),
           formatHours(row.night_25_minutes),
           formatHours(row.extra_50_minutes),
@@ -891,6 +1113,143 @@ export default function EmployeeOvertimeReports() {
     );
   };
 
+  const blobToDataUrl = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen del reporte'));
+      reader.readAsDataURL(blob);
+    });
+
+  const fetchReportAssetDataUrl = async (rows: Array<OvertimeDetailRow | OvertimeSummaryRow>): Promise<string> => {
+    const bannerRow = rows.find((row) => row.company_id && row.company_banner);
+    const logoRow = rows.find((row) => row.company_id && row.company_logo);
+    const sourceRow = bannerRow || logoRow;
+    if (!sourceRow?.company_id) return '';
+
+    const assetType = bannerRow ? 'banner' : 'logo';
+    try {
+      const response = await fetch(buildApiUrl(`/organization/companies/${sourceRow.company_id}/asset/${assetType}`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!response.ok) return '';
+      const blob = await response.blob();
+      if (!blob.size) return '';
+      return await blobToDataUrl(blob);
+    } catch {
+      return '';
+    }
+  };
+
+  const criteriaHtml = () => `
+    <table class="criteria">
+      <tr><td class="label">Usuario :</td><td>${htmlEscape(reportUserName)}</td><td class="label">Fecha :</td><td>${htmlEscape(formatClientDateTime(new Date().toISOString(), 'es-EC'))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('DATE_FROM', 'Fecha Inic'))} :</td><td>${htmlEscape(formatDateShort(dateFrom))}</td><td class="label">${htmlEscape(parameterLabel('DATE_TO', 'Fecha Final'))} :</td><td>${htmlEscape(formatDateShort(dateTo))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('DEPARTMENT_ID', 'Departamento'))} :</td><td>${htmlEscape(getFilterLabel(filters.departments, departmentId))}</td><td class="label">${htmlEscape(parameterLabel('AREA_ID', 'Área'))} :</td><td>${htmlEscape(getFilterLabel(filters.areas, areaId))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('PAYROLL_GROUP_ID', 'Rol Pago'))} :</td><td>${htmlEscape(getFilterLabel(filters.payroll_groups, payrollGroupId))}</td><td class="label">${htmlEscape(parameterLabel('COST_CENTER_ID', 'C.Costo'))} :</td><td>${htmlEscape(getFilterLabel(filters.cost_centers, costCenterId))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('WORK_GROUP_ID', 'Grupo Trabajo'))} :</td><td>${htmlEscape(getFilterLabel(filters.work_groups, workGroupId))}</td><td class="label">${htmlEscape(parameterLabel('EMPLOYEE_ID', 'Empleado'))} :</td><td>${htmlEscape(selectedEmployeeLabel())}</td></tr>
+    </table>
+  `;
+
+  const printableDocument = (reportName: string, reportCode: string, bannerDataUrl: string, bodyHtml: string) => `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${htmlEscape(reportName)}</title>
+        <style>
+          @page { size: landscape; margin: 10mm; }
+          body { font-family: Arial, sans-serif; font-size: 10px; color: #111827; }
+          .banner { max-height: 72px; max-width: 100%; object-fit: contain; margin-bottom: 8px; }
+          h1 { font-size: 14px; margin: 0 0 2px; }
+          .report-code { font-size: 10px; font-weight: 700; margin: 0 0 8px; }
+          table { width: 100%; border-collapse: collapse; }
+          td, th { border: 1px solid #d1d5db; padding: 3px 4px; vertical-align: middle; }
+          th { background: #d9d9d9; font-weight: 700; text-align: center; }
+          .criteria { margin-bottom: 12px; }
+          .criteria td { border: 0; padding: 2px 5px; }
+          .label { font-weight: 700; }
+          .group, .subtotal, .total { background: #d9d9d9; font-weight: 700; }
+          .number { text-align: right; }
+          .nowrap { white-space: nowrap; }
+        </style>
+      </head>
+      <body>
+        ${bannerDataUrl ? `<img class="banner" src="${bannerDataUrl}" alt="Banner empresa" />` : ''}
+        <h1>${htmlEscape(reportName)}</h1>
+        <p class="report-code">${htmlEscape(reportCode)}</p>
+        ${criteriaHtml()}
+        ${bodyHtml}
+        <script>window.onload = () => { window.focus(); window.print(); };</script>
+      </body>
+    </html>
+  `;
+
+  const openPrintablePdf = async (reportName: string, reportCode: string, rows: Array<OvertimeDetailRow | OvertimeSummaryRow>, bodyHtml: string) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setError('El navegador bloqueó la ventana de impresión PDF.');
+      return;
+    }
+    const bannerDataUrl = await fetchReportAssetDataUrl(rows);
+    printWindow.document.open();
+    printWindow.document.write(printableDocument(reportName, reportCode, bannerDataUrl, bodyHtml));
+    printWindow.document.close();
+  };
+
+  const pdfHeaderText = (header: string) => htmlEscape(header).replace(/\n/g, '<br/>');
+
+  const exportDetailPdf = async () => {
+    const headers = ['Fecha', 'Turno', 'Inicio turno', 'Fin turno', 'Entrada', 'Salida', ...headersFromValueCells()];
+    const rowsHtml = detailGroups.map((group) => {
+      const groupRows = group.rows.map((row) => `
+        <tr>
+          <td class="nowrap">${htmlEscape(formatDateShort(row.shift_date))}</td>
+          <td>${htmlEscape(row.shift_short_name || row.shift_name || '')}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.shift_work_start))}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.shift_work_end))}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.first_entry))}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.last_exit))}</td>
+          ${valueCells(row).map((cell) => `<td class="number">${htmlEscape((cell as XlsCellOptions).value)}</td>`).join('')}
+        </tr>
+      `).join('');
+      const subtotalCells = totalValueCells(group.rows).map((cell) => `<td class="number">${htmlEscape(cell.value)}</td>`).join('');
+      return `
+        <tr><td class="group" colspan="16">Empleado : ${htmlEscape(detailEmployeeLabel(group.employee))} | ${htmlEscape(positionCells(group.employee).join(' / '))}</td></tr>
+        <tr>${headers.map((header) => `<th>${pdfHeaderText(header)}</th>`).join('')}</tr>
+        ${groupRows}
+        <tr class="subtotal"><td colspan="6">Subtotal empleado</td>${subtotalCells}</tr>
+      `;
+    }).join('');
+    const totalCells = totalValueCells(detailRows).map((cell) => `<td class="number">${htmlEscape(cell.value)}</td>`).join('');
+    await openPrintablePdf(detailReportName, OVERTIME_DETAIL_REPORT.code, detailRows, `<table>${rowsHtml}<tr class="total"><td colspan="6">Total global</td>${totalCells}</tr></table>`);
+  };
+
+  const exportSummaryPdf = async () => {
+    const headers = ['Empleado', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo', ...headersFromValueCells()];
+    const rowsHtml = summaryDisplayRows.map((row) => `
+      <tr>
+        <td>${htmlEscape(summaryEmployeeLabel(row))}</td>
+        ${positionCells(row).map((cell) => `<td>${htmlEscape(cell)}</td>`).join('')}
+        ${valueCells(row).map((cell) => `<td class="number">${htmlEscape((cell as XlsCellOptions).value)}</td>`).join('')}
+      </tr>
+    `).join('');
+    const totalCells = totalValueCells(summaryDisplayRows).map((cell) => `<td class="number">${htmlEscape(cell.value)}</td>`).join('');
+    await openPrintablePdf(
+      summaryReportName,
+      OVERTIME_SUMMARY_REPORT.code,
+      summaryDisplayRows,
+      `<table><tr>${headers.map((header) => `<th>${pdfHeaderText(header)}</th>`).join('')}</tr>${rowsHtml}<tr class="total"><td colspan="6">Total global</td>${totalCells}</tr></table>`
+    );
+  };
+
+  const exportCurrentPdf = () => {
+    if (activeTab === 'detail') {
+      void exportDetailPdf();
+      return;
+    }
+    void exportSummaryPdf();
+  };
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -932,11 +1291,11 @@ export default function EmployeeOvertimeReports() {
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
 
       <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_auto_auto]">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Empleado</label>
+        <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_auto_auto_auto]">
+          {(showParameter('EMPLOYEE_ID') || showParameter('EMPLOYEE_SEARCH')) ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('EMPLOYEE_ID', 'Empleado')}</label>
             <div className="mt-1 flex gap-2">
-              <select
+              {showParameter('EMPLOYEE_ID') ? <select
                 value={selectedEmployeeId}
                 onChange={(event) => setSelectedEmployeeId(event.target.value)}
                 className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm"
@@ -948,8 +1307,8 @@ export default function EmployeeOvertimeReports() {
                     {fullEmployeeName(row)}{row.employee_code ? ` (${row.employee_code})` : ''}
                   </option>
                 ))}
-              </select>
-              <div className="relative w-48">
+              </select> : null}
+              {showParameter('EMPLOYEE_SEARCH') ? <div className="relative w-48">
                 <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
                 <input
                   value={searchTerm}
@@ -957,30 +1316,30 @@ export default function EmployeeOvertimeReports() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void loadEmployees();
                   }}
-                  placeholder="Buscar"
+                  placeholder={parameterLabel('EMPLOYEE_SEARCH', 'Buscar')}
                   className="h-10 w-full rounded-md border py-2 pl-8 pr-2 text-sm"
                 />
-              </div>
+              </div> : null}
             </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Desde</label>
+          </div> : null}
+          {showParameter('DATE_FROM') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_FROM', 'Desde')}</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(event) => setDateFrom(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Hasta</label>
+          </div> : null}
+          {showParameter('DATE_TO') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_TO', 'Hasta')}</label>
             <input
               type="date"
               value={dateTo}
               onChange={(event) => setDateTo(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
+          </div> : null}
           <div className="flex items-end">
             <button
               type="button"
@@ -1003,73 +1362,54 @@ export default function EmployeeOvertimeReports() {
               XLS
             </button>
           </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={exportCurrentPdf}
+              disabled={loadingReport || (activeTab === 'detail' ? detailRows.length === 0 : summaryDisplayRows.length === 0)}
+              className="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              <FileText className="size-4" />
+              PDF
+            </button>
+          </div>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Departamento</label>
-            <select
-              value={departmentId}
-              onChange={(event) => setDepartmentId(event.target.value)}
-              className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
-            >
+          {showParameter('DEPARTMENT_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DEPARTMENT_ID', 'Departamento')}</label>
+            <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
-              {filters.departments.map((option) => (
-                <option key={option.id} value={option.id}>{option.label || option.id}</option>
-              ))}
+              {filters.departments.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Área</label>
-            <select
-              value={areaId}
-              onChange={(event) => setAreaId(event.target.value)}
-              className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
-            >
+          </div> : null}
+          {showParameter('AREA_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('AREA_ID', 'Área')}</label>
+            <select value={areaId} onChange={(event) => setAreaId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todas</option>
-              {filters.areas.map((option) => (
-                <option key={option.id} value={option.id}>{option.label || option.id}</option>
-              ))}
+              {filters.areas.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Rol de Pago</label>
-            <select
-              value={payrollGroupId}
-              onChange={(event) => setPayrollGroupId(event.target.value)}
-              className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
-            >
+          </div> : null}
+          {showParameter('PAYROLL_GROUP_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('PAYROLL_GROUP_ID', 'Rol de Pago')}</label>
+            <select value={payrollGroupId} onChange={(event) => setPayrollGroupId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
-              {filters.payroll_groups.map((option) => (
-                <option key={option.id} value={option.id}>{option.label || option.id}</option>
-              ))}
+              {filters.payroll_groups.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Centro de Costo</label>
-            <select
-              value={costCenterId}
-              onChange={(event) => setCostCenterId(event.target.value)}
-              className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
-            >
+          </div> : null}
+          {showParameter('COST_CENTER_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('COST_CENTER_ID', 'Centro de Costo')}</label>
+            <select value={costCenterId} onChange={(event) => setCostCenterId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
-              {filters.cost_centers.map((option) => (
-                <option key={option.id} value={option.id}>{option.label || option.id}</option>
-              ))}
+              {filters.cost_centers.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Grupo de Trabajo</label>
-            <select
-              value={workGroupId}
-              onChange={(event) => setWorkGroupId(event.target.value)}
-              className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
-            >
+          </div> : null}
+          {showParameter('WORK_GROUP_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('WORK_GROUP_ID', 'Grupo de Trabajo')}</label>
+            <select value={workGroupId} onChange={(event) => setWorkGroupId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
-              {filters.work_groups.map((option) => (
-                <option key={option.id} value={option.id}>{option.label || option.id}</option>
-              ))}
+              {filters.work_groups.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
+          </div> : null}
         </div>
         <div className="hidden">
           <div>
@@ -1162,11 +1502,17 @@ export default function EmployeeOvertimeReports() {
                   <th className="px-3 py-2 text-right">25%</th>
                   <th className="px-3 py-2 text-right">50%</th>
                   <th className="px-3 py-2 text-right">100%</th>
-                  <th className="px-3 py-2 text-right">100% No Lab.</th>
+                  <th className="px-3 py-2 text-right leading-tight">
+                    <span className="block">100% No</span>
+                    <span className="block">Laboral</span>
+                  </th>
                   <th className="px-3 py-2 text-right">Atraso</th>
                   <th className="px-3 py-2 text-right">SAnt</th>
                   <th className="px-3 py-2 text-right">Falta</th>
-                  <th className="px-3 py-2 text-right">Descuentos</th>
+                  <th className="px-3 py-2 text-right leading-tight">
+                    <span className="block">Todos los</span>
+                    <span className="block">descuentos</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -1194,10 +1540,10 @@ export default function EmployeeOvertimeReports() {
                             </td>
                             <td className="px-3 py-2">{formatDate(row.shift_date)}</td>
                             <td className="px-3 py-2">{row.shift_short_name || row.shift_name || '-'}</td>
-                            <td className="px-3 py-2">{formatTime(row.shift_work_start)}</td>
-                            <td className="px-3 py-2">{formatTime(row.shift_work_end)}</td>
-                            <td className="px-3 py-2">{formatTime(row.first_entry)}</td>
-                            <td className="px-3 py-2">{formatTime(row.last_exit)}</td>
+                            <td className="px-3 py-2">{formatTime24(row.shift_work_start)}</td>
+                            <td className="px-3 py-2">{formatTime24(row.shift_work_end)}</td>
+                            <td className="px-3 py-2">{formatTime24(row.first_entry)}</td>
+                            <td className="px-3 py-2">{formatTime24(row.last_exit)}</td>
                             <td className="px-3 py-2 text-right font-semibold">{formatHours(row.worked_minutes)}</td>
                             <td className="px-3 py-2 text-right">{formatHours(row.ordinary_minutes)}</td>
                             <td className="px-3 py-2 text-right">{formatHours(row.night_25_minutes)}</td>
@@ -1243,11 +1589,17 @@ export default function EmployeeOvertimeReports() {
                   <th className="px-3 py-2 text-right">25%</th>
                   <th className="px-3 py-2 text-right">50%</th>
                   <th className="px-3 py-2 text-right">100%</th>
-                  <th className="px-3 py-2 text-right">100% No Lab.</th>
+                  <th className="px-3 py-2 text-right leading-tight">
+                    <span className="block">100% No</span>
+                    <span className="block">Laboral</span>
+                  </th>
                   <th className="px-3 py-2 text-right">Atraso</th>
                   <th className="px-3 py-2 text-right">SAnt</th>
                   <th className="px-3 py-2 text-right">Falta</th>
-                  <th className="px-3 py-2 text-right">Descuentos</th>
+                  <th className="px-3 py-2 text-right leading-tight">
+                    <span className="block">Todos los</span>
+                    <span className="block">descuentos</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

@@ -11,6 +11,7 @@
  */
 
 import { buildApiUrl } from '../../utils/api-config';
+import { formatClientTime24 } from '../../utils/date-time';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -216,12 +217,7 @@ export default function KioskRegularization() {
   };
 
   // Formatear hora
-  const formatTime = (datetime: string) => {
-    return new Date(datetime).toLocaleTimeString('es-ES', {
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  const formatTime = (datetime: string) => formatClientTime24(datetime, 'es-EC');
 
   // Badge de estado
   const getStatusBadge = (statusCode: string) => {

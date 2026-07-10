@@ -323,7 +323,7 @@ async function ensureEmployeeRoleAssigned(
     .select('id')
     .single();
   if (insertRoleError) throw new Error(insertRoleError.message);
-  if (!insertedUserRole?.id) throw new Error('No se pudo crear la asignación de rol EMPLOYEE');
+  if (!insertedUserRole?.id) throw new Error('No se pudo crear la asignaciÃƒÂ³n de rol EMPLOYEE');
   return insertedUserRole.id;
 }
 
@@ -674,11 +674,70 @@ async function upsertTenantSettingValueByKey(
 function safeRelativePhotoPath(photoPath: string): string {
   const normalized = photoPath.replace(/\\/g, '/').replace(/^\/+/, '');
   if (!normalized || normalized.includes('..')) {
-    throw new Error('Ruta de foto inválida');
+    throw new Error('Ruta de foto invÃƒÂ¡lida');
   }
   return normalized;
 }
 
+async function resolveCompanyAssetsStoragePath(
+  Postgres: any,
+  tenantId: string
+): Promise<{ absolutePath: string; configuredValue: string; source: 'TENANT' | 'SYSTEM' | 'FALLBACK' }> {
+  const { data: systemSetting, error: systemSettingError } = await Postgres
+    .from('system_settings')
+    .select('id, default_value')
+    .eq('setting_key', 'COMPANY_ASSETS_PATH')
+    .eq('is_active', true)
+    .maybeSingle();
+
+  if (systemSettingError) {
+    throw new Error(systemSettingError.message);
+  }
+
+  let configuredValue = '';
+  let source: 'TENANT' | 'SYSTEM' | 'FALLBACK' = 'FALLBACK';
+
+  if (systemSetting?.id) {
+    const { data: tenantOverride, error: tenantOverrideError } = await Postgres
+      .from('tenant_settings')
+      .select('setting_value')
+      .eq('tenant_id', tenantId)
+      .eq('system_setting_id', systemSetting.id)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (tenantOverrideError) {
+      throw new Error(tenantOverrideError.message);
+    }
+
+    if (tenantOverride?.setting_value && String(tenantOverride.setting_value).trim()) {
+      configuredValue = String(tenantOverride.setting_value).trim();
+      source = 'TENANT';
+    } else if (systemSetting.default_value && String(systemSetting.default_value).trim()) {
+      configuredValue = String(systemSetting.default_value).trim();
+      source = 'SYSTEM';
+    }
+  }
+
+  if (!configuredValue) {
+    configuredValue = path.join('storage', 'company-assets');
+    source = 'FALLBACK';
+  }
+
+  const absolutePath = path.isAbsolute(configuredValue)
+    ? configuredValue
+    : path.resolve(process.cwd(), configuredValue);
+
+  return { absolutePath, configuredValue, source };
+}
+
+function safeRelativeCompanyAssetPath(assetPath: string): string {
+  const normalized = assetPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  if (!normalized || normalized.includes('..')) {
+    throw new Error('Ruta de imagen de empresa invalida');
+  }
+  return normalized;
+}
 function isAllSelector(value: any): boolean {
   return value === '0' || value === 0;
 }
@@ -2571,7 +2630,7 @@ router.get('/migration-export', async (req: Request, res: Response) => {
 
     if (errors.length > 0) {
       const firstError = errors.find((entry: any) => entry && typeof entry.message === 'string');
-      return res.status(500).json({ error: firstError?.message || 'Error consultando datos para exportación' });
+      return res.status(500).json({ error: firstError?.message || 'Error consultando datos para exportaciÃƒÂ³n' });
     }
 
     type ExportRow = Record<string, any>;
@@ -2835,7 +2894,7 @@ router.get('/migration-export', async (req: Request, res: Response) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).send(Buffer.from(buffer));
   } catch (err: any) {
-    return res.status(500).json({ error: err.message || 'Error generando exportación de migración' });
+    return res.status(500).json({ error: err.message || 'Error generando exportaciÃƒÂ³n de migraciÃƒÂ³n' });
   }
 });
 
@@ -2913,7 +2972,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
 
     if (errors.length > 0) {
       const firstError = errors.find((entry: any) => entry && typeof entry.message === 'string');
-      return res.status(500).json({ error: firstError?.message || 'Error cargando catálogos' });
+      return res.status(500).json({ error: firstError?.message || 'Error cargando catÃƒÂ¡logos' });
     }
 
     const companyById = new Map<string, any>();
@@ -4077,6 +4136,143 @@ router.get('/employees/:id/photo', async (req: Request, res: Response) => {
   }
 });
 
+router.post('/companies/:id/upload-asset', async (req: Request, res: Response) => {
+  try {
+    const assetType = String(req.body?.asset_type || '').trim().toLowerCase();
+    const fileName = String(req.body?.file_name || '').trim();
+    const mimeType = String(req.body?.mime_type || '').trim().toLowerCase();
+    const fileBase64 = String(req.body?.file_base64 || '').trim();
+
+    if (!['logo', 'banner'].includes(assetType)) {
+      return res.status(400).json({ error: 'asset_type debe ser logo o banner' });
+    }
+    if (!fileName || !fileBase64) {
+      return res.status(400).json({ error: 'file_name y file_base64 son obligatorios' });
+    }
+
+    const allowedMimes = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+    if (!allowedMimes.has(mimeType)) {
+      return res.status(400).json({ error: 'Formato no soportado. Use jpg, png o webp' });
+    }
+
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const { data: company, error: companyError } = await Postgres
+      .from('companies')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (companyError) return res.status(500).json({ error: companyError.message });
+    if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+    const buffer = Buffer.from(fileBase64, 'base64');
+    if (!buffer.length) return res.status(400).json({ error: 'Contenido de imagen invalido' });
+    if (buffer.length > 8 * 1024 * 1024) return res.status(400).json({ error: 'La imagen supera el limite de 8MB' });
+
+    const resolved = await resolveCompanyAssetsStoragePath(Postgres, tenantId);
+    await fs.mkdir(resolved.absolutePath, { recursive: true });
+
+    const extByMime: Record<string, string> = {
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp',
+    };
+    const ext = extByMime[mimeType] || path.extname(fileName) || '.png';
+    const storedFileName = `${assetType}-${Date.now()}-${randomUUID()}${ext}`;
+    const relativePath = safeRelativeCompanyAssetPath(`${tenantId}/${req.params.id}/${storedFileName}`);
+    const absoluteFilePath = path.join(resolved.absolutePath, relativePath);
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, buffer);
+
+    const actor = getActor(req);
+    const updatePayload: Record<string, any> = {
+      [assetType]: relativePath,
+      updated_by: actor,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: updatedCompany, error: updateError } = await Postgres
+      .from('companies')
+      .update(updatePayload)
+      .eq('tenant_id', tenantId)
+      .eq('id', req.params.id)
+      .select('*')
+      .maybeSingle();
+    if (updateError) return res.status(500).json({ error: updateError.message });
+
+    return res.status(201).json({ success: true, asset_type: assetType, asset_path: relativePath, item: updatedCompany });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.delete('/companies/:id/asset/:assetType', async (req: Request, res: Response) => {
+  try {
+    const assetType = String(req.params.assetType || '').trim().toLowerCase();
+    if (!['logo', 'banner'].includes(assetType)) {
+      return res.status(400).json({ error: 'assetType debe ser logo o banner' });
+    }
+
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const actor = getActor(req);
+    const { data: updatedCompany, error: updateError } = await Postgres
+      .from('companies')
+      .update({ [assetType]: null, updated_by: actor, updated_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId)
+      .eq('id', req.params.id)
+      .select('*')
+      .maybeSingle();
+    if (updateError) return res.status(500).json({ error: updateError.message });
+    if (!updatedCompany) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+    return res.status(200).json({ success: true, item: updatedCompany });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/companies/:id/asset/:assetType', async (req: Request, res: Response) => {
+  try {
+    const assetType = String(req.params.assetType || '').trim().toLowerCase();
+    if (!['logo', 'banner'].includes(assetType)) {
+      return res.status(400).json({ error: 'assetType debe ser logo o banner' });
+    }
+
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const { data: company, error: companyError } = await Postgres
+      .from('companies')
+      .select('id, logo, banner')
+      .eq('tenant_id', tenantId)
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (companyError) return res.status(500).json({ error: companyError.message });
+    if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
+
+    const storedPath = String(company[assetType] || '').trim();
+    if (!storedPath) return res.status(404).json({ error: 'La empresa no tiene imagen configurada' });
+    if (/^https?:\/\//i.test(storedPath)) return res.redirect(storedPath);
+
+    const resolved = await resolveCompanyAssetsStoragePath(Postgres, tenantId);
+    const relativePath = safeRelativeCompanyAssetPath(storedPath);
+    if (!relativePath.startsWith(`${tenantId}/`)) return res.status(403).json({ error: 'Ruta de imagen no permitida para este tenant' });
+
+    const absoluteFilePath = path.join(resolved.absolutePath, relativePath);
+    await fs.access(absoluteFilePath);
+    return res.sendFile(absoluteFilePath);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return res.status(404).json({ error: 'Archivo de imagen no encontrado' });
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
 router.get('/:entity', async (req: Request, res: Response) => {
   try {
     const config = getEntityConfig(req.params.entity);
@@ -4237,7 +4433,7 @@ router.post('/:entity', async (req: Request, res: Response) => {
           success: true,
           items: data || [],
           count: (data || []).length,
-          message: `Se crearon ${(data || []).length} horarios con combinaciones válidas`,
+          message: `Se crearon ${(data || []).length} horarios con combinaciones vÃƒÂ¡lidas`,
         });
       }
 
@@ -4309,7 +4505,7 @@ router.put('/:entity/:id', async (req: Request, res: Response) => {
     if (req.params.entity === 'shifts') {
       if (isAllSelector(payload.company_id) || isAllSelector(payload.payroll_group_id)) {
         return res.status(400).json({
-          error: 'En actualizacion no se permite valor 0 (TODOS). Use creación para generar horarios masivos por combinacion',
+          error: 'En actualizacion no se permite valor 0 (TODOS). Use creaciÃƒÂ³n para generar horarios masivos por combinacion',
         });
       }
 
@@ -4386,7 +4582,7 @@ router.patch('/:entity/:id/status', async (req: Request, res: Response) => {
     }
 
     if (!config.hasIsActive) {
-      return res.status(400).json({ error: 'La entidad no soporta activación/desactivación' });
+      return res.status(400).json({ error: 'La entidad no soporta activaciÃƒÂ³n/desactivaciÃƒÂ³n' });
     }
 
     const { is_active } = req.body || {};

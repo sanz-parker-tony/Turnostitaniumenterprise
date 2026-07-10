@@ -1,4 +1,4 @@
-﻿import { Router, Request, Response } from 'express';
+import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 
 const router = Router();
@@ -13,7 +13,7 @@ function isIsoDate(value: string): boolean {
 }
 
 function parseBool(value: any): boolean {
-  return ['1', 'true', 'yes', 'si', 'sÃ­'].includes(String(value ?? '').trim().toLowerCase());
+  return ['1', 'true', 'yes', 'si', 'sÃƒÂ­'].includes(String(value ?? '').trim().toLowerCase());
 }
 
 async function resolveViewerContext(req: Request) {
@@ -71,6 +71,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
         e.employee_lastname,
         ec.company_id,
         c.company_name,
+        c.logo AS company_logo,
+        c.banner AS company_banner,
         ec.work_location_id,
         wl.work_location_name,
         COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
@@ -118,6 +120,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       e.employee_lastname,
       scope.company_id,
       c.company_name,
+      c.logo AS company_logo,
+      c.banner AS company_banner,
       scope.work_location_id,
       wl.work_location_name,
       COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
@@ -200,6 +204,8 @@ function buildOvertimeCtes(
         CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
         ae.company_id,
         ae.company_name,
+        ae.company_logo,
+        ae.company_banner,
         ae.work_location_id,
         ae.work_location_name,
         ae.employee_country_id,
@@ -475,6 +481,9 @@ function buildOvertimeCtes(
         attendance.employee_name,
         attendance.employee_full_name,
         attendance.company_name,
+        attendance.company_id,
+        attendance.company_logo,
+        attendance.company_banner,
         attendance.work_location_name,
         attendance.cost_center_id,
         attendance.cost_center_name,
@@ -718,6 +727,9 @@ router.get('/summary', async (req: Request, res: Response) => {
           employee_code,
           employee_full_name,
           MAX(company_name) AS company_name,
+          MAX(company_id::text)::uuid AS company_id,
+          MAX(company_logo) AS company_logo,
+          MAX(company_banner) AS company_banner,
           MAX(work_location_name) AS work_location_name,
           MAX(cost_center_id::text)::uuid AS cost_center_id,
           MAX(cost_center_name) AS cost_center_name,
@@ -781,6 +793,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
             ae.company_name,
+            ae.company_id,
+            ae.company_logo,
+            ae.company_banner,
             ae.department_name,
             ae.area_name,
             ae.payroll_group_name,
@@ -804,7 +819,7 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             AND ($${params.length + 4}::uuid IS NULL OR ae.department_id = $${params.length + 4}::uuid)
             AND ($${params.length + 5}::uuid IS NULL OR ae.area_id = $${params.length + 5}::uuid)
             AND ($${params.length + 6}::uuid IS NULL OR ae.work_group_id = $${params.length + 6}::uuid)
-          GROUP BY ae.employee_id, ae.employee_code, ae.employee_lastname, ae.employee_name, ae.company_name, ae.department_name, ae.area_name, ae.payroll_group_name, ae.cost_center_name, ae.work_group_name, p.punch_datetime::date
+          GROUP BY ae.employee_id, ae.employee_code, ae.employee_lastname, ae.employee_name, ae.company_name, ae.company_id, ae.company_logo, ae.company_banner, ae.department_name, ae.area_name, ae.payroll_group_name, ae.cost_center_name, ae.work_group_name, p.punch_datetime::date
         ),
         anomaly_rows AS (
           SELECT
@@ -812,6 +827,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             employee_code,
             employee_full_name,
             company_name,
+            company_id,
+            company_logo,
+            company_banner,
             department_name,
             area_name,
             payroll_group_name,
@@ -834,6 +852,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             pbd.employee_code,
             pbd.employee_full_name,
             pbd.company_name,
+            pbd.company_id,
+            pbd.company_logo,
+            pbd.company_banner,
             pbd.department_name,
             pbd.area_name,
             pbd.payroll_group_name,
@@ -861,6 +882,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             pbd.employee_code,
             pbd.employee_full_name,
             pbd.company_name,
+            pbd.company_id,
+            pbd.company_logo,
+            pbd.company_banner,
             pbd.department_name,
             pbd.area_name,
             pbd.payroll_group_name,
@@ -906,6 +930,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             attendance.employee_code,
             attendance.employee_full_name,
             attendance.company_name,
+            attendance.company_id,
+            attendance.company_logo,
+            attendance.company_banner,
             attendance.department_name,
             attendance.area_name,
             attendance.payroll_group_name,
@@ -934,6 +961,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             attendance.employee_code,
             attendance.employee_full_name,
             attendance.company_name,
+            attendance.company_id,
+            attendance.company_logo,
+            attendance.company_banner,
             attendance.department_name,
             attendance.area_name,
             attendance.payroll_group_name,
@@ -963,6 +993,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             attendance.employee_code,
             attendance.employee_full_name,
             attendance.company_name,
+            attendance.company_id,
+            attendance.company_logo,
+            attendance.company_banner,
             attendance.department_name,
             attendance.area_name,
             attendance.payroll_group_name,
@@ -991,6 +1024,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
             ae.company_name,
+            ae.company_id,
+            ae.company_logo,
+            ae.company_banner,
             ae.department_name,
             ae.area_name,
             ae.payroll_group_name,
@@ -1031,6 +1067,9 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             ae.employee_code,
             CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
             ae.company_name,
+            ae.company_id,
+            ae.company_logo,
+            ae.company_banner,
             ae.department_name,
             ae.area_name,
             ae.payroll_group_name,
@@ -1038,7 +1077,7 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             ae.work_group_name,
             request_time.issue_date,
             CASE WHEN UPPER(COALESCE(request_type.lookup_key, '')) = 'CREATE_PUNCH' THEN 'UNAPPROVED_CREATE_PUNCH_REQUEST' ELSE 'UNAPPROVED_UPDATE_PUNCH_REQUEST' END AS anomaly_key,
-            CASE WHEN UPPER(COALESCE(request_type.lookup_key, '')) = 'CREATE_PUNCH' THEN 'Solicitud de añadir marcación no aprobada' ELSE 'Solicitud de cambio de marcación no aprobada' END AS anomaly_label,
+            CASE WHEN UPPER(COALESCE(request_type.lookup_key, '')) = 'CREATE_PUNCH' THEN 'Solicitud de aÃ±adir marcaciÃ³n no aprobada' ELSE 'Solicitud de cambio de marcaciÃ³n no aprobada' END AS anomaly_label,
             ('Estado: ' || COALESCE(status.lookup_label, status.lookup_key, '-') || '; tipo: ' || COALESCE(request_type.lookup_label, request_type.lookup_key, '-')) AS anomaly_detail,
             0::int AS punch_count,
             request_ts.issue_timestamp AS first_punch,
@@ -1105,5 +1144,4 @@ router.get('/anomalies', async (req: Request, res: Response) => {
     return res.status(500).json({ error: error?.message || 'Internal server error' });
   }
 });
-
 export default router;

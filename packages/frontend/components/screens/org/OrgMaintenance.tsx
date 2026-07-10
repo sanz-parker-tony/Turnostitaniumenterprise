@@ -525,6 +525,8 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'company_city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'company_postal_code', label: 'Código postal', type: 'text' },
       { key: 'company_phone', label: 'Teléfono', type: 'text' },
+      { key: 'logo', label: 'Logo', type: 'text', hidden: true },
+      { key: 'banner', label: 'Banner', type: 'text', hidden: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
     tableColumns: ['company_code', 'company_name', 'company_short_name', 'company_phone', 'is_active'],
@@ -730,6 +732,14 @@ export function OrgMaintenance({
   const [selectedPhotoFile, setSelectedPhotoFile] = useState<File | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [companyAssetUploading, setCompanyAssetUploading] = useState<Record<'logo' | 'banner', boolean>>({
+    logo: false,
+    banner: false,
+  });
+  const [companyAssetPreviewUrls, setCompanyAssetPreviewUrls] = useState<Record<'logo' | 'banner', string>>({
+    logo: '',
+    banner: '',
+  });
 
   const config = useMemo(
     () => ENTITY_CONFIGS.find((entry) => entry.key === entity) || ENTITY_CONFIGS[0],
@@ -822,6 +832,28 @@ export function OrgMaintenance({
     setPhotoPreview('');
   };
 
+  const setCompanyAssetPreview = (assetType: 'logo' | 'banner', nextUrl: string) => {
+    setCompanyAssetPreviewUrls((prev) => {
+      const currentUrl = prev[assetType];
+      if (currentUrl && currentUrl.startsWith('blob:') && currentUrl !== nextUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+      return { ...prev, [assetType]: nextUrl };
+    });
+  };
+
+  const clearCompanyAssetPreviews = () => {
+    setCompanyAssetPreviewUrls((prev) => {
+      (['logo', 'banner'] as const).forEach((assetType) => {
+        const currentUrl = prev[assetType];
+        if (currentUrl && currentUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(currentUrl);
+        }
+      });
+      return { logo: '', banner: '' };
+    });
+  };
+
   const toBase64 = (file: File) =>
     new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
@@ -888,6 +920,37 @@ export function OrgMaintenance({
     } catch (err) {
       console.error('Error cargando preview de foto del empleado:', err);
       clearPhotoPreview();
+    }
+  };
+
+  const loadCompanyAssetPreview = async (companyId: string, assetType: 'logo' | 'banner', assetPath?: string) => {
+    if (!companyId || !assetPath) {
+      setCompanyAssetPreview(assetType, '');
+      return;
+    }
+
+    try {
+      const response = await fetch(buildApiUrl(`/organization/companies/${companyId}/asset/${assetType}`), {
+        headers: {
+          Authorization: `Bearer ${getToken()}`,
+        },
+      });
+
+      if (!response.ok) {
+        setCompanyAssetPreview(assetType, '');
+        return;
+      }
+
+      const imageBlob = await response.blob();
+      if (!imageBlob.size) {
+        setCompanyAssetPreview(assetType, '');
+        return;
+      }
+
+      setCompanyAssetPreview(assetType, URL.createObjectURL(imageBlob));
+    } catch (err) {
+      console.error('Error cargando preview de imagen de empresa:', err);
+      setCompanyAssetPreview(assetType, '');
     }
   };
 
@@ -1140,6 +1203,79 @@ export function OrgMaintenance({
     return String(payload.photo_path || '');
   };
 
+  const validateCompanyAssetFile = (file: File) => {
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      throw new Error('Use una imagen JPG, PNG o WEBP.');
+    }
+    const maxBytes = 8 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      throw new Error('La imagen supera 8 MB.');
+    }
+  };
+
+  const uploadCompanyAssetFile = async (assetType: 'logo' | 'banner', file: File): Promise<string> => {
+    if (!editingId) {
+      throw new Error('Guarde la empresa antes de subir logo o banner.');
+    }
+
+    validateCompanyAssetFile(file);
+    const fileBase64 = await toBase64(file);
+    const payload = await request(`/organization/companies/${editingId}/upload-asset`, {
+      method: 'POST',
+      body: JSON.stringify({
+        asset_type: assetType,
+        file_name: file.name,
+        mime_type: file.type,
+        file_base64: fileBase64,
+      }),
+    });
+
+    return String(payload.asset_path || payload.item?.[assetType] || '');
+  };
+
+  const handleUploadCompanyAsset = async (assetType: 'logo' | 'banner', file: File | null) => {
+    if (!file) return;
+    setCompanyAssetUploading((prev) => ({ ...prev, [assetType]: true }));
+    setError(null);
+    try {
+      const uploadedPath = await uploadCompanyAssetFile(assetType, file);
+      setFormData((prev) => ({
+        ...prev,
+        [assetType]: uploadedPath,
+      }));
+      if (editingId) {
+        await loadCompanyAssetPreview(editingId, assetType, uploadedPath);
+      }
+      await Promise.all([loadItems(), loadCatalogs()]);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo subir la imagen de empresa');
+    } finally {
+      setCompanyAssetUploading((prev) => ({ ...prev, [assetType]: false }));
+    }
+  };
+
+  const handleDeleteCompanyAsset = async (assetType: 'logo' | 'banner') => {
+    if (!editingId) return;
+    setCompanyAssetUploading((prev) => ({ ...prev, [assetType]: true }));
+    setError(null);
+    try {
+      await request(`/organization/companies/${editingId}/asset/${assetType}`, {
+        method: 'DELETE',
+      });
+      setFormData((prev) => ({
+        ...prev,
+        [assetType]: '',
+      }));
+      setCompanyAssetPreview(assetType, '');
+      await Promise.all([loadItems(), loadCatalogs()]);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo quitar la imagen de empresa');
+    } finally {
+      setCompanyAssetUploading((prev) => ({ ...prev, [assetType]: false }));
+    }
+  };
+
   useEffect(() => {
     loadItems();
     setShowForm(false);
@@ -1152,6 +1288,7 @@ export function OrgMaintenance({
     setWorkLocationStateFilter('all');
     setSelectedPhotoFile(null);
     clearPhotoPreview();
+    clearCompanyAssetPreviews();
     if (entity === 'employees') {
       loadEmployeePhotoRules();
     }
@@ -1160,6 +1297,7 @@ export function OrgMaintenance({
   useEffect(() => {
     return () => {
       clearPhotoPreview();
+      clearCompanyAssetPreviews();
     };
   }, []);
 
@@ -1392,6 +1530,7 @@ export function OrgMaintenance({
     setShowForm(true);
     setSelectedPhotoFile(null);
     clearPhotoPreview();
+    clearCompanyAssetPreviews();
   };
 
   useEffect(() => {
@@ -1421,8 +1560,14 @@ export function OrgMaintenance({
     setSelectedPhotoFile(null);
     if (entity === 'employees') {
       void loadEmployeePhotoPreview(item.id, item.employee_photo_path);
+      clearCompanyAssetPreviews();
+    } else if (entity === 'companies') {
+      clearPhotoPreview();
+      void loadCompanyAssetPreview(item.id, 'logo', item.logo);
+      void loadCompanyAssetPreview(item.id, 'banner', item.banner);
     } else {
       clearPhotoPreview();
+      clearCompanyAssetPreviews();
     }
   };
 
@@ -1520,6 +1665,8 @@ export function OrgMaintenance({
       setShowForm(false);
       setEditingId(null);
       setFormData({});
+      clearPhotoPreview();
+      clearCompanyAssetPreviews();
       await Promise.all([loadItems(), loadCatalogs()]);
       onSaveSuccess?.({
         entity,
@@ -2001,6 +2148,7 @@ export function OrgMaintenance({
               setShowForm(false);
               setEditingId(null);
               clearPhotoPreview();
+              clearCompanyAssetPreviews();
             }}
           />
           <div className={getFormModalClassName()}>
@@ -2013,6 +2161,7 @@ export function OrgMaintenance({
                   setShowForm(false);
                   setEditingId(null);
                   clearPhotoPreview();
+                  clearCompanyAssetPreviews();
                 }}
                 className="p-1.5 rounded hover:bg-gray-200"
                 title="Cerrar"
@@ -2196,6 +2345,63 @@ export function OrgMaintenance({
               ))}
             </div>
 
+            {entity === 'companies' ? (
+              <div className="mt-4 rounded-lg border bg-gray-50 p-3">
+                <div className="mb-3">
+                  <h4 className="text-sm font-semibold text-gray-900">Imágenes para reportes</h4>
+                  <p className="text-xs text-gray-600">
+                    Se almacenan en la ruta configurable COMPANY_ASSETS_PATH. Guarde la empresa antes de subir imágenes nuevas.
+                  </p>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {(['logo', 'banner'] as const).map((assetType) => (
+                    <div key={assetType} className="space-y-2 rounded-md border bg-white p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs font-medium text-gray-700">
+                          {assetType === 'logo' ? 'Logo' : 'Banner'}
+                        </label>
+                        {formData[assetType] ? (
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteCompanyAsset(assetType)}
+                            disabled={companyAssetUploading[assetType]}
+                            className="text-xs text-red-600 hover:text-red-700 disabled:opacity-50"
+                          >
+                            Quitar
+                          </button>
+                        ) : null}
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        disabled={!editingId || companyAssetUploading[assetType]}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] || null;
+                          event.target.value = '';
+                          void handleUploadCompanyAsset(assetType, file);
+                        }}
+                        className="w-full border rounded px-2 py-1.5 text-sm bg-white disabled:bg-gray-100 disabled:text-gray-500"
+                      />
+                      {companyAssetUploading[assetType] ? (
+                        <p className="text-xs text-gray-600">Subiendo...</p>
+                      ) : formData[assetType] ? (
+                        <p className="break-all text-xs text-gray-600">{String(formData[assetType])}</p>
+                      ) : (
+                        <p className="text-xs text-gray-500">Sin imagen configurada.</p>
+                      )}
+                      {companyAssetPreviewUrls[assetType] ? (
+                        <img
+                          src={companyAssetPreviewUrls[assetType]}
+                          alt={assetType === 'logo' ? 'Logo de empresa' : 'Banner de empresa'}
+                          className={assetType === 'logo' ? 'h-20 w-20 rounded border object-contain' : 'h-20 w-full rounded border object-contain'}
+                        />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             <div className={getFormFooterClassName()}>
               <button
                 onClick={handleSave}
@@ -2210,6 +2416,7 @@ export function OrgMaintenance({
                   setShowForm(false);
                   setEditingId(null);
                   clearPhotoPreview();
+                  clearCompanyAssetPreviews();
                 }}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-md border text-sm hover:bg-gray-100"
               >

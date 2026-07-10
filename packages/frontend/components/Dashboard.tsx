@@ -6,6 +6,7 @@
 'use client';
 
 import { buildApiUrl } from '../utils/api-config';
+import { formatClientTime24 } from '../utils/date-time';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
@@ -644,26 +645,11 @@ function formatHours(value: unknown): string {
 }
 
 function formatTimeOnly(value: string | null | undefined): string {
-  if (!value) return '--:--';
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    return date.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' });
-  }
-  const match = String(value).match(/(?:T|\s)(\d{2}:\d{2})/);
-  return match?.[1] || String(value).slice(0, 5);
+  return formatClientTime24(value, 'es-EC');
 }
 
 function formatPunchTimeCompact(value: string | null | undefined): string {
-  if (!value) return '--:--';
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) {
-    const hours = date.getHours();
-    const minutes = `${date.getMinutes()}`.padStart(2, '0');
-    const suffix = hours >= 12 ? 'pm' : 'am';
-    const hour12 = hours % 12 || 12;
-    return `${hour12}:${minutes}${suffix}`;
-  }
-  return formatTimeOnly(value);
+  return formatClientTime24(value, 'es-EC');
 }
 
 function normalizeMovementLabel(row: any): string {

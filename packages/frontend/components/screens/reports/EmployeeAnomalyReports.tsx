@@ -1,11 +1,21 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, Download, FileText, RefreshCw, Search } from 'lucide-react';
+import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 import { buildApiUrl } from '../../../utils/api-config';
 import { publicApiToken } from '../../../utils/backend/info';
-import { formatClientDateTime } from '../../../utils/date-time';
+import { useAuth } from '../../../contexts/AuthContext';
+import { formatClientDateTime, formatClientTime24 } from '../../../utils/date-time';
+import {
+  defaultSystemReportConfig,
+  fetchSystemReportConfig,
+  getReportParameterLabel,
+  getSystemReportName,
+  isReportParameterEnabled,
+  type SystemReportConfig,
+} from '../../../utils/system-report-config';
 
 interface EmployeeOption {
   employee_id: string;
@@ -32,7 +42,10 @@ interface OvertimeAnomalyRow {
   employee_id: string;
   employee_code: string | null;
   employee_full_name: string;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
   department_name: string | null;
   area_name: string | null;
   payroll_group_name: string | null;
@@ -46,6 +59,11 @@ interface OvertimeAnomalyRow {
   first_punch: string | null;
   last_punch: string | null;
 }
+
+const ATTENDANCE_ANOMALIES_REPORT = {
+  code: 'RPT_ANOMALIAS_ASISTENCIA',
+  name: 'Anomalías de asistencia',
+};
 
 interface XlsCellOptions {
   value: unknown;
@@ -85,16 +103,15 @@ function formatDate(value: string | null): string {
   return year && month && day ? `${day}/${month}/${year}` : value;
 }
 
-function formatTime(value: string | null): string {
+function formatDateShort(value: string | null): string {
   if (!value) return '-';
-  return formatClientDateTime(value, 'es-EC').split(',').pop()?.trim() || '-';
+  const [date] = String(value).split('T');
+  const [year, month, day] = date.split('-');
+  return year && month && day ? `${Number(day)}/${Number(month)}/${year}` : value;
 }
 
 function formatTime24(value: string | null): string {
-  if (!value) return '';
-  const text = String(value);
-  const match = text.match(/[T ](\d{2}:\d{2}:\d{2})/);
-  return match?.[1] || formatTime(value);
+  return formatClientTime24(value, 'es-EC');
 }
 
 function htmlEscape(value: unknown): string {
@@ -140,6 +157,8 @@ function downloadXls(filename: string, worksheetName: string, tableRows: string[
 }
 
 export default function EmployeeAnomalyReports() {
+  const { profile } = useAuth();
+  const reportUserName = profile?.display_name || profile?.email || 'Usuario';
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -152,6 +171,7 @@ export default function EmployeeAnomalyReports() {
   const [workGroupId, setWorkGroupId] = useState('');
   const [filters, setFilters] = useState<ReportFilters>({ payroll_groups: [], cost_centers: [], departments: [], areas: [], work_groups: [] });
   const [rows, setRows] = useState<OvertimeAnomalyRow[]>([]);
+  const [reportConfig, setReportConfig] = useState<SystemReportConfig>(() => defaultSystemReportConfig(ATTENDANCE_ANOMALIES_REPORT));
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -199,6 +219,18 @@ export default function EmployeeAnomalyReports() {
     }
   };
 
+  const loadReportMetadata = async () => {
+    try {
+      setReportConfig(await fetchSystemReportConfig(ATTENDANCE_ANOMALIES_REPORT, getToken()));
+    } catch {
+      setReportConfig(defaultSystemReportConfig(ATTENDANCE_ANOMALIES_REPORT));
+    }
+  };
+
+  const reportName = getSystemReportName(reportConfig);
+  const parameterLabel = (key: string, fallback: string) => getReportParameterLabel(reportConfig, key, fallback);
+  const showParameter = (key: string) => isReportParameterEnabled(reportConfig, key);
+
   const buildQuery = () => {
     const query = new URLSearchParams();
     query.set('date_from', dateFrom);
@@ -229,6 +261,7 @@ export default function EmployeeAnomalyReports() {
   useEffect(() => {
     void loadEmployees('');
     void loadFilters();
+    void loadReportMetadata();
   }, []);
 
   useEffect(() => {
@@ -252,13 +285,60 @@ export default function EmployeeAnomalyReports() {
     return selectedEmployee ? fullEmployeeName(selectedEmployee) : selectedEmployeeId;
   };
 
+  const applyReportHeader = (worksheet: ExcelJS.Worksheet, title: string) => {
+    worksheet.getCell('A1').value = title;
+    worksheet.getCell('C2').value = 'Usuario :';
+    worksheet.getCell('D2').value = reportUserName;
+    worksheet.getCell('F2').value = 'Fecha :';
+    worksheet.getCell('G2').value = formatClientDateTime(new Date().toISOString(), 'es-EC');
+    worksheet.getCell('C3').value = 'Fecha Inic :';
+    worksheet.getCell('D3').value = formatDateShort(dateFrom);
+    worksheet.getCell('F3').value = 'Fecha Final :';
+    worksheet.getCell('G3').value = formatDateShort(dateTo);
+    worksheet.getCell('A4').value = 'Departamento :';
+    worksheet.getCell('B4').value = getFilterLabel(filters.departments, departmentId);
+    worksheet.getCell('C4').value = 'Área :';
+    worksheet.getCell('D4').value = getFilterLabel(filters.areas, areaId);
+    worksheet.getCell('E4').value = 'Rol Pago :';
+    worksheet.getCell('F4').value = getFilterLabel(filters.payroll_groups, payrollGroupId);
+    worksheet.getCell('G4').value = 'C.Costo :';
+    worksheet.getCell('H4').value = getFilterLabel(filters.cost_centers, costCenterId);
+    worksheet.getCell('I4').value = 'Grupo Trabajo :';
+    worksheet.getCell('J4').value = getFilterLabel(filters.work_groups, workGroupId);
+    worksheet.getCell('A5').value = 'Empleado :';
+    worksheet.getCell('B5').value = selectedEmployeeLabel();
+
+    ['A1', 'C2', 'F2', 'C3', 'F3', 'A4', 'C4', 'E4', 'G4', 'I4', 'A5'].forEach((address) => {
+      worksheet.getCell(address).font = { bold: true };
+    });
+  };
+
+  const styleHeaderRow = (row: ExcelJS.Row) => {
+    row.eachCell((cell) => {
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+    });
+  };
+
+  const writeXlsxWorkbook = async (workbook: ExcelJS.Workbook, filename: string) => {
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename.replace(/\.xls$/i, '.xlsx');
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const reportHeaderRows = (columnCount: number) => [
     xlsRow([{ value: 'RPT_ANOMALIAS_ASISTENCIA', colspan: columnCount, className: 'title' }]),
     xlsRow([
       '',
       '',
       { value: 'Usuario :', className: 'label' },
-      'Supervisor',
+      reportUserName,
       '',
       { value: 'Fecha :', className: 'label' },
       formatClientDateTime(new Date().toISOString(), 'es-EC'),
@@ -291,47 +371,157 @@ export default function EmployeeAnomalyReports() {
     xlsRow(Array.from({ length: columnCount }, () => '')),
   ];
 
-  const exportXls = () => {
-    const columnCount = 13;
-    const tableRows = reportHeaderRows(columnCount);
-    tableRows.push(xlsRow([
-      { value: 'Empleado', className: 'header' },
-      { value: 'Departamento', className: 'header' },
-      { value: 'Area', className: 'header' },
-      { value: 'Rol pago', className: 'header' },
-      { value: 'Centro costo', className: 'header' },
-      { value: 'Grupo trabajo', className: 'header' },
-      { value: 'Fecha', className: 'header' },
-      { value: 'Anomalia', className: 'header' },
-      { value: 'Detalle', className: 'header' },
-      { value: 'Marcaciones', className: 'header' },
-      { value: 'Primera marca', className: 'header' },
-      { value: 'Ultima marca', className: 'header' },
-      { value: 'Empresa', className: 'header' },
-    ]));
+  const exportXls = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('RPT_ANOMALIAS_ASISTENCIA');
+    worksheet.columns = [32, 16, 16, 16, 16, 16, 14, 46, 60, 14, 16, 16, 24].map((width) => ({ width }));
+    applyReportHeader(worksheet, 'RPT_ANOMALIAS_ASISTENCIA');
 
+    worksheet.getRow(7).values = [
+      'Empleado',
+      'Departamento',
+      'Área',
+      'Rol pago',
+      'Centro costo',
+      'Grupo trabajo',
+      'Fecha',
+      'Anomalía',
+      'Detalle',
+      'Marcaciones',
+      'Primera marca',
+      'Última marca',
+      'Empresa',
+    ];
+    styleHeaderRow(worksheet.getRow(7));
+
+    let rowNumber = 8;
     rows.forEach((row) => {
-      tableRows.push(xlsRow([
+      worksheet.getRow(rowNumber).values = [
         `${row.employee_code || row.employee_id} - ${row.employee_full_name}`,
         row.department_name || '-',
         row.area_name || '-',
         row.payroll_group_name || '-',
         row.cost_center_name || '-',
         row.work_group_name || '-',
-        formatDate(row.issue_date),
+        formatDateShort(row.issue_date),
         row.anomaly_label,
         row.anomaly_detail,
         row.punch_count,
         formatTime24(row.first_punch),
         formatTime24(row.last_punch),
         row.company_name || '-',
-      ]));
+      ];
+      worksheet.getRow(rowNumber).getCell(10).alignment = { horizontal: 'center' };
+      rowNumber += 1;
     });
 
-    tableRows.push(xlsRow([{ value: `Total anomalías: ${rows.length}`, colspan: columnCount, className: 'total' }]));
-    downloadXls(`rpt_anomalias_asistencia_${dateFrom}_${dateTo}.xls`, 'RPT_ANOMALIAS_ASISTENCIA', tableRows);
+    worksheet.getCell(`A${rowNumber}`).value = `Total anomalías: ${rows.length}`;
+    worksheet.getCell(`A${rowNumber}`).font = { bold: true };
+    await writeXlsxWorkbook(workbook, `rpt_anomalias_asistencia_${dateFrom}_${dateTo}.xlsx`);
   };
 
+  const blobToDataUrl = (blob: Blob) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen del reporte'));
+      reader.readAsDataURL(blob);
+    });
+
+  const fetchReportAssetDataUrl = async (): Promise<string> => {
+    const bannerRow = rows.find((row) => row.company_id && row.company_banner);
+    const logoRow = rows.find((row) => row.company_id && row.company_logo);
+    const sourceRow = bannerRow || logoRow;
+    if (!sourceRow?.company_id) return '';
+
+    const assetType = bannerRow ? 'banner' : 'logo';
+    try {
+      const response = await fetch(buildApiUrl(`/organization/companies/${sourceRow.company_id}/asset/${assetType}`), {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      if (!response.ok) return '';
+      const blob = await response.blob();
+      if (!blob.size) return '';
+      return await blobToDataUrl(blob);
+    } catch {
+      return '';
+    }
+  };
+
+  const criteriaHtml = () => `
+    <table class="criteria">
+      <tr><td class="label">Usuario :</td><td>${htmlEscape(reportUserName)}</td><td class="label">Fecha :</td><td>${htmlEscape(formatClientDateTime(new Date().toISOString(), 'es-EC'))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('DATE_FROM', 'Fecha Inic'))} :</td><td>${htmlEscape(formatDateShort(dateFrom))}</td><td class="label">${htmlEscape(parameterLabel('DATE_TO', 'Fecha Final'))} :</td><td>${htmlEscape(formatDateShort(dateTo))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('DEPARTMENT_ID', 'Departamento'))} :</td><td>${htmlEscape(getFilterLabel(filters.departments, departmentId))}</td><td class="label">${htmlEscape(parameterLabel('AREA_ID', 'Área'))} :</td><td>${htmlEscape(getFilterLabel(filters.areas, areaId))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('PAYROLL_GROUP_ID', 'Rol Pago'))} :</td><td>${htmlEscape(getFilterLabel(filters.payroll_groups, payrollGroupId))}</td><td class="label">${htmlEscape(parameterLabel('COST_CENTER_ID', 'C.Costo'))} :</td><td>${htmlEscape(getFilterLabel(filters.cost_centers, costCenterId))}</td></tr>
+      <tr><td class="label">${htmlEscape(parameterLabel('WORK_GROUP_ID', 'Grupo Trabajo'))} :</td><td>${htmlEscape(getFilterLabel(filters.work_groups, workGroupId))}</td><td class="label">${htmlEscape(parameterLabel('EMPLOYEE_ID', 'Empleado'))} :</td><td>${htmlEscape(selectedEmployeeLabel())}</td></tr>
+    </table>
+  `;
+
+  const printableDocument = (bannerDataUrl: string, tableHtml: string) => `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${htmlEscape(reportName)}</title>
+        <style>
+          @page { size: landscape; margin: 10mm; }
+          body { font-family: Arial, sans-serif; font-size: 10px; color: #111827; }
+          .banner { max-height: 72px; max-width: 100%; object-fit: contain; margin-bottom: 8px; }
+          h1 { font-size: 14px; margin: 0 0 2px; }
+          .report-code { font-size: 10px; font-weight: 700; margin: 0 0 8px; }
+          table { width: 100%; border-collapse: collapse; }
+          td, th { border: 1px solid #d1d5db; padding: 3px 4px; vertical-align: middle; }
+          th { background: #d9d9d9; font-weight: 700; text-align: center; }
+          .criteria { margin-bottom: 12px; }
+          .criteria td { border: 0; padding: 2px 5px; }
+          .label, .total { font-weight: 700; }
+          .total { background: #d9d9d9; }
+          .number { text-align: center; }
+          .nowrap { white-space: nowrap; }
+        </style>
+      </head>
+      <body>
+        ${bannerDataUrl ? `<img class="banner" src="${bannerDataUrl}" alt="Banner empresa" />` : ''}
+        <h1>${htmlEscape(reportName)}</h1>
+        <p class="report-code">${htmlEscape(ATTENDANCE_ANOMALIES_REPORT.code)}</p>
+        ${criteriaHtml()}
+        ${tableHtml}
+        <script>window.onload = () => { window.focus(); window.print(); };</script>
+      </body>
+    </html>
+  `;
+
+  const exportPdf = async () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      setError('El navegador bloqueó la ventana de impresión PDF.');
+      return;
+    }
+    const headers = ['Empleado', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo', 'Fecha', 'Anomalía', 'Detalle', 'Marcaciones', 'Primera marca', 'Última marca', 'Empresa'];
+    const bodyRows = rows.map((row) => `
+      <tr>
+        <td>${htmlEscape(`${row.employee_code || row.employee_id} - ${row.employee_full_name}`)}</td>
+        <td>${htmlEscape(row.department_name || '-')}</td>
+        <td>${htmlEscape(row.area_name || '-')}</td>
+        <td>${htmlEscape(row.payroll_group_name || '-')}</td>
+        <td>${htmlEscape(row.cost_center_name || '-')}</td>
+        <td>${htmlEscape(row.work_group_name || '-')}</td>
+        <td class="nowrap">${htmlEscape(formatDateShort(row.issue_date))}</td>
+        <td>${htmlEscape(row.anomaly_label)}</td>
+        <td>${htmlEscape(row.anomaly_detail)}</td>
+        <td class="number">${htmlEscape(row.punch_count)}</td>
+        <td class="nowrap">${htmlEscape(formatTime24(row.first_punch))}</td>
+        <td class="nowrap">${htmlEscape(formatTime24(row.last_punch))}</td>
+        <td>${htmlEscape(row.company_name || '-')}</td>
+      </tr>
+    `).join('');
+    const tableHtml = `<table><tr>${headers.map((header) => `<th>${htmlEscape(header)}</th>`).join('')}</tr>${bodyRows}<tr class="total"><td colspan="13">Total anomalías: ${rows.length}</td></tr></table>`;
+    const bannerDataUrl = await fetchReportAssetDataUrl();
+    printWindow.document.open();
+    printWindow.document.write(printableDocument(bannerDataUrl, tableHtml));
+    printWindow.document.close();
+  };
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -363,11 +553,11 @@ export default function EmployeeAnomalyReports() {
       {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
 
       <div className="rounded-xl border bg-white p-4 shadow-sm">
-        <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_auto_auto]">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Empleado</label>
+        <div className="grid gap-3 xl:grid-cols-[1.5fr_1fr_1fr_auto_auto_auto]">
+          {(showParameter('EMPLOYEE_ID') || showParameter('EMPLOYEE_SEARCH')) ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('EMPLOYEE_ID', 'Empleado')}</label>
             <div className="mt-1 flex gap-2">
-              <select
+              {showParameter('EMPLOYEE_ID') ? <select
                 value={selectedEmployeeId}
                 onChange={(event) => setSelectedEmployeeId(event.target.value)}
                 className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm"
@@ -379,8 +569,8 @@ export default function EmployeeAnomalyReports() {
                     {fullEmployeeName(row)}{row.employee_code ? ` (${row.employee_code})` : ''}
                   </option>
                 ))}
-              </select>
-              <div className="relative w-48">
+              </select> : null}
+              {showParameter('EMPLOYEE_SEARCH') ? <div className="relative w-48">
                 <Search className="absolute left-2 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
                 <input
                   value={searchTerm}
@@ -388,30 +578,30 @@ export default function EmployeeAnomalyReports() {
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void loadEmployees();
                   }}
-                  placeholder="Buscar"
+                  placeholder={parameterLabel('EMPLOYEE_SEARCH', 'Buscar')}
                   className="h-10 w-full rounded-md border py-2 pl-8 pr-2 text-sm"
                 />
-              </div>
+              </div> : null}
             </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Desde</label>
+          </div> : null}
+          {showParameter('DATE_FROM') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_FROM', 'Desde')}</label>
             <input
               type="date"
               value={dateFrom}
               onChange={(event) => setDateFrom(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Hasta</label>
+          </div> : null}
+          {showParameter('DATE_TO') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_TO', 'Hasta')}</label>
             <input
               type="date"
               value={dateTo}
               onChange={(event) => setDateTo(event.target.value)}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
-          </div>
+          </div> : null}
           <div className="flex items-end">
             <button
               type="button"
@@ -426,7 +616,7 @@ export default function EmployeeAnomalyReports() {
           <div className="flex items-end">
             <button
               type="button"
-              onClick={exportXls}
+              onClick={() => void exportXls()}
               disabled={loadingReport || rows.length === 0}
               className="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm hover:bg-slate-50 disabled:opacity-50"
             >
@@ -434,43 +624,54 @@ export default function EmployeeAnomalyReports() {
               XLS
             </button>
           </div>
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => void exportPdf()}
+              disabled={loadingReport || rows.length === 0}
+              className="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              <FileText className="size-4" />
+              PDF
+            </button>
+          </div>
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-          <div>
-            <label className="text-sm font-medium text-slate-700">Departamento</label>
+          {showParameter('DEPARTMENT_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('DEPARTMENT_ID', 'Departamento')}</label>
             <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
               {filters.departments.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Área</label>
+          </div> : null}
+          {showParameter('AREA_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('AREA_ID', 'Área')}</label>
             <select value={areaId} onChange={(event) => setAreaId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todas</option>
               {filters.areas.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Rol de Pago</label>
+          </div> : null}
+          {showParameter('PAYROLL_GROUP_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('PAYROLL_GROUP_ID', 'Rol de Pago')}</label>
             <select value={payrollGroupId} onChange={(event) => setPayrollGroupId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
               {filters.payroll_groups.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Centro de Costo</label>
+          </div> : null}
+          {showParameter('COST_CENTER_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('COST_CENTER_ID', 'Centro de Costo')}</label>
             <select value={costCenterId} onChange={(event) => setCostCenterId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
               {filters.cost_centers.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium text-slate-700">Grupo de Trabajo</label>
+          </div> : null}
+          {showParameter('WORK_GROUP_ID') ? <div>
+            <label className="text-sm font-medium text-slate-700">{parameterLabel('WORK_GROUP_ID', 'Grupo de Trabajo')}</label>
             <select value={workGroupId} onChange={(event) => setWorkGroupId(event.target.value)} className="mt-1 h-10 w-full rounded-md border px-3 text-sm">
               <option value="">Todos</option>
               {filters.work_groups.map((option) => <option key={option.id} value={option.id}>{option.label || option.id}</option>)}
             </select>
-          </div>
+          </div> : null}
         </div>
       </div>
 
@@ -506,8 +707,8 @@ export default function EmployeeAnomalyReports() {
                   {[row.department_name, row.area_name, row.payroll_group_name, row.cost_center_name, row.work_group_name].filter(Boolean).join(' / ') || '-'}
                 </td>
                 <td className="px-3 py-2 text-right">{row.punch_count || 0}</td>
-                <td className="px-3 py-2">{formatTime(row.first_punch)}</td>
-                <td className="px-3 py-2">{formatTime(row.last_punch)}</td>
+                <td className="px-3 py-2">{formatTime24(row.first_punch)}</td>
+                <td className="px-3 py-2">{formatTime24(row.last_punch)}</td>
               </tr>
             ))}
           </tbody>
