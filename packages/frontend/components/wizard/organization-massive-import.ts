@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+﻿import * as XLSX from 'xlsx';
 import { ApiClient } from '../../lib/api-client';
 import { buildApiUrl } from '../../utils/api-config';
 
@@ -200,6 +200,236 @@ export type WorkbookTabStat = {
   rows: number;
 };
 
+export type MassiveWorkbookTemplateColumn = {
+  key: string;
+  required?: boolean;
+  type: 'texto' | 'codigo' | 'booleano' | 'fecha' | 'numero' | 'email' | 'uuid';
+  description: string;
+  example?: string;
+};
+
+export type MassiveWorkbookTemplateTab = {
+  name: string;
+  description: string;
+  columns: MassiveWorkbookTemplateColumn[];
+};
+
+export const MASSIVE_WORKBOOK_TEMPLATE_TABS: MassiveWorkbookTemplateTab[] = [
+  {
+    name: '01_payroll_groups',
+    description: 'Roles de pago usados por areas, grupos de trabajo y asignaciones de empleados.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del rol de pago en el sistema anterior.', example: 'ROL-ADM' },
+      { key: 'payroll_group_name', required: true, type: 'texto', description: 'Nombre completo del rol de pago.', example: 'Administrativo' },
+      { key: 'payroll_group_short_name', required: true, type: 'texto', description: 'Nombre corto del rol de pago.', example: 'Admin' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '02_employee_profiles',
+    description: 'Perfiles de empleado para la posicion organizacional.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del perfil de empleado en el sistema anterior.', example: 'PERF-ADM' },
+      { key: 'profile_name', required: true, type: 'texto', description: 'Nombre completo del perfil.', example: 'Administrativo' },
+      { key: 'profile_short_name', required: true, type: 'texto', description: 'Nombre corto del perfil.', example: 'Admin' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '03_departments',
+    description: 'Departamentos organizacionales.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del departamento en el sistema anterior.', example: 'DEP-FIN' },
+      { key: 'department_name', required: true, type: 'texto', description: 'Nombre completo del departamento.', example: 'Financiero' },
+      { key: 'department_short_name', required: true, type: 'texto', description: 'Nombre corto del departamento.', example: 'Finanzas' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '04_job_titles',
+    description: 'Cargos o puestos de trabajo.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del cargo en el sistema anterior.', example: 'CARGO-ANL' },
+      { key: 'job_title_name', required: true, type: 'texto', description: 'Nombre completo del cargo.', example: 'Analista Contable' },
+      { key: 'job_title_short_name', required: true, type: 'texto', description: 'Nombre corto del cargo.', example: 'Analista' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '05_cost_centers',
+    description: 'Centros de costo contables u operativos.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del centro de costo en el sistema anterior.', example: 'CC-001' },
+      { key: 'cost_center_name', required: true, type: 'texto', description: 'Nombre completo del centro de costo.', example: 'Administracion Matriz' },
+      { key: 'cost_center_short_name', required: true, type: 'texto', description: 'Nombre corto del centro de costo.', example: 'ADM-MTZ' },
+      { key: 'homologation_code', type: 'codigo', description: 'Codigo externo de homologacion, si aplica.', example: 'HOMO-001' },
+      { key: 'gl_account_code', type: 'codigo', description: 'Cuenta contable asociada, si aplica.', example: '5101-001' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '06_areas',
+    description: 'Areas internas y su relacion opcional con rol de pago.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del area en el sistema anterior.', example: 'AREA-CONT' },
+      { key: 'area_name', required: true, type: 'texto', description: 'Nombre completo del area.', example: 'Contabilidad' },
+      { key: 'area_short_name', required: true, type: 'texto', description: 'Nombre corto del area.', example: 'Contab' },
+      { key: 'area_payroll_group_legacy_id', type: 'codigo', description: 'legacy_id del rol de pago relacionado, si aplica.', example: 'ROL-ADM' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '07_work_groups',
+    description: 'Grupos de trabajo para clasificacion operativa.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy del grupo de trabajo en el sistema anterior.', example: 'GT-OFIC' },
+      { key: 'work_group_name', required: true, type: 'texto', description: 'Nombre completo del grupo de trabajo.', example: 'Oficina' },
+      { key: 'work_group_short_name', required: true, type: 'texto', description: 'Nombre corto del grupo de trabajo.', example: 'Ofic' },
+      { key: 'work_group_payroll_group_legacy_id', type: 'codigo', description: 'legacy_id del rol de pago relacionado, si aplica.', example: 'ROL-ADM' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '08_companies',
+    description: 'Empresas del tenant.',
+    columns: [
+      { key: 'tenant_id', type: 'uuid', description: 'ID del tenant. Si se deja vacio, el sistema usa el tenant de la sesion.', example: '' },
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy de la empresa en el sistema anterior.', example: 'EMP-001' },
+      { key: 'company_ruc', type: 'texto', description: 'RUC o identificacion fiscal.', example: '0999999999001' },
+      { key: 'company_name', required: true, type: 'texto', description: 'Nombre legal o comercial completo.', example: 'Titanium-Labs Corp.' },
+      { key: 'company_short_name', required: true, type: 'texto', description: 'Nombre corto de la empresa.', example: 'Titanium' },
+      { key: 'company_address', type: 'texto', description: 'Direccion general.', example: 'Av. Principal 123' },
+      { key: 'company_address_line1', type: 'texto', description: 'Primera linea de direccion.', example: 'Av. Principal 123' },
+      { key: 'company_address_line2', type: 'texto', description: 'Segunda linea de direccion.', example: 'Piso 2' },
+      { key: 'company_country_id', type: 'codigo', description: 'Codigo de pais para crear o resolver catalogo geografico.', example: 'EC' },
+      { key: 'company_country_label', type: 'texto', description: 'Nombre del pais.', example: 'Ecuador' },
+      { key: 'company_country_short_label', type: 'texto', description: 'Nombre corto del pais.', example: 'ECU' },
+      { key: 'company_state_id', type: 'codigo', description: 'Codigo de provincia/estado.', example: 'GUAYAS' },
+      { key: 'company_state_label', type: 'texto', description: 'Nombre de provincia/estado.', example: 'Guayas' },
+      { key: 'company_state_short_label', type: 'texto', description: 'Nombre corto de provincia/estado.', example: 'GYE' },
+      { key: 'company_city_id', type: 'codigo', description: 'Codigo de ciudad.', example: 'GYE' },
+      { key: 'company_city_label', type: 'texto', description: 'Nombre de ciudad.', example: 'Guayaquil' },
+      { key: 'company_city_short_label', type: 'texto', description: 'Nombre corto de ciudad.', example: 'GYE' },
+      { key: 'company_postal_code', type: 'texto', description: 'Codigo postal.', example: '090101' },
+      { key: 'company_phone', type: 'texto', description: 'Telefono principal.', example: '+593 98 000 0000' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '09_geo_catalog',
+    description: 'Referencia opcional de catalogo geografico. Ayuda a documentar pais, provincia y ciudad.',
+    columns: [
+      { key: 'country_key', type: 'codigo', description: 'Codigo de pais.', example: 'EC' },
+      { key: 'country_label', type: 'texto', description: 'Nombre del pais.', example: 'Ecuador' },
+      { key: 'country_short_label', type: 'texto', description: 'Nombre corto del pais.', example: 'ECU' },
+      { key: 'state_key', type: 'codigo', description: 'Codigo de provincia/estado.', example: 'GUAYAS' },
+      { key: 'state_label', type: 'texto', description: 'Nombre de provincia/estado.', example: 'Guayas' },
+      { key: 'state_short_label', type: 'texto', description: 'Nombre corto de provincia/estado.', example: 'GYE' },
+      { key: 'city_key', type: 'codigo', description: 'Codigo de ciudad.', example: 'GYE' },
+      { key: 'city_label', type: 'texto', description: 'Nombre de ciudad.', example: 'Guayaquil' },
+      { key: 'city_short_label', type: 'texto', description: 'Nombre corto de ciudad.', example: 'GYE' },
+    ],
+  },
+  {
+    name: '10_work_locations',
+    description: 'Localizaciones o sedes de trabajo.',
+    columns: [
+      { key: 'legacy_id', required: true, type: 'codigo', description: 'ID/codigo legacy de la localizacion en el sistema anterior.', example: 'LOC-GYE' },
+      { key: 'work_location_name', required: true, type: 'texto', description: 'Nombre completo de la localizacion.', example: 'Matriz Guayaquil' },
+      { key: 'work_location_short_name', required: true, type: 'texto', description: 'Nombre corto de la localizacion.', example: 'Matriz' },
+      { key: 'work_location_country_id', type: 'codigo', description: 'Codigo de pais de la localizacion.', example: 'EC' },
+      { key: 'work_location_country_label', type: 'texto', description: 'Nombre del pais.', example: 'Ecuador' },
+      { key: 'work_location_country_short_label', type: 'texto', description: 'Nombre corto del pais.', example: 'ECU' },
+      { key: 'work_location_state_id', type: 'codigo', description: 'Codigo de provincia/estado.', example: 'GUAYAS' },
+      { key: 'work_location_state_label', type: 'texto', description: 'Nombre de provincia/estado.', example: 'Guayas' },
+      { key: 'work_location_state_short_label', type: 'texto', description: 'Nombre corto de provincia/estado.', example: 'GYE' },
+      { key: 'work_location_city_id', type: 'codigo', description: 'Codigo de ciudad.', example: 'GYE' },
+      { key: 'work_location_city_label', type: 'texto', description: 'Nombre de ciudad.', example: 'Guayaquil' },
+      { key: 'work_location_city_short_label', type: 'texto', description: 'Nombre corto de ciudad.', example: 'GYE' },
+      { key: 'work_location_time_zone', type: 'texto', description: 'Zona horaria IANA.', example: 'America/Guayaquil' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '11_employees',
+    description: 'Datos base de empleados.',
+    columns: [
+      { key: 'tenant_id', type: 'uuid', description: 'ID del tenant. Si se deja vacio, el sistema usa el tenant de la sesion.', example: '' },
+      { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo unico del empleado.', example: 'EMP-001' },
+      { key: 'employee_lastname', required: true, type: 'texto', description: 'Apellidos del empleado.', example: 'Sanchez Parker' },
+      { key: 'employee_name', required: true, type: 'texto', description: 'Nombres del empleado.', example: 'Victor Antonio' },
+      { key: 'employee_cedula', type: 'texto', description: 'Cedula o identificacion.', example: '0913416723' },
+      { key: 'employee_birthday', type: 'fecha', description: 'Fecha de nacimiento en formato YYYY-MM-DD.', example: '1985-01-15' },
+      { key: 'employee_gender_id', type: 'codigo', description: 'Lookup key de genero.', example: 'MASCULINO' },
+      { key: 'employee_is_model', type: 'booleano', description: 'Indica si es empleado modelo. Acepta true/false.', example: 'false' },
+      { key: 'employee_observations', type: 'texto', description: 'Observaciones del empleado.', example: '' },
+      { key: 'employee_photo_path', type: 'texto', description: 'Ruta de foto, si aplica.', example: '' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '12_users',
+    description: 'Usuarios de acceso asociados a empleados.',
+    columns: [
+      { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo del empleado de la pestana 11.', example: 'EMP-001' },
+      { key: 'username', required: true, type: 'texto', description: 'Usuario de acceso. El sistema sanea espacios y caracteres no validos.', example: 'victor.sanchez' },
+      { key: 'password_plain_for_import', type: 'texto', description: 'Clave inicial en claro para importacion. Minimo 8 caracteres.', example: 'Titanium2026' },
+      { key: 'password', type: 'texto', description: 'Alternativa de clave inicial si no usa password_plain_for_import.', example: '' },
+      { key: 'display_name', type: 'texto', description: 'Nombre visible del usuario.', example: 'Victor Sanchez' },
+      { key: 'email', required: true, type: 'email', description: 'Correo electronico unico.', example: 'victor.sanchez@empresa.com' },
+      { key: 'phone', type: 'texto', description: 'Telefono del usuario.', example: '+593 98 000 0000' },
+      { key: 'preferred_language_code', type: 'codigo', description: 'Idioma preferido.', example: 'es' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '13_user_roles',
+    description: 'Roles asignados a usuarios.',
+    columns: [
+      { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo del empleado de la pestana 11.', example: 'EMP-001' },
+      { key: 'role_key', required: true, type: 'codigo', description: 'Clave del rol existente.', example: 'EMPLOYEE' },
+      { key: 'valid_from', type: 'fecha', description: 'Fecha/hora inicial de vigencia, si aplica.', example: '2026-01-01' },
+      { key: 'valid_to', type: 'fecha', description: 'Fecha/hora final de vigencia, si aplica.', example: '' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '14_user_role_scopes',
+    description: 'Tipo de alcance para el rol del usuario. La importacion actual crea el alcance sobre el empleado.',
+    columns: [
+      { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo del empleado de la pestana 11.', example: 'EMP-001' },
+      { key: 'scope_type_key', required: true, type: 'codigo', description: 'Clave del tipo de alcance existente.', example: 'EMPLOYEE' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+  {
+    name: '15_employee_companies',
+    description: 'Asignacion organizacional del empleado a empresa, estructura y catalogos.',
+    columns: [
+      { key: 'tenant_id', type: 'uuid', description: 'ID del tenant. Si se deja vacio, el sistema usa el tenant de la sesion.', example: '' },
+      { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo del empleado de la pestana 11.', example: 'EMP-001' },
+      { key: 'company_legacy_id', required: true, type: 'codigo', description: 'legacy_id de empresa de la pestana 08.', example: 'EMP-001' },
+      { key: 'device_user_code', type: 'codigo', description: 'Codigo del empleado en dispositivo biometrico.', example: '1001' },
+      { key: 'payroll_employee_code', type: 'codigo', description: 'Codigo del empleado en nomina.', example: 'NOM-1001' },
+      { key: 'accounting_account_code', type: 'codigo', description: 'Cuenta contable del empleado, si aplica.', example: '5101-001' },
+      { key: 'salary_amount', type: 'numero', description: 'Salario numerico.', example: '1500.00' },
+      { key: 'work_on_holidays', type: 'booleano', description: 'Indica si trabaja feriados. Acepta true/false.', example: 'false' },
+      { key: 'hire_date', type: 'fecha', description: 'Fecha de contratacion en formato YYYY-MM-DD.', example: '2026-01-01' },
+      { key: 'termination_date', type: 'fecha', description: 'Fecha de salida, si aplica.', example: '' },
+      { key: 'contract_type_key', type: 'codigo', description: 'Lookup key de tipo de contrato.', example: 'INDEFINIDO' },
+      { key: 'employee_profile_legacy_id', required: true, type: 'codigo', description: 'legacy_id de perfil de la pestana 02.', example: 'PERF-ADM' },
+      { key: 'work_group_legacy_id', required: true, type: 'codigo', description: 'legacy_id de grupo de trabajo de la pestana 07.', example: 'GT-OFIC' },
+      { key: 'work_location_legacy_id', required: true, type: 'codigo', description: 'legacy_id de localizacion de la pestana 10.', example: 'LOC-GYE' },
+      { key: 'department_legacy_id', required: true, type: 'codigo', description: 'legacy_id de departamento de la pestana 03.', example: 'DEP-FIN' },
+      { key: 'area_legacy_id', required: true, type: 'codigo', description: 'legacy_id de area de la pestana 06.', example: 'AREA-CONT' },
+      { key: 'job_title_legacy_id', required: true, type: 'codigo', description: 'legacy_id de cargo de la pestana 04.', example: 'CARGO-ANL' },
+      { key: 'cost_center_legacy_id', required: true, type: 'codigo', description: 'legacy_id de centro de costo de la pestana 05.', example: 'CC-001' },
+      { key: 'payroll_group_legacy_id', required: true, type: 'codigo', description: 'legacy_id de rol de pago de la pestana 01.', example: 'ROL-ADM' },
+      { key: 'is_active', type: 'booleano', description: 'Estado del registro. Acepta true/false, si/no, 1/0.', example: 'true' },
+    ],
+  },
+];
+
 export type SingleWorkbookPreparedPayload = {
   tenantId: string | null;
   structureRows: StructureImportRow[];
@@ -293,7 +523,7 @@ function readNamedSheetRows(
   }
 
   if (!required) return [];
-  throw new Error(`No se encontró la pestaña requerida: ${candidates.join(' / ')}`);
+  throw new Error(`No se encontrÃ³ la pestaÃ±a requerida: ${candidates.join(' / ')}`);
 }
 
 function validateHeaders(rows: Record<string, any>[], requiredColumns: readonly string[]): string[] {
@@ -304,6 +534,61 @@ function validateHeaders(rows: Record<string, any>[], requiredColumns: readonly 
     .map((column) => `Falta columna obligatoria: ${column}`);
 }
 
+function setSheetColumns(worksheet: XLSX.WorkSheet, columns: MassiveWorkbookTemplateColumn[]) {
+  worksheet['!cols'] = columns.map((column) => ({
+    wch: Math.max(14, Math.min(34, column.key.length + 4)),
+  }));
+}
+
+function buildTemplateSheet(columns: MassiveWorkbookTemplateColumn[]): XLSX.WorkSheet {
+  const headers = columns.map((column) => column.key);
+  const examples = columns.map((column) => column.example || '');
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, examples]);
+  setSheetColumns(worksheet, columns);
+  return worksheet;
+}
+
+function buildDictionarySheet(): XLSX.WorkSheet {
+  const rows = [
+    ['pestana', 'descripcion_pestana', 'columna', 'obligatorio', 'tipo', 'descripcion', 'ejemplo'],
+    ...MASSIVE_WORKBOOK_TEMPLATE_TABS.flatMap((tab) =>
+      tab.columns.map((column) => [
+        tab.name,
+        tab.description,
+        column.key,
+        column.required ? 'SI' : 'NO',
+        column.type,
+        column.description,
+        column.example || '',
+      ])
+    ),
+  ];
+
+  const worksheet = XLSX.utils.aoa_to_sheet(rows);
+  worksheet['!cols'] = [
+    { wch: 24 },
+    { wch: 60 },
+    { wch: 30 },
+    { wch: 12 },
+    { wch: 12 },
+    { wch: 72 },
+    { wch: 28 },
+  ];
+  return worksheet;
+}
+
+export function generateSingleWorkbook15TabsTemplate(): Blob {
+  const workbook = XLSX.utils.book_new();
+
+  MASSIVE_WORKBOOK_TEMPLATE_TABS.forEach((tab) => {
+    XLSX.utils.book_append_sheet(workbook, buildTemplateSheet(tab.columns), tab.name);
+  });
+  XLSX.utils.book_append_sheet(workbook, buildDictionarySheet(), '16_diccionario_datos');
+
+  const output = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+  return new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+
 export async function parseStructureImportFile(file: File): Promise<ParseResult<StructureImportRow>> {
   try {
     const rows = readFirstSheetRows(await file.arrayBuffer());
@@ -311,7 +596,7 @@ export async function parseStructureImportFile(file: File): Promise<ParseResult<
       return {
         success: false,
         data: [],
-        errors: [{ row: 0, column: 'general', message: 'El archivo está vacío' }],
+        errors: [{ row: 0, column: 'general', message: 'El archivo estÃ¡ vacÃ­o' }],
         rowCount: 0,
       };
     }
@@ -436,7 +721,7 @@ export async function parseEmployeeImportFile(file: File): Promise<ParseResult<E
       return {
         success: false,
         data: [],
-        errors: [{ row: 0, column: 'general', message: 'El archivo está vacío' }],
+        errors: [{ row: 0, column: 'general', message: 'El archivo estÃ¡ vacÃ­o' }],
         rowCount: 0,
       };
     }
@@ -472,7 +757,7 @@ export async function parseEmployeeImportFile(file: File): Promise<ParseResult<E
 
       if (employeeCode) {
         if (seenEmployeeCodes.has(employeeCode)) {
-          errors.push({ row: rowNo, column: 'employee_code', message: 'Código duplicado en archivo' });
+          errors.push({ row: rowNo, column: 'employee_code', message: 'CÃ³digo duplicado en archivo' });
         }
         seenEmployeeCodes.add(employeeCode);
       }
@@ -546,6 +831,24 @@ function mapByCode<T extends Record<string, any>>(rows: T[], key: string): Map<s
   return out;
 }
 
+function mapByFirstAvailableCode<T extends Record<string, any>>(rows: T[], keys: string[]): Map<string, T> {
+  const out = new Map<string, T>();
+  rows.forEach((row) => {
+    const code = keys.map((key) => toText(row[key])).find(Boolean);
+    if (!code) return;
+    if (!out.has(code)) out.set(code, row);
+  });
+  return out;
+}
+
+function firstText(row: Record<string, any>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = toText(row[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
 export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult<SingleWorkbookPreparedPayload>> {
   try {
     const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
@@ -574,15 +877,15 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
       toText(employeeCompanies[0]?.tenant_id) ||
       null;
 
-    const payrollByCode = mapByCode(payrollGroups, 'payroll_group_code');
-    const profileByCode = mapByCode(employeeProfiles, 'employee_profile_code');
-    const departmentByCode = mapByCode(departments, 'department_code');
-    const areaByCode = mapByCode(areas, 'area_code');
-    const jobByCode = mapByCode(jobTitles, 'job_title_code');
-    const costByCode = mapByCode(costCenters, 'cost_center_code');
-    const workGroupByCode = mapByCode(workGroups, 'work_group_code');
-    const companyByCode = mapByCode(companies, 'company_code');
-    const workLocationByCode = mapByCode(workLocations, 'work_location_code');
+    const payrollByCode = mapByFirstAvailableCode(payrollGroups, ['legacy_id', 'payroll_group_code']);
+    const profileByCode = mapByFirstAvailableCode(employeeProfiles, ['legacy_id', 'employee_profile_code']);
+    const departmentByCode = mapByFirstAvailableCode(departments, ['legacy_id', 'department_code']);
+    const areaByCode = mapByFirstAvailableCode(areas, ['legacy_id', 'area_code']);
+    const jobByCode = mapByFirstAvailableCode(jobTitles, ['legacy_id', 'job_title_code']);
+    const costByCode = mapByFirstAvailableCode(costCenters, ['legacy_id', 'cost_center_code']);
+    const workGroupByCode = mapByFirstAvailableCode(workGroups, ['legacy_id', 'work_group_code']);
+    const companyByCode = mapByFirstAvailableCode(companies, ['legacy_id', 'company_code']);
+    const workLocationByCode = mapByFirstAvailableCode(workLocations, ['legacy_id', 'work_location_code']);
     const employeeByCode = mapByCode(employees, 'employee_code');
     const userByEmployeeCode = mapByCode(users, 'employee_code');
     const roleByEmployeeCode = mapByCode(userRoles, 'employee_code');
@@ -592,24 +895,32 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
     employeeCompanies.forEach((row, idx) => {
       const rowNo = idx + 2;
       const employeeCode = toText(row.employee_code);
-      const companyCode = toText(row.company_code);
+      const companyCode = firstText(row, ['company_legacy_id', 'company_code']);
       if (!employeeCode || !companyCode) {
-        errors.push({ row: rowNo, column: 'employee_code/company_code', message: 'Campos obligatorios en pestaña 15' });
+        errors.push({ row: rowNo, column: 'employee_code/company_legacy_id', message: 'Campos obligatorios en pestaÃ±a 15' });
         return;
       }
 
       const company = companyByCode.get(companyCode) || {};
-      const profile = profileByCode.get(toText(row.employee_profile_code) || '') || {};
-      const workGroup = workGroupByCode.get(toText(row.work_group_code) || '') || {};
-      const workLocation = workLocationByCode.get(toText(row.work_location_code) || '') || {};
-      const department = departmentByCode.get(toText(row.department_code) || '') || {};
-      const area = areaByCode.get(toText(row.area_code) || '') || {};
-      const job = jobByCode.get(toText(row.job_title_code) || '') || {};
-      const cost = costByCode.get(toText(row.cost_center_code) || '') || {};
-      const payroll = payrollByCode.get(toText(row.payroll_group_code) || '') || {};
+      const profileCode = firstText(row, ['employee_profile_legacy_id', 'employee_profile_code']);
+      const workGroupCode = firstText(row, ['work_group_legacy_id', 'work_group_code']);
+      const workLocationCode = firstText(row, ['work_location_legacy_id', 'work_location_code']);
+      const departmentCode = firstText(row, ['department_legacy_id', 'department_code']);
+      const areaCode = firstText(row, ['area_legacy_id', 'area_code']);
+      const jobCode = firstText(row, ['job_title_legacy_id', 'job_title_code']);
+      const costCode = firstText(row, ['cost_center_legacy_id', 'cost_center_code']);
+      const payrollCode = firstText(row, ['payroll_group_legacy_id', 'payroll_group_code']);
+      const profile = profileByCode.get(profileCode || '') || {};
+      const workGroup = workGroupByCode.get(workGroupCode || '') || {};
+      const workLocation = workLocationByCode.get(workLocationCode || '') || {};
+      const department = departmentByCode.get(departmentCode || '') || {};
+      const area = areaByCode.get(areaCode || '') || {};
+      const job = jobByCode.get(jobCode || '') || {};
+      const cost = costByCode.get(costCode || '') || {};
+      const payroll = payrollByCode.get(payrollCode || '') || {};
 
       if (!profile || !workGroup || !workLocation || !department || !area || !job || !cost || !payroll) {
-        // no-op: backend validará codigos inexistentes, pero dejamos el registro
+        // no-op: backend validarÃ¡ codigos inexistentes, pero dejamos el registro
       }
 
       structureRows.push({
@@ -646,14 +957,14 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
         created_at: null,
         updated_by: null,
         updated_at: null,
-        employee_profile_code: toText(row.employee_profile_code),
+        employee_profile_code: profileCode,
         profile_name: toText((profile as any).profile_name),
         profile_short_name: toText((profile as any).profile_short_name),
-        work_group_code: toText(row.work_group_code),
-        work_group_payrol_group_code: toText((workGroup as any).work_group_payrol_group_code),
+        work_group_code: workGroupCode,
+        work_group_payrol_group_code: firstText(workGroup as any, ['work_group_payroll_group_legacy_id', 'work_group_payrol_group_code', 'work_group_payroll_group_code']),
         work_group_name: toText((workGroup as any).work_group_name),
         work_group_short_name: toText((workGroup as any).work_group_short_name),
-        work_location_code: toText(row.work_location_code),
+        work_location_code: workLocationCode,
         work_location_name: toText((workLocation as any).work_location_name),
         work_location_short_name: toText((workLocation as any).work_location_short_name),
         work_location_country_id: toText((workLocation as any).work_location_country_id),
@@ -666,22 +977,22 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
         work_location_city_label: toText((workLocation as any).work_location_city_label),
         work_location_city_short_label: toText((workLocation as any).work_location_city_short_label),
         work_location_time_zone: toText((workLocation as any).work_location_time_zone ?? (workLocation as any).time_zone),
-        department_code: toText(row.department_code),
+        department_code: departmentCode,
         department_name: toText((department as any).department_name),
         department_short_name: toText((department as any).department_short_name),
-        area_code: toText(row.area_code),
+        area_code: areaCode,
         area_name: toText((area as any).area_name),
         area_short_name: toText((area as any).area_short_name),
-        area_payroll_group_code: toText((area as any).area_payroll_group_code),
-        job_title_code: toText(row.job_title_code),
+        area_payroll_group_code: firstText(area as any, ['area_payroll_group_legacy_id', 'area_payroll_group_code']),
+        job_title_code: jobCode,
         job_title_name: toText((job as any).job_title_name),
         job_title_short_name: toText((job as any).job_title_short_name),
-        cost_center_code: toText(row.cost_center_code),
+        cost_center_code: costCode,
         homologation_code: toText((cost as any).homologation_code),
         gl_account_code: toText((cost as any).gl_account_code),
         cost_center_name: toText((cost as any).cost_center_name),
         cost_center_short_name: toText((cost as any).cost_center_short_name),
-        payroll_group_code: toText(row.payroll_group_code),
+        payroll_group_code: payrollCode,
         payroll_group_name: toText((payroll as any).payroll_group_name),
         payroll_group_short_name: toText((payroll as any).payroll_group_short_name),
         contract_type_key: toText(row.contract_type_key),
@@ -693,7 +1004,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
       const rowNo = idx + 2;
       const employeeCode = toText(row.employee_code);
       if (!employeeCode) {
-        errors.push({ row: rowNo, column: 'employee_code', message: 'Campo obligatorio en pestaña 11' });
+        errors.push({ row: rowNo, column: 'employee_code', message: 'Campo obligatorio en pestaÃ±a 11' });
         return;
       }
 
@@ -781,7 +1092,7 @@ export async function parseSingleWorkbook15Tabs(file: File): Promise<ParseResult
 async function getAccessToken(): Promise<string> {
   const { data, error } = await ApiClient.auth.getSession();
   const token = data?.session?.access_token || '';
-  if (error || !token) throw new Error('No hay sesión activa. Vuelva a iniciar sesión.');
+  if (error || !token) throw new Error('No hay sesiÃ³n activa. Vuelva a iniciar sesiÃ³n.');
   return token;
 }
 

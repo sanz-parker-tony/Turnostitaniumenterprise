@@ -346,7 +346,7 @@ function OrganizationCompanyStep({ onComplete, onGoBack }: Pick<WizardStepCompan
           tenant_id: context.tenantId,
           company_name: formData.companyName.trim(),
           company_short_name: formData.companyShortName.trim(),
-          company_code: formData.companyCode.trim().toUpperCase(),
+          legacy_id: formData.companyCode.trim().toUpperCase(),
           company_phone: formData.companyPhone.trim() || null,
           company_address: [formData.companyAddressLine1, formData.companyAddressLine2].filter(Boolean).join(' ').trim() || null,
           company_address_line1: formData.companyAddressLine1.trim() || null,
@@ -354,7 +354,7 @@ function OrganizationCompanyStep({ onComplete, onGoBack }: Pick<WizardStepCompan
           company_postal_code: formData.companyPostalCode.trim() || null,
           created_by: context.createdBy,
         })
-        .select('id, company_name, company_code')
+        .select('id, company_name, legacy_id')
         .single();
 
       if (companyError || !createdCompany?.id) {
@@ -371,7 +371,7 @@ function OrganizationCompanyStep({ onComplete, onGoBack }: Pick<WizardStepCompan
           company_id: createdCompany.id,
           work_location_name: formData.locationName.trim(),
           work_location_short_name: formData.locationShortName.trim(),
-          work_location_code: formData.locationCode.trim().toUpperCase(),
+          legacy_id: formData.locationCode.trim().toUpperCase(),
           address_line1: formData.locationAddress.trim() || null,
           latitude: latitude ? Number(latitude) : null,
           longitude: longitude ? Number(longitude) : null,

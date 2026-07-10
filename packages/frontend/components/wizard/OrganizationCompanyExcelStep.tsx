@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+ï»¿import { useMemo, useState } from 'react';
 import { Building2, ChevronLeft, ChevronRight, Download, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadTemplate } from '../../utils/excel-templates';
@@ -36,13 +36,13 @@ export default function OrganizationCompanyExcelStep({ onComplete, onGoBack }: O
         key: 'companies' as const,
         title: 'Empresas',
         description: 'Incluye country/state/city IDs (UUID) cuando corresponda.',
-        codeColumn: 'company_code',
+        codeColumn: 'legacy_id',
       },
       {
         key: 'work_locations' as const,
         title: 'Localizaciones',
         description: 'Incluye company_id y coordenadas latitude/longitude.',
-        codeColumn: 'work_location_code',
+        codeColumn: 'legacy_id',
       },
     ],
     []
@@ -153,7 +153,7 @@ export default function OrganizationCompanyExcelStep({ onComplete, onGoBack }: O
                 <p className="text-sm text-slate-600 mt-1">{entity.description}</p>
                 {entityStatus.fileName && (
                   <p className="text-xs text-slate-500 mt-2">
-                    Archivo: {entityStatus.fileName} · {entityStatus.rowCount} filas
+                    Archivo: {entityStatus.fileName} ï¿½ {entityStatus.rowCount} filas
                   </p>
                 )}
               </div>

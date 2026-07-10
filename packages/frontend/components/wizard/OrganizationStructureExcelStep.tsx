@@ -44,13 +44,13 @@ export default function OrganizationStructureExcelStep({ onComplete, onGoBack }:
 
   const entities = useMemo<EntityConfig[]>(
     () => [
-      { key: 'payroll_groups', title: 'Grupos de Nomina', description: 'Base para areas y grupos de trabajo.', codeColumn: 'payroll_group_code', required: false },
-      { key: 'departments', title: 'Departamentos', description: 'Primer nivel jerarquico.', codeColumn: 'department_code', required: true },
-      { key: 'areas', title: 'Areas', description: 'Segundo nivel jerarquico. Incluye payroll_group_id.', codeColumn: 'area_code', required: true },
-      { key: 'cost_centers', title: 'Centros de Costo', description: 'Control presupuestario y contable.', codeColumn: 'cost_center_code', required: true },
-      { key: 'job_titles', title: 'Cargos', description: 'Requerido para asignacion de empleados.', codeColumn: 'job_title_code', required: true },
-      { key: 'work_groups', title: 'Grupos de Trabajo', description: 'Puede incluir payroll_group_id.', codeColumn: 'work_group_code', required: true },
-      { key: 'employee_profiles', title: 'Perfiles de Empleado', description: 'Clasifica empleados por perfil.', codeColumn: 'employee_profile_code', required: true },
+      { key: 'payroll_groups', title: 'Grupos de Nomina', description: 'Base para areas y grupos de trabajo.', codeColumn: 'legacy_id', required: false },
+      { key: 'departments', title: 'Departamentos', description: 'Primer nivel jerarquico.', codeColumn: 'legacy_id', required: true },
+      { key: 'areas', title: 'Areas', description: 'Segundo nivel jerarquico. Incluye payroll_group_id.', codeColumn: 'legacy_id', required: true },
+      { key: 'cost_centers', title: 'Centros de Costo', description: 'Control presupuestario y contable.', codeColumn: 'legacy_id', required: true },
+      { key: 'job_titles', title: 'Cargos', description: 'Requerido para asignacion de empleados.', codeColumn: 'legacy_id', required: true },
+      { key: 'work_groups', title: 'Grupos de Trabajo', description: 'Puede incluir payroll_group_id.', codeColumn: 'legacy_id', required: true },
+      { key: 'employee_profiles', title: 'Perfiles de Empleado', description: 'Clasifica empleados por perfil.', codeColumn: 'legacy_id', required: true },
     ],
     []
   );

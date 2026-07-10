@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Loader2, StopCirc
 import { toast } from 'sonner';
 import {
   downloadMigrationExport,
+  generateSingleWorkbook15TabsTemplate,
   getMassImportCapabilities,
   ImportCapabilities,
   ImportLogEvent,
@@ -12,6 +13,7 @@ import {
   runStructureMassiveImport,
   SingleWorkbookPreparedPayload,
 } from './organization-massive-import';
+import { downloadTemplate } from '../../utils/excel-templates';
 
 type OrganizationMassiveSingleFileStepProps = {
   onComplete: () => void;
@@ -476,6 +478,16 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     }
   };
 
+  const handleDownloadWorkbookTemplate = () => {
+    try {
+      const blob = generateSingleWorkbook15TabsTemplate();
+      downloadTemplate(blob, 'plantilla_carga_masiva_organizacional_15_pestanas.xlsx');
+      toast.success('Plantilla de carga masiva generada');
+    } catch (error: any) {
+      toast.error(error?.message || 'No se pudo generar la plantilla');
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-slate-200 bg-white p-5">
@@ -486,21 +498,31 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
               Cargue el archivo transformed de 15 pestanas. El sistema ejecuta estructura (paso 1) y empleados (paso 2).
             </p>
           </div>
-          <label className="inline-flex items-center gap-2 rounded-lg bg-[#0F4C81] px-3 py-2 text-sm text-white cursor-pointer hover:bg-[#0b3b64]">
-            <Upload className="w-4 h-4" />
-            Seleccionar archivo
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                handleUpload(file);
-                event.target.value = '';
-              }}
-            />
-          </label>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleDownloadWorkbookTemplate}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#0F4C81] bg-white px-3 py-2 text-sm text-[#0F4C81] hover:bg-[#0F4C81]/5"
+            >
+              <Download className="w-4 h-4" />
+              Descargar modelo
+            </button>
+            <label className="inline-flex items-center gap-2 rounded-lg bg-[#0F4C81] px-3 py-2 text-sm text-white cursor-pointer hover:bg-[#0b3b64]">
+              <Upload className="w-4 h-4" />
+              Seleccionar archivo
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  handleUpload(file);
+                  event.target.value = '';
+                }}
+              />
+            </label>
+          </div>
         </div>
 
         {fileName && (

@@ -1,15 +1,15 @@
-/**
+﻿/**
  * users-management-routes.ts
  * Turnos Titanium Enterprise
  *
  * CRUD para users, user_roles y user_role_scopes
- * Ubicación: Mantenimiento → Usuarios
+ * UbicaciÃ³n: Mantenimiento â†’ Usuarios
  *
- * IMPORTANTE: Las rutas estáticas (/catalogs/*, /user-roles/*) van ANTES
- * de las rutas dinámicas (/:id, /:user_id/*) para que Express no capture
+ * IMPORTANTE: Las rutas estÃ¡ticas (/catalogs/*, /user-roles/*) van ANTES
+ * de las rutas dinÃ¡micas (/:id, /:user_id/*) para que Express no capture
  * palabras como "catalogs" o "user-roles" como UUIDs.
  *
- * Política: NO se pueden eliminar registros.
+ * PolÃ­tica: NO se pueden eliminar registros.
  */
 
 import { Router, Request, Response } from 'express';
@@ -40,45 +40,45 @@ const SCOPE_ENTITY_CONFIGS: Record<string, ScopeEntityConfig> = {
   },
   COMPANY: {
     table: 'companies',
-    select: 'id, company_name, company_code',
-    label: (row) => row.company_code ? `${row.company_name} (${row.company_code})` : row.company_name,
-    description: (row) => row.company_code || null,
+    select: 'id, company_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.company_name} (${row.legacy_id})` : row.company_name,
+    description: (row) => row.legacy_id || null,
   },
   WORK_LOCATION: {
     table: 'work_locations',
-    select: 'id, work_location_name, work_location_code',
-    label: (row) => row.work_location_code ? `${row.work_location_name} (${row.work_location_code})` : row.work_location_name,
-    description: (row) => row.work_location_code || null,
+    select: 'id, work_location_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.work_location_name} (${row.legacy_id})` : row.work_location_name,
+    description: (row) => row.legacy_id || null,
   },
   DEPARTMENT: {
     table: 'departments',
-    select: 'id, department_name, department_code',
-    label: (row) => row.department_code ? `${row.department_name} (${row.department_code})` : row.department_name,
-    description: (row) => row.department_code || null,
+    select: 'id, department_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.department_name} (${row.legacy_id})` : row.department_name,
+    description: (row) => row.legacy_id || null,
   },
   AREA: {
     table: 'areas',
-    select: 'id, area_name, area_code',
-    label: (row) => row.area_code ? `${row.area_name} (${row.area_code})` : row.area_name,
-    description: (row) => row.area_code || null,
+    select: 'id, area_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.area_name} (${row.legacy_id})` : row.area_name,
+    description: (row) => row.legacy_id || null,
   },
   COST_CENTER: {
     table: 'cost_centers',
-    select: 'id, cost_center_name, cost_center_code',
-    label: (row) => row.cost_center_code ? `${row.cost_center_name} (${row.cost_center_code})` : row.cost_center_name,
-    description: (row) => row.cost_center_code || null,
+    select: 'id, cost_center_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.cost_center_name} (${row.legacy_id})` : row.cost_center_name,
+    description: (row) => row.legacy_id || null,
   },
   WORK_GROUP: {
     table: 'work_groups',
-    select: 'id, work_group_name, work_group_code',
-    label: (row) => row.work_group_code ? `${row.work_group_name} (${row.work_group_code})` : row.work_group_name,
-    description: (row) => row.work_group_code || null,
+    select: 'id, work_group_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.work_group_name} (${row.legacy_id})` : row.work_group_name,
+    description: (row) => row.legacy_id || null,
   },
   EMPLOYEE_PROFILE: {
     table: 'employee_profiles',
-    select: 'id, profile_name, employee_profile_code',
-    label: (row) => row.employee_profile_code ? `${row.profile_name} (${row.employee_profile_code})` : row.profile_name,
-    description: (row) => row.employee_profile_code || null,
+    select: 'id, profile_name, legacy_id',
+    label: (row) => row.legacy_id ? `${row.profile_name} (${row.legacy_id})` : row.profile_name,
+    description: (row) => row.legacy_id || null,
   },
   EMPLOYEE: {
     table: 'employees',
@@ -130,7 +130,7 @@ async function resolveScopeEntityLabels(Postgres: any, scopes: any[]) {
 }
 
 // ============================================================================
-// CATÁLOGOS — deben ir ANTES de /:id para que Express no los capture como UUID
+// CATÃLOGOS â€” deben ir ANTES de /:id para que Express no los capture como UUID
 // ============================================================================
 
 // GET /catalogs/tenants - Tenants disponibles
@@ -249,7 +249,7 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
       case 'COMPANY': {
         query = Postgres
           .from('companies')
-          .select('id, tenant_id, company_name, company_code, is_active')
+          .select('id, tenant_id, company_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('company_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -257,15 +257,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.company_code ? `${row.company_name} (${row.company_code})` : row.company_name,
-          description: row.company_code || null,
+          label: row.legacy_id ? `${row.company_name} (${row.legacy_id})` : row.company_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'WORK_LOCATION': {
         query = Postgres
           .from('work_locations')
-          .select('id, tenant_id, work_location_name, work_location_code, is_active')
+          .select('id, tenant_id, work_location_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('work_location_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -273,15 +273,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.work_location_code ? `${row.work_location_name} (${row.work_location_code})` : row.work_location_name,
-          description: row.work_location_code || null,
+          label: row.legacy_id ? `${row.work_location_name} (${row.legacy_id})` : row.work_location_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'DEPARTMENT': {
         query = Postgres
           .from('departments')
-          .select('id, tenant_id, department_name, department_code, is_active')
+          .select('id, tenant_id, department_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('department_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -289,15 +289,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.department_code ? `${row.department_name} (${row.department_code})` : row.department_name,
-          description: row.department_code || null,
+          label: row.legacy_id ? `${row.department_name} (${row.legacy_id})` : row.department_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'AREA': {
         query = Postgres
           .from('areas')
-          .select('id, tenant_id, area_name, area_code, is_active')
+          .select('id, tenant_id, area_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('area_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -305,15 +305,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.area_code ? `${row.area_name} (${row.area_code})` : row.area_name,
-          description: row.area_code || null,
+          label: row.legacy_id ? `${row.area_name} (${row.legacy_id})` : row.area_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'COST_CENTER': {
         query = Postgres
           .from('cost_centers')
-          .select('id, tenant_id, cost_center_name, cost_center_code, is_active')
+          .select('id, tenant_id, cost_center_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('cost_center_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -321,15 +321,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.cost_center_code ? `${row.cost_center_name} (${row.cost_center_code})` : row.cost_center_name,
-          description: row.cost_center_code || null,
+          label: row.legacy_id ? `${row.cost_center_name} (${row.legacy_id})` : row.cost_center_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'WORK_GROUP': {
         query = Postgres
           .from('work_groups')
-          .select('id, tenant_id, work_group_name, work_group_code, is_active')
+          .select('id, tenant_id, work_group_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('work_group_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -337,15 +337,15 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.work_group_code ? `${row.work_group_name} (${row.work_group_code})` : row.work_group_name,
-          description: row.work_group_code || null,
+          label: row.legacy_id ? `${row.work_group_name} (${row.legacy_id})` : row.work_group_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
       case 'EMPLOYEE_PROFILE': {
         query = Postgres
           .from('employee_profiles')
-          .select('id, tenant_id, profile_name, employee_profile_code, is_active')
+          .select('id, tenant_id, profile_name, legacy_id, is_active')
           .eq('is_active', true)
           .order('profile_name');
         if (scopedTenantId) query = query.eq('tenant_id', scopedTenantId);
@@ -353,8 +353,8 @@ router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
         if (error) return res.status(500).json({ error: error.message });
         rows = (data || []).map((row: any) => ({
           id: row.id,
-          label: row.employee_profile_code ? `${row.profile_name} (${row.employee_profile_code})` : row.profile_name,
-          description: row.employee_profile_code || null,
+          label: row.legacy_id ? `${row.profile_name} (${row.legacy_id})` : row.profile_name,
+          description: row.legacy_id || null,
         }));
         break;
       }
@@ -487,10 +487,10 @@ router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) 
 });
 
 // ============================================================================
-// USER-ROLES (sub-recursos estáticos) — ANTES de /:user_id/*
+// USER-ROLES (sub-recursos estÃ¡ticos) â€” ANTES de /:user_id/*
 // ============================================================================
 
-// PUT /user-roles/:user_role_id - Actualizar asignación de rol
+// PUT /user-roles/:user_role_id - Actualizar asignaciÃ³n de rol
 router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
@@ -506,7 +506,7 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
       .single();
 
     if (currentError || !currentUserRole) {
-      return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+      return res.status(404).json({ error: 'AsignaciÃ³n de rol no encontrada' });
     }
 
     const nextTenantId = tenant_id || currentUserRole.tenant_id;
@@ -524,7 +524,7 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
       .maybeSingle();
 
     if (duplicated) {
-      return res.status(409).json({ error: 'Ya existe una asignación con ese rol y empresa para este usuario' });
+      return res.status(409).json({ error: 'Ya existe una asignaciÃ³n con ese rol y empresa para este usuario' });
     }
 
     const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
@@ -548,10 +548,10 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
     }
 
     if (!updatedUserRole) {
-      return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+      return res.status(404).json({ error: 'AsignaciÃ³n de rol no encontrada' });
     }
 
-    return res.status(200).json({ success: true, userRole: updatedUserRole, message: 'Asignación actualizada exitosamente' });
+    return res.status(200).json({ success: true, userRole: updatedUserRole, message: 'AsignaciÃ³n actualizada exitosamente' });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en PUT /user-roles/:id:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
@@ -579,12 +579,12 @@ router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Respo
       .single();
 
     if (error) return res.status(500).json({ error: error.message });
-    if (!updatedUserRole) return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+    if (!updatedUserRole) return res.status(404).json({ error: 'AsignaciÃ³n de rol no encontrada' });
 
     return res.status(200).json({
       success: true,
       userRole: updatedUserRole,
-      message: `Asignación de rol ${is_active ? 'activada' : 'desactivada'} exitosamente`,
+      message: `AsignaciÃ³n de rol ${is_active ? 'activada' : 'desactivada'} exitosamente`,
     });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en PATCH /user-roles/:id/status:', err);
@@ -592,7 +592,7 @@ router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Respo
   }
 });
 
-// DELETE /user-roles/:user_role_id - Desasignar rol de usuario (elimina relación y sus alcances)
+// DELETE /user-roles/:user_role_id - Desasignar rol de usuario (elimina relaciÃ³n y sus alcances)
 router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
@@ -605,7 +605,7 @@ router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) =
       .maybeSingle();
 
     if (existingError) return res.status(500).json({ error: existingError.message });
-    if (!existingUserRole) return res.status(404).json({ error: 'Asignación de rol no encontrada' });
+    if (!existingUserRole) return res.status(404).json({ error: 'AsignaciÃ³n de rol no encontrada' });
 
     const { error: deleteScopesError } = await Postgres
       .from('user_role_scopes')
@@ -628,7 +628,7 @@ router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) =
   }
 });
 
-// GET /user-roles/:user_role_id/scopes - Listar alcances de una asignación
+// GET /user-roles/:user_role_id/scopes - Listar alcances de una asignaciÃ³n
 router.delete('/user-roles/:user_role_id/scopes/inactive', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
@@ -731,7 +731,7 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
   }
 });
 
-// POST /user-roles/:user_role_id/scopes - Agregar alcance a una asignación
+// POST /user-roles/:user_role_id/scopes - Agregar alcance a una asignaciÃ³n
 router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
@@ -754,7 +754,7 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
       .maybeSingle();
 
     if (existing?.is_active) {
-      return res.status(409).json({ error: 'Ya existe ese alcance para esta asignación de rol' });
+      return res.status(409).json({ error: 'Ya existe ese alcance para esta asignaciÃ³n de rol' });
     }
 
     if (existing?.id) {
@@ -836,7 +836,7 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
       .maybeSingle();
 
     if (duplicated) {
-      return res.status(409).json({ error: 'Ya existe ese alcance para esta asignación de rol' });
+      return res.status(409).json({ error: 'Ya existe ese alcance para esta asignaciÃ³n de rol' });
     }
 
     const updateData: any = {
@@ -901,7 +901,7 @@ router.patch('/scopes/:scope_id/status', async (req: Request, res: Response) => 
 });
 
 // ============================================================================
-// USERS — rutas dinámicas van AL FINAL
+// USERS â€” rutas dinÃ¡micas van AL FINAL
 // ============================================================================
 
 // DELETE /scopes/:scope_id - Eliminar alcance
@@ -1008,7 +1008,7 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// GET /:id - Obtener usuario específico
+// GET /:id - Obtener usuario especÃ­fico
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
@@ -1063,11 +1063,11 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
-      return res.status(400).json({ error: 'El formato del email no es válido' });
+      return res.status(400).json({ error: 'El formato del email no es vÃ¡lido' });
     }
 
     if (password.length < 8) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
     }
 
     const Postgres = getPostgres();
@@ -1092,7 +1092,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     if (authError || !authData?.user) {
       console.error('[USERS-MGMT] Error creando auth user:', authError);
-      return res.status(500).json({ error: 'Error al crear usuario de autenticación', details: authError?.message });
+      return res.status(500).json({ error: 'Error al crear usuario de autenticaciÃ³n', details: authError?.message });
     }
 
     const authUserId = authData.user.id;
@@ -1124,7 +1124,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
     if (syncPasswordError) {
       return res.status(500).json({
-        error: 'Error al sincronizar contraseña en users',
+        error: 'Error al sincronizar contraseÃ±a en users',
         details: syncPasswordError.message,
       });
     }
@@ -1157,7 +1157,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     if (email && email !== existing.email) {
       if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
-        return res.status(400).json({ error: 'El formato del email no es válido' });
+        return res.status(400).json({ error: 'El formato del email no es vÃ¡lido' });
       }
     }
 
@@ -1176,7 +1176,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     }
 
     if (password && String(password).length < 8) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
     }
 
     const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
@@ -1206,7 +1206,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (Object.keys(authUpdatePayload).length > 0) {
       const { error: authUpdateError } = await Postgres.auth.admin.updateUserById(existing.auth_user_id, authUpdatePayload);
       if (authUpdateError) {
-        return res.status(500).json({ error: 'Error al sincronizar usuario de autenticación', details: authUpdateError.message });
+        return res.status(500).json({ error: 'Error al sincronizar usuario de autenticaciÃ³n', details: authUpdateError.message });
       }
     }
 
@@ -1251,7 +1251,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /:id/reset-password - Resetear contraseña de usuario
+// PATCH /:id/reset-password - Resetear contraseÃ±a de usuario
 router.patch('/:id/reset-password', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
@@ -1259,7 +1259,7 @@ router.patch('/:id/reset-password', async (req: Request, res: Response) => {
     const { new_password } = body;
 
     if (!new_password || new_password.length < 8) {
-      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
     }
 
     const Postgres = getPostgres();
@@ -1279,10 +1279,10 @@ router.patch('/:id/reset-password', async (req: Request, res: Response) => {
     });
 
     if (pwError) {
-      return res.status(500).json({ error: 'Error al resetear contraseña', details: pwError.message });
+      return res.status(500).json({ error: 'Error al resetear contraseÃ±a', details: pwError.message });
     }
 
-    return res.status(200).json({ success: true, message: 'Contraseña reseteada exitosamente' });
+    return res.status(200).json({ success: true, message: 'ContraseÃ±a reseteada exitosamente' });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en PATCH /:id/reset-password:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });

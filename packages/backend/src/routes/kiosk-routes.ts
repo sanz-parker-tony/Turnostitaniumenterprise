@@ -95,6 +95,80 @@ function normalizeNullableText(value: any): string | null {
   return next || null;
 }
 
+function truncateNullableText(value: any, maxLength: number): string | null {
+  const raw = normalizeNullableText(value);
+  if (!raw) return null;
+  return raw.length > maxLength ? raw.slice(0, maxLength) : raw;
+}
+
+function getHeaderValue(req: Request, headerName: string): string | null {
+  const value = req.headers[headerName.toLowerCase()];
+  if (Array.isArray(value)) return normalizeNullableText(value[0]);
+  return normalizeNullableText(value);
+}
+
+function getClientIp(req: Request): string | null {
+  const forwardedFor = getHeaderValue(req, 'x-forwarded-for');
+  const raw =
+    forwardedFor?.split(',')[0]?.trim() ||
+    getHeaderValue(req, 'cf-connecting-ip') ||
+    getHeaderValue(req, 'x-real-ip') ||
+    req.socket.remoteAddress ||
+    null;
+  if (!raw) return null;
+  return raw.replace(/^::ffff:/, '').slice(0, 64);
+}
+
+function detectDeviceType(value: any, userAgent: string | null): string | null {
+  const explicit = normalizeNullableText(value)?.toLowerCase();
+  if (explicit && ['mobile', 'tablet', 'desktop', 'biometric', 'kiosk', 'other'].includes(explicit)) {
+    return explicit;
+  }
+
+  const ua = (userAgent || '').toLowerCase();
+  if (!ua) return explicit || null;
+  if (/ipad|tablet|kindle|silk/.test(ua)) return 'tablet';
+  if (/mobi|iphone|android.*mobile|windows phone/.test(ua)) return 'mobile';
+  if (/android/.test(ua)) return 'tablet';
+  return 'desktop';
+}
+
+function normalizeClientMetadata(value: any): Record<string, any> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const json = JSON.stringify(value);
+  if (json.length <= 8000) return value;
+  return {
+    truncated: true,
+    original_size_bytes: Buffer.byteLength(json, 'utf8'),
+  };
+}
+
+function resolvePunchClientInfo(req: Request) {
+  const bodyMetadata = normalizeClientMetadata(req.body?.client_metadata);
+  const headerUserAgent = getHeaderValue(req, 'user-agent');
+  const clientUserAgent = truncateNullableText(req.body?.client_user_agent || bodyMetadata?.user_agent || headerUserAgent, 2000);
+  const clientDeviceType = detectDeviceType(req.body?.client_device_type || bodyMetadata?.device_type, clientUserAgent);
+  const clientPlatform = truncateNullableText(req.body?.client_platform || bodyMetadata?.platform, 120);
+  const clientAppInstanceId = truncateNullableText(req.body?.client_app_instance_id || bodyMetadata?.app_instance_id, 80);
+  const clientIp = getClientIp(req);
+
+  const clientMetadata = {
+    ...(bodyMetadata || {}),
+    server_received_at: new Date().toISOString(),
+    http_user_agent: headerUserAgent,
+    ip_source: clientIp ? 'request_headers' : null,
+  };
+
+  return {
+    clientIp,
+    clientUserAgent,
+    clientDeviceType,
+    clientPlatform,
+    clientAppInstanceId,
+    clientMetadata,
+  };
+}
+
 function repairCommonMojibake(value: string): string {
   if (!value) return value;
   if (!/[ÃÂâ€]/.test(value)) return value;
@@ -1443,6 +1517,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const latitud = parseNullableCoordinate(req.body?.latitud);
     const longitud = parseNullableCoordinate(req.body?.longitud);
     const locationAccuracyMeters = parseNullableCoordinate(req.body?.location_accuracy_meters);
+    const clientInfo = resolvePunchClientInfo(req);
     const notes = FIXED_NOTES;
     let punchDateTime = new Date();
 
@@ -1725,12 +1800,18 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           notes,
           latitud,
           longitud,
+          client_ip,
+          client_user_agent,
+          client_device_type,
+          client_platform,
+          client_app_instance_id,
+          client_metadata,
           is_active,
           created_by
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,true,$13
+          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,true,$19
         )
         RETURNING *
       `,
@@ -1747,6 +1828,12 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         notes,
         latitud,
         longitud,
+        clientInfo.clientIp,
+        clientInfo.clientUserAgent,
+        clientInfo.clientDeviceType,
+        clientInfo.clientPlatform,
+        clientInfo.clientAppInstanceId,
+        JSON.stringify(clientInfo.clientMetadata),
         actor,
       ]
     );
@@ -1775,6 +1862,12 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           device_location: resolvedDevice.device_location || null,
           work_location_id: resolvedDevice.work_location_id || null,
           work_location_name: resolvedDevice.work_location_name || null,
+        },
+        client_info: {
+          client_ip: clientInfo.clientIp,
+          client_device_type: clientInfo.clientDeviceType,
+          client_platform: clientInfo.clientPlatform,
+          client_app_instance_id: clientInfo.clientAppInstanceId,
         },
         snapshot: {
           file_name: snapshot.fileName,

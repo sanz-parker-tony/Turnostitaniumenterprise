@@ -197,7 +197,7 @@ const getEmployeeAbsenceRequestsCatalogs = withDocs(
         await Promise.all([
           pool.query(
             `
-            SELECT id, company_code, company_name
+            SELECT id, legacy_id AS company_code, company_name
             FROM public.companies
             WHERE tenant_id = $1::uuid
               AND is_active = true
@@ -446,7 +446,7 @@ const getEmployeeAbsenceRequests = withDocs(
           r.id,
           r.tenant_id,
           r.company_id,
-          c.company_code,
+          c.legacy_id AS company_code,
           c.company_name,
           r.employee_id,
           e.employee_code,
@@ -566,7 +566,7 @@ const getEmployeeAbsenceRequestById = withDocs(
           r.id,
           r.tenant_id,
           r.company_id,
-          c.company_code,
+          c.legacy_id AS company_code,
           c.company_name,
           r.employee_id,
           e.employee_code,

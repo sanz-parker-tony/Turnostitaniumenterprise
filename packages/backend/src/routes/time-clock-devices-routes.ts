@@ -68,7 +68,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const [companiesResult, deviceTypesResult, workLocationsResult] = await Promise.all([
       pool.query(
         `
-          SELECT id, company_name, company_code
+          SELECT id, company_name, legacy_id AS company_code
           FROM public.companies
           WHERE tenant_id = $1
             AND is_active = true
@@ -92,7 +92,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           SELECT
             wl.id,
             wl.work_location_name,
-            wl.work_location_code,
+            wl.legacy_id AS work_location_code,
             wl.geofence_polygon,
             wl.company_id
           FROM public.work_locations wl
@@ -140,7 +140,7 @@ router.get('/', async (req: Request, res: Response) => {
           lv.lookup_label AS device_type_label,
           d.work_location_id,
           wl.work_location_name,
-          wl.work_location_code,
+          wl.legacy_id AS work_location_code,
           wl.geofence_polygon,
           d.latitude,
           d.longitude,

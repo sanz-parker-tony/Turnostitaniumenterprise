@@ -615,7 +615,7 @@ function OrganizationProfilesStep({ onComplete, onGoBack }: Pick<WizardStepEmplo
             tenant_id: context.tenantId,
             profile_name: row.name.trim(),
             profile_short_name: row.shortName.trim(),
-            employee_profile_code: row.code.trim().toUpperCase(),
+            legacy_id: row.code.trim().toUpperCase(),
             created_by: context.createdBy,
           }))
         );

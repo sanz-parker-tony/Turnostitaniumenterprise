@@ -933,7 +933,7 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
         tenant_id: context.tenantId,
         payroll_group_name: row.name.trim(),
         payroll_group_short_name: row.shortName.trim(),
-        payroll_group_code: row.code.trim().toUpperCase(),
+        legacy_id: row.code.trim().toUpperCase(),
         created_by: context.createdBy,
       }));
 
@@ -942,14 +942,14 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
         const { data: insertedPayroll, error: payrollError } = await ApiClient
           .from('payroll_groups')
           .insert(payrollPayload)
-          .select('id, payroll_group_code');
+          .select('id, legacy_id');
 
         if (payrollError) {
           throw new Error(payrollError.message || 'Error guardando grupos de nomina');
         }
 
         payrollCodeMap = new Map(
-          (insertedPayroll || []).map((item: any) => [String(item.payroll_group_code).toUpperCase(), item.id])
+          (insertedPayroll || []).map((item: any) => [String(item.legacy_id).toUpperCase(), item.id])
         );
       }
 
@@ -960,7 +960,7 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
             tenant_id: context.tenantId,
             department_name: row.name.trim(),
             department_short_name: row.shortName.trim(),
-            department_code: row.code.trim().toUpperCase(),
+            legacy_id: row.code.trim().toUpperCase(),
             created_by: context.createdBy,
           }))
         );
@@ -976,7 +976,7 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
             tenant_id: context.tenantId,
             area_name: row.name.trim(),
             area_short_name: row.shortName.trim(),
-            area_code: row.code.trim().toUpperCase(),
+            legacy_id: row.code.trim().toUpperCase(),
             payroll_group_id: row.payrollGroupCode?.trim()
               ? payrollCodeMap.get(row.payrollGroupCode.trim().toUpperCase()) || null
               : null,
@@ -995,7 +995,7 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
             tenant_id: context.tenantId,
             cost_center_name: row.name.trim(),
             cost_center_short_name: row.shortName.trim(),
-            cost_center_code: row.code.trim().toUpperCase(),
+            legacy_id: row.code.trim().toUpperCase(),
             homologation_code: row.homologationCode?.trim() || null,
             gl_account_code: row.glAccountCode?.trim() || null,
             created_by: context.createdBy,
@@ -1013,7 +1013,7 @@ function OrganizationStructureStep({ onComplete, onGoBack }: Pick<WizardStepStru
             tenant_id: context.tenantId,
             work_group_name: row.name.trim(),
             work_group_short_name: row.shortName.trim(),
-            work_group_code: row.code.trim().toUpperCase(),
+            legacy_id: row.code.trim().toUpperCase(),
             payroll_group_id: row.payrollGroupCode?.trim()
               ? payrollCodeMap.get(row.payrollGroupCode.trim().toUpperCase()) || null
               : null,

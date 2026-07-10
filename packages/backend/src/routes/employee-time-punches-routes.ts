@@ -494,13 +494,13 @@ const getTimePunchDebugCatalogs = withDocs(
           SELECT DISTINCT
             ec.company_id,
             c.company_name,
-            c.company_code,
+            c.legacy_id AS company_code,
             ec.work_location_id,
             wl.work_location_name,
-            wl.work_location_code,
+            wl.legacy_id AS work_location_code,
             ec.payroll_group_id,
             pg.payroll_group_name,
-            pg.payroll_group_code
+            pg.legacy_id AS payroll_group_code
           FROM public.employee_companies ec
           INNER JOIN public.employees e
             ON e.id = ec.employee_id
@@ -890,7 +890,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const [companiesResult, employeesResult, devicesResult, lookupsResult] = await Promise.all([
       pool.query(
         `
-          SELECT id, company_name, company_code
+          SELECT id, company_name, legacy_id AS company_code
           FROM public.companies
           WHERE tenant_id = $1
             AND is_active = true

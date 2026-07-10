@@ -517,7 +517,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'company_name', label: 'Nombre', type: 'text', required: true },
       { key: 'company_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'company_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'company_address_line1', label: 'Dirección 1', type: 'text' },
       { key: 'company_address_line2', label: 'Dirección 2', type: 'text' },
       { key: 'company_country_id', label: 'País', type: 'select', optionsKey: 'countries' },
@@ -529,7 +529,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'banner', label: 'Banner', type: 'text', hidden: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['company_code', 'company_name', 'company_short_name', 'company_phone', 'is_active'],
+    tableColumns: ['legacy_id', 'company_name', 'company_short_name', 'company_phone', 'is_active'],
   },
   {
     key: 'work-locations',
@@ -539,7 +539,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'company_id', label: 'Empresa', type: 'select', required: true, optionsKey: 'companies' },
       { key: 'work_location_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_location_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'work_location_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'country_id', label: 'País', type: 'select', optionsKey: 'countries' },
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
@@ -548,7 +548,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
-    tableColumns: ['work_location_code', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'time_zone', 'geofence_polygon', 'is_active'],
+    tableColumns: ['legacy_id', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'time_zone', 'geofence_polygon', 'is_active'],
   },
   {
     key: 'departments',
@@ -557,10 +557,10 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'department_name', label: 'Nombre', type: 'text', required: true },
       { key: 'department_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'department_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['department_code', 'department_name', 'department_short_name', 'is_active'],
+    tableColumns: ['legacy_id', 'department_name', 'department_short_name', 'is_active'],
   },
   {
     key: 'areas',
@@ -569,11 +569,11 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'area_name', label: 'Nombre', type: 'text', required: true },
       { key: 'area_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'area_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'payroll_group_id', label: 'Grupo de nómina', type: 'select', optionsKey: 'payroll_groups' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['area_code', 'area_name', 'area_short_name', 'payroll_group_id', 'is_active'],
+    tableColumns: ['legacy_id', 'area_name', 'area_short_name', 'payroll_group_id', 'is_active'],
   },
   {
     key: 'cost-centers',
@@ -582,12 +582,12 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'cost_center_name', label: 'Nombre', type: 'text', required: true },
       { key: 'cost_center_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'cost_center_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'homologation_code', label: 'Código homologación', type: 'text' },
       { key: 'gl_account_code', label: 'Cuenta GL', type: 'text' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['cost_center_code', 'cost_center_name', 'homologation_code', 'gl_account_code', 'is_active'],
+    tableColumns: ['legacy_id', 'cost_center_name', 'homologation_code', 'gl_account_code', 'is_active'],
   },
   {
     key: 'payroll-groups',
@@ -596,10 +596,10 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'payroll_group_name', label: 'Nombre', type: 'text', required: true },
       { key: 'payroll_group_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'payroll_group_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['payroll_group_code', 'payroll_group_name', 'payroll_group_short_name', 'is_active'],
+    tableColumns: ['legacy_id', 'payroll_group_name', 'payroll_group_short_name', 'is_active'],
   },
   {
     key: 'employees',
@@ -626,10 +626,10 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'profile_name', label: 'Nombre', type: 'text', required: true },
       { key: 'profile_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'employee_profile_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['employee_profile_code', 'profile_name', 'profile_short_name', 'is_active'],
+    tableColumns: ['legacy_id', 'profile_name', 'profile_short_name', 'is_active'],
   },
   {
     key: 'job-titles',
@@ -638,10 +638,10 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'job_title_name', label: 'Nombre', type: 'text', required: true },
       { key: 'job_title_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'job_title_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['job_title_code', 'job_title_name', 'job_title_short_name', 'is_active'],
+    tableColumns: ['legacy_id', 'job_title_name', 'job_title_short_name', 'is_active'],
   },
   {
     key: 'work-groups',
@@ -650,11 +650,11 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'work_group_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_group_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'work_group_code', label: 'Código', type: 'text', required: true },
+      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
       { key: 'payroll_group_id', label: 'Grupo de nómina', type: 'select', optionsKey: 'payroll_groups' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
-    tableColumns: ['work_group_code', 'work_group_name', 'work_group_short_name', 'payroll_group_id', 'is_active'],
+    tableColumns: ['legacy_id', 'work_group_name', 'work_group_short_name', 'payroll_group_id', 'is_active'],
   },
   {
     key: 'shifts',
@@ -1053,10 +1053,10 @@ export function OrgMaintenance({
           if (!combinationsMap.has(comboKey)) {
             combinationsMap.set(comboKey, {
               company_id: company.id,
-              company_code: company.company_code || null,
+              company_code: company.legacy_id || company.company_code || null,
               company_name: company.company_name || null,
               payroll_group_id: payrollGroup?.id || null,
-              payroll_group_code: payrollGroup?.payroll_group_code || null,
+              payroll_group_code: payrollGroup?.legacy_id || payrollGroup?.payroll_group_code || null,
               payroll_group_name: payrollGroup?.payroll_group_name || null,
             });
           }

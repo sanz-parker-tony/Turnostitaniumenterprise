@@ -34,50 +34,50 @@ interface EntityConfig {
 const ENTITY_CONFIG: Record<EntityKey, EntityConfig> = {
   'companies': {
     table: 'companies',
-    requiredOnCreate: ['company_name', 'company_short_name', 'company_code'],
+    requiredOnCreate: ['company_name', 'company_short_name', 'legacy_id'],
     defaultSort: 'company_name',
     hasIsActive: true,
-    codeField: 'company_code',
+    codeField: 'legacy_id',
     nameField: 'company_name',
   },
   'work-locations': {
     table: 'work_locations',
-    requiredOnCreate: ['work_location_name', 'work_location_short_name', 'work_location_code'],
+    requiredOnCreate: ['work_location_name', 'work_location_short_name', 'legacy_id'],
     defaultSort: 'work_location_name',
     hasIsActive: true,
-    codeField: 'work_location_code',
+    codeField: 'legacy_id',
     nameField: 'work_location_name',
   },
   'departments': {
     table: 'departments',
-    requiredOnCreate: ['department_name', 'department_short_name', 'department_code'],
+    requiredOnCreate: ['department_name', 'department_short_name', 'legacy_id'],
     defaultSort: 'department_name',
     hasIsActive: true,
-    codeField: 'department_code',
+    codeField: 'legacy_id',
     nameField: 'department_name',
   },
   'areas': {
     table: 'areas',
-    requiredOnCreate: ['area_name', 'area_short_name', 'area_code'],
+    requiredOnCreate: ['area_name', 'area_short_name', 'legacy_id'],
     defaultSort: 'area_name',
     hasIsActive: true,
-    codeField: 'area_code',
+    codeField: 'legacy_id',
     nameField: 'area_name',
   },
   'cost-centers': {
     table: 'cost_centers',
-    requiredOnCreate: ['cost_center_name', 'cost_center_short_name', 'cost_center_code'],
+    requiredOnCreate: ['cost_center_name', 'cost_center_short_name', 'legacy_id'],
     defaultSort: 'cost_center_name',
     hasIsActive: true,
-    codeField: 'cost_center_code',
+    codeField: 'legacy_id',
     nameField: 'cost_center_name',
   },
   'payroll-groups': {
     table: 'payroll_groups',
-    requiredOnCreate: ['payroll_group_name', 'payroll_group_short_name', 'payroll_group_code'],
+    requiredOnCreate: ['payroll_group_name', 'payroll_group_short_name', 'legacy_id'],
     defaultSort: 'payroll_group_name',
     hasIsActive: true,
-    codeField: 'payroll_group_code',
+    codeField: 'legacy_id',
     nameField: 'payroll_group_name',
   },
   'holidays': {
@@ -97,26 +97,26 @@ const ENTITY_CONFIG: Record<EntityKey, EntityConfig> = {
   },
   'employee-profiles': {
     table: 'employee_profiles',
-    requiredOnCreate: ['profile_name', 'profile_short_name', 'employee_profile_code'],
+    requiredOnCreate: ['profile_name', 'profile_short_name', 'legacy_id'],
     defaultSort: 'profile_name',
     hasIsActive: true,
-    codeField: 'employee_profile_code',
+    codeField: 'legacy_id',
     nameField: 'profile_name',
   },
   'job-titles': {
     table: 'job_titles',
-    requiredOnCreate: ['job_title_name', 'job_title_short_name', 'job_title_code'],
+    requiredOnCreate: ['job_title_name', 'job_title_short_name', 'legacy_id'],
     defaultSort: 'job_title_name',
     hasIsActive: true,
-    codeField: 'job_title_code',
+    codeField: 'legacy_id',
     nameField: 'job_title_name',
   },
   'work-groups': {
     table: 'work_groups',
-    requiredOnCreate: ['work_group_name', 'work_group_short_name', 'work_group_code'],
+    requiredOnCreate: ['work_group_name', 'work_group_short_name', 'legacy_id'],
     defaultSort: 'work_group_name',
     hasIsActive: true,
-    codeField: 'work_group_code',
+    codeField: 'legacy_id',
     nameField: 'work_group_name',
   },
   'shifts': {
@@ -1336,7 +1336,7 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
         payrollRefByCode.set(code, fromCache);
         return fromCache;
       }
-      const existing = await findByTenantAndCode(Postgres, 'payroll_groups', tenantId, 'payroll_group_code', code);
+      const existing = await findByTenantAndCode(Postgres, 'payroll_groups', tenantId, 'legacy_id', code);
       const id = (existing?.id as string | undefined) || null;
       payrollRefByCode.set(code, id);
       return id;
@@ -1358,7 +1358,7 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       const employeeProfileCode = normalizeText(row.employee_profile_code);
 
       if (!employeeCode || !companyCode) {
-        throw new Error(`Fila ${rowNo}: employee_code y company_code son obligatorios`);
+        throw new Error(`Fila ${rowNo}: employee_code y company_legacy_id son obligatorios`);
       }
       if (!payrollGroupCode || !departmentCode || !areaCode || !jobTitleCode || !costCenterCode || !workGroupCode || !workLocationCode || !employeeProfileCode) {
         throw new Error(`Fila ${rowNo}: faltan codigos obligatorios de catalogo`);
@@ -1387,8 +1387,8 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       );
 
       announceTable('companies', 'companies', index);
-      const companyUpsert = await upsertCatalogCached(companyCache, 'companies', 'company_code', companyCode, {
-        company_code: companyCode,
+      const companyUpsert = await upsertCatalogCached(companyCache, 'companies', 'legacy_id', companyCode, {
+        legacy_id: companyCode,
         company_name: normalizeText(row.company_name) || companyCode,
         company_short_name: normalizeText(row.company_short_name) || companyCode,
         company_address: normalizeText(row.company_address),
@@ -1403,8 +1403,8 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       }, 'companies');
 
       announceTable('payroll_groups', 'payroll_groups', index);
-      const payrollUpsert = await upsertCatalogCached(payrollCache, 'payroll_groups', 'payroll_group_code', payrollGroupCode, {
-        payroll_group_code: payrollGroupCode,
+      const payrollUpsert = await upsertCatalogCached(payrollCache, 'payroll_groups', 'legacy_id', payrollGroupCode, {
+        legacy_id: payrollGroupCode,
         payroll_group_name: normalizeText(row.payroll_group_name) || payrollGroupCode,
         payroll_group_short_name: normalizeText(row.payroll_group_short_name) || payrollGroupCode,
         is_active: normalizeBool(row.is_active, true),
@@ -1412,16 +1412,16 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       payrollRefByCode.set(payrollGroupCode, payrollUpsert.id);
 
       announceTable('employee_profiles', 'employee_profiles', index);
-      await upsertCatalogCached(profileCache, 'employee_profiles', 'employee_profile_code', employeeProfileCode, {
-        employee_profile_code: employeeProfileCode,
+      await upsertCatalogCached(profileCache, 'employee_profiles', 'legacy_id', employeeProfileCode, {
+        legacy_id: employeeProfileCode,
         profile_name: normalizeText(row.profile_name) || employeeProfileCode,
         profile_short_name: normalizeText(row.profile_short_name) || employeeProfileCode,
         is_active: normalizeBool(row.is_active, true),
       }, 'employee_profiles');
 
       announceTable('departments', 'departments', index);
-      await upsertCatalogCached(departmentCache, 'departments', 'department_code', departmentCode, {
-        department_code: departmentCode,
+      await upsertCatalogCached(departmentCache, 'departments', 'legacy_id', departmentCode, {
+        legacy_id: departmentCode,
         department_name: normalizeText(row.department_name) || departmentCode,
         department_short_name: normalizeText(row.department_short_name) || departmentCode,
         is_active: normalizeBool(row.is_active, true),
@@ -1430,8 +1430,8 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       const areaPayrollCode = normalizeText(row.area_payroll_group_code) || payrollGroupCode;
       const areaPayrollRefId = await resolvePayrollRefByCode(areaPayrollCode);
       announceTable('areas', 'areas', index);
-      await upsertCatalogCached(areaCache, 'areas', 'area_code', areaCode, {
-        area_code: areaCode,
+      await upsertCatalogCached(areaCache, 'areas', 'legacy_id', areaCode, {
+        legacy_id: areaCode,
         area_name: normalizeText(row.area_name) || areaCode,
         area_short_name: normalizeText(row.area_short_name) || areaCode,
         payroll_group_id: areaPayrollRefId,
@@ -1439,16 +1439,16 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       }, 'areas');
 
       announceTable('job_titles', 'job_titles', index);
-      await upsertCatalogCached(jobTitleCache, 'job_titles', 'job_title_code', jobTitleCode, {
-        job_title_code: jobTitleCode,
+      await upsertCatalogCached(jobTitleCache, 'job_titles', 'legacy_id', jobTitleCode, {
+        legacy_id: jobTitleCode,
         job_title_name: normalizeText(row.job_title_name) || jobTitleCode,
         job_title_short_name: normalizeText(row.job_title_short_name) || jobTitleCode,
         is_active: normalizeBool(row.is_active, true),
       }, 'job_titles');
 
       announceTable('cost_centers', 'cost_centers', index);
-      await upsertCatalogCached(costCenterCache, 'cost_centers', 'cost_center_code', costCenterCode, {
-        cost_center_code: costCenterCode,
+      await upsertCatalogCached(costCenterCache, 'cost_centers', 'legacy_id', costCenterCode, {
+        legacy_id: costCenterCode,
         cost_center_name: normalizeText(row.cost_center_name) || costCenterCode,
         cost_center_short_name: normalizeText(row.cost_center_short_name) || costCenterCode,
         homologation_code: normalizeText(row.homologation_code),
@@ -1459,8 +1459,8 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       const workGroupPayrollCode = normalizeText(row.work_group_payrol_group_code) || payrollGroupCode;
       const workGroupPayrollRefId = await resolvePayrollRefByCode(workGroupPayrollCode);
       announceTable('work_groups', 'work_groups', index);
-      await upsertCatalogCached(workGroupCache, 'work_groups', 'work_group_code', workGroupCode, {
-        work_group_code: workGroupCode,
+      await upsertCatalogCached(workGroupCache, 'work_groups', 'legacy_id', workGroupCode, {
+        legacy_id: workGroupCode,
         work_group_name: normalizeText(row.work_group_name) || workGroupCode,
         work_group_short_name: normalizeText(row.work_group_short_name) || workGroupCode,
         payroll_group_id: workGroupPayrollRefId,
@@ -1490,8 +1490,8 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
       );
 
       announceTable('work_locations', 'work_locations', index);
-      await upsertCatalogCached(workLocationCache, 'work_locations', 'work_location_code', workLocationCode, {
-        work_location_code: workLocationCode,
+      await upsertCatalogCached(workLocationCache, 'work_locations', 'legacy_id', workLocationCode, {
+        legacy_id: workLocationCode,
         work_location_name: normalizeText(row.work_location_name) || workLocationCode,
         work_location_short_name: normalizeText(row.work_location_short_name) || workLocationCode,
         company_id: companyUpsert.id,
@@ -1589,15 +1589,15 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
     ] = await Promise.all([
       Postgres.from('lookup_groups').select('id, lookup_group_key').in('lookup_group_key', ['GENDER', 'CONTRACT_TYPE']),
       Postgres.from('lookup_values').select('id, lookup_group_id, lookup_key').eq('is_active', true),
-      Postgres.from('companies').select('id, company_code').eq('tenant_id', tenantId),
-      Postgres.from('payroll_groups').select('id, payroll_group_code').eq('tenant_id', tenantId),
-      Postgres.from('departments').select('id, department_code').eq('tenant_id', tenantId),
-      Postgres.from('areas').select('id, area_code').eq('tenant_id', tenantId),
-      Postgres.from('job_titles').select('id, job_title_code').eq('tenant_id', tenantId),
-      Postgres.from('cost_centers').select('id, cost_center_code').eq('tenant_id', tenantId),
-      Postgres.from('work_groups').select('id, work_group_code').eq('tenant_id', tenantId),
-      Postgres.from('work_locations').select('id, work_location_code').eq('tenant_id', tenantId),
-      Postgres.from('employee_profiles').select('id, employee_profile_code').eq('tenant_id', tenantId),
+      Postgres.from('companies').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('payroll_groups').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('departments').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('areas').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('job_titles').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('cost_centers').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('work_groups').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('work_locations').select('id, legacy_id').eq('tenant_id', tenantId),
+      Postgres.from('employee_profiles').select('id, legacy_id').eq('tenant_id', tenantId),
       Postgres.from('roles').select('id, role_key').eq('tenant_id', tenantId).eq('is_active', true),
       Postgres.from('scope_types').select('id, scope_type_key').eq('is_active', true),
     ]);
@@ -1636,15 +1636,15 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
         .filter((row: any) => contractGroupId && row.lookup_group_id === contractGroupId)
         .map((row: any) => [String(row.lookup_key || '').toUpperCase(), row.id])
     );
-    const companyByCode = new Map((companies.data || []).map((row: any) => [String(row.company_code || ''), row.id]));
-    const payrollGroupByCode = new Map((payrollGroups.data || []).map((row: any) => [String(row.payroll_group_code || ''), row.id]));
-    const departmentByCode = new Map((departments.data || []).map((row: any) => [String(row.department_code || ''), row.id]));
-    const areaByCode = new Map((areas.data || []).map((row: any) => [String(row.area_code || ''), row.id]));
-    const jobTitleByCode = new Map((jobTitles.data || []).map((row: any) => [String(row.job_title_code || ''), row.id]));
-    const costCenterByCode = new Map((costCenters.data || []).map((row: any) => [String(row.cost_center_code || ''), row.id]));
-    const workGroupByCode = new Map((workGroups.data || []).map((row: any) => [String(row.work_group_code || ''), row.id]));
-    const workLocationByCode = new Map((workLocations.data || []).map((row: any) => [String(row.work_location_code || ''), row.id]));
-    const employeeProfileByCode = new Map((employeeProfiles.data || []).map((row: any) => [String(row.employee_profile_code || ''), row.id]));
+    const companyByCode = new Map((companies.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const payrollGroupByCode = new Map((payrollGroups.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const departmentByCode = new Map((departments.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const areaByCode = new Map((areas.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const jobTitleByCode = new Map((jobTitles.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const costCenterByCode = new Map((costCenters.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const workGroupByCode = new Map((workGroups.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const workLocationByCode = new Map((workLocations.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
+    const employeeProfileByCode = new Map((employeeProfiles.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
     const roleByKey = new Map((roles.data || []).map((row: any) => [String(row.role_key || '').toUpperCase(), row.id]));
     const scopeTypeByKey = new Map((scopeTypes.data || []).map((row: any) => [String(row.scope_type_key || '').toUpperCase(), row.id]));
 
@@ -1950,7 +1950,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
 
       for (const assignment of employeeAssignments) {
         const companyId = companyByCode.get(String(assignment.company_code || ''));
-        if (!companyId) throw new Error(`Fila ${rowNo}: company_code ${assignment.company_code} no existe`);
+        if (!companyId) throw new Error(`Fila ${rowNo}: company_legacy_id ${assignment.company_code} no existe`);
 
         const payload = {
           device_user_code: assignment.device_user_code || null,
@@ -2208,7 +2208,7 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
         ? Postgres.from('employees').select('id, employee_code, user_id, created_at').eq('tenant_id', tenantId).in('employee_code', employeeCodes)
         : Promise.resolve({ data: [], error: null } as any),
       companyCodes.length > 0
-        ? Postgres.from('companies').select('id, company_code, created_at').eq('tenant_id', tenantId).in('company_code', companyCodes)
+        ? Postgres.from('companies').select('id, legacy_id, created_at').eq('tenant_id', tenantId).in('legacy_id', companyCodes)
         : Promise.resolve({ data: [], error: null } as any),
     ]);
 
@@ -2216,7 +2216,7 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
     if (companyRes.error) throw new Error(companyRes.error.message || 'Error consultando companies para reversa');
 
     const employees = (employeeRes.data || []) as Array<{ id: string; employee_code: string; user_id: string | null; created_at: string | null }>;
-    const companies = (companyRes.data || []) as Array<{ id: string; company_code: string; created_at: string | null }>;
+    const companies = (companyRes.data || []) as Array<{ id: string; legacy_id: string; created_at: string | null }>;
 
     const employeeIds = employees.map((row) => row.id);
     const companyIds = companies.map((row) => row.id);
@@ -2456,15 +2456,15 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
       );
     };
 
-    await deleteCatalogByCodeRecent('work_locations', 'work_location_code', Array.from(workLocationCodeSet), 'work_locations_deleted', 64);
-    await deleteCatalogByCodeRecent('work_groups', 'work_group_code', Array.from(workGroupCodeSet), 'work_groups_deleted', 68);
-    await deleteCatalogByCodeRecent('cost_centers', 'cost_center_code', Array.from(costCenterCodeSet), 'cost_centers_deleted', 72);
-    await deleteCatalogByCodeRecent('job_titles', 'job_title_code', Array.from(jobTitleCodeSet), 'job_titles_deleted', 76);
-    await deleteCatalogByCodeRecent('areas', 'area_code', Array.from(areaCodeSet), 'areas_deleted', 80);
-    await deleteCatalogByCodeRecent('departments', 'department_code', Array.from(departmentCodeSet), 'departments_deleted', 84);
-    await deleteCatalogByCodeRecent('employee_profiles', 'employee_profile_code', Array.from(profileCodeSet), 'employee_profiles_deleted', 87);
-    await deleteCatalogByCodeRecent('payroll_groups', 'payroll_group_code', Array.from(payrollGroupCodeSet), 'payroll_groups_deleted', 90);
-    await deleteCatalogByCodeRecent('companies', 'company_code', companyCodes, 'companies_deleted', 93);
+    await deleteCatalogByCodeRecent('work_locations', 'legacy_id', Array.from(workLocationCodeSet), 'work_locations_deleted', 64);
+    await deleteCatalogByCodeRecent('work_groups', 'legacy_id', Array.from(workGroupCodeSet), 'work_groups_deleted', 68);
+    await deleteCatalogByCodeRecent('cost_centers', 'legacy_id', Array.from(costCenterCodeSet), 'cost_centers_deleted', 72);
+    await deleteCatalogByCodeRecent('job_titles', 'legacy_id', Array.from(jobTitleCodeSet), 'job_titles_deleted', 76);
+    await deleteCatalogByCodeRecent('areas', 'legacy_id', Array.from(areaCodeSet), 'areas_deleted', 80);
+    await deleteCatalogByCodeRecent('departments', 'legacy_id', Array.from(departmentCodeSet), 'departments_deleted', 84);
+    await deleteCatalogByCodeRecent('employee_profiles', 'legacy_id', Array.from(profileCodeSet), 'employee_profiles_deleted', 87);
+    await deleteCatalogByCodeRecent('payroll_groups', 'legacy_id', Array.from(payrollGroupCodeSet), 'payroll_groups_deleted', 90);
+    await deleteCatalogByCodeRecent('companies', 'legacy_id', companyCodes, 'companies_deleted', 93);
 
     const countryKeys = Array.from(countryKeySet);
     const stateKeys = Array.from(stateKeySet);
@@ -2698,33 +2698,33 @@ router.get('/migration-export', async (req: Request, res: Response) => {
         employee_lastname: employee?.employee_lastname || null,
         employee_name: employee?.employee_name || null,
         company_id: row.company_id,
-        company_code: company?.company_code || null,
+        company_legacy_id: company?.legacy_id || null,
         company_name: company?.company_name || null,
         device_user_code: row.device_user_code,
         payroll_employee_code: row.payroll_employee_code,
         employee_profile_id: row.employee_profile_id,
-        employee_profile_code: profile?.employee_profile_code || null,
+        employee_profile_legacy_id: profile?.legacy_id || null,
         employee_profile_name: profile?.profile_name || null,
         work_group_id: row.work_group_id,
-        work_group_code: workGroup?.work_group_code || null,
+        work_group_legacy_id: workGroup?.legacy_id || null,
         work_group_name: workGroup?.work_group_name || null,
         work_location_id: row.work_location_id,
-        work_location_code: location?.work_location_code || null,
+        work_location_legacy_id: location?.legacy_id || null,
         work_location_name: location?.work_location_name || null,
         department_id: row.department_id,
-        department_code: department?.department_code || null,
+        department_legacy_id: department?.legacy_id || null,
         department_name: department?.department_name || null,
         area_id: row.area_id,
-        area_code: area?.area_code || null,
+        area_legacy_id: area?.legacy_id || null,
         area_name: area?.area_name || null,
         job_title_id: row.job_title_id,
-        job_title_code: jobTitle?.job_title_code || null,
+        job_title_legacy_id: jobTitle?.legacy_id || null,
         job_title_name: jobTitle?.job_title_name || null,
         cost_center_id: row.cost_center_id,
-        cost_center_code: costCenter?.cost_center_code || null,
+        cost_center_legacy_id: costCenter?.legacy_id || null,
         cost_center_name: costCenter?.cost_center_name || null,
         payroll_group_id: row.payroll_group_id,
-        payroll_group_code: payrollGroup?.payroll_group_code || null,
+        payroll_group_legacy_id: payrollGroup?.legacy_id || null,
         payroll_group_name: payrollGroup?.payroll_group_name || null,
         accounting_account_code: row.accounting_account_code,
         salary_amount: row.salary_amount,
@@ -2780,7 +2780,7 @@ router.get('/migration-export', async (req: Request, res: Response) => {
         user_email: user?.email || null,
         role_key: role?.role_key || null,
         role_name: role?.role_name || null,
-        company_code: company?.company_code || null,
+        company_legacy_id: company?.legacy_id || null,
         company_name: company?.company_name || null,
       };
     });
@@ -2806,7 +2806,7 @@ router.get('/migration-export', async (req: Request, res: Response) => {
       const city = cityById.get(row.city_id);
       return {
         ...row,
-        company_code: company?.company_code || null,
+        company_legacy_id: company?.legacy_id || null,
         company_name: company?.company_name || null,
         country_key: country?.country_key || null,
         country_label: country?.country_label || null,
@@ -2926,16 +2926,16 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       cities,
       employeeCompanyCombos,
     ] = await Promise.all([
-      Postgres.from('companies').select('id, company_code, company_name').eq('tenant_id', tenantId).eq('is_active', true).order('company_name'),
-      Postgres.from('departments').select('id, department_code, department_name').eq('tenant_id', tenantId).eq('is_active', true).order('department_name'),
-      Postgres.from('areas').select('id, area_code, area_name').eq('tenant_id', tenantId).eq('is_active', true).order('area_name'),
-      Postgres.from('cost_centers').select('id, cost_center_code, cost_center_name').eq('tenant_id', tenantId).eq('is_active', true).order('cost_center_name'),
-      Postgres.from('payroll_groups').select('id, payroll_group_code, payroll_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('payroll_group_name'),
-      Postgres.from('employee_profiles').select('id, employee_profile_code, profile_name').eq('tenant_id', tenantId).eq('is_active', true).order('profile_name'),
+      Postgres.from('companies').select('id, legacy_id, company_name').eq('tenant_id', tenantId).eq('is_active', true).order('company_name'),
+      Postgres.from('departments').select('id, legacy_id, department_name').eq('tenant_id', tenantId).eq('is_active', true).order('department_name'),
+      Postgres.from('areas').select('id, legacy_id, area_name').eq('tenant_id', tenantId).eq('is_active', true).order('area_name'),
+      Postgres.from('cost_centers').select('id, legacy_id, cost_center_name').eq('tenant_id', tenantId).eq('is_active', true).order('cost_center_name'),
+      Postgres.from('payroll_groups').select('id, legacy_id, payroll_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('payroll_group_name'),
+      Postgres.from('employee_profiles').select('id, legacy_id, profile_name').eq('tenant_id', tenantId).eq('is_active', true).order('profile_name'),
       Postgres.from('employees').select('id, employee_code, employee_lastname, employee_name').eq('tenant_id', tenantId).eq('is_active', true).order('employee_code'),
-      Postgres.from('work_groups').select('id, work_group_code, work_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_group_name'),
-      Postgres.from('work_locations').select('id, work_location_code, work_location_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_location_name'),
-      Postgres.from('job_titles').select('id, job_title_code, job_title_name').eq('tenant_id', tenantId).eq('is_active', true).order('job_title_name'),
+      Postgres.from('work_groups').select('id, legacy_id, work_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_group_name'),
+      Postgres.from('work_locations').select('id, legacy_id, work_location_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_location_name'),
+      Postgres.from('job_titles').select('id, legacy_id, job_title_name').eq('tenant_id', tenantId).eq('is_active', true).order('job_title_name'),
       Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'CONTRACT_TYPE').eq('is_active', true).order('lookup_label'),
       Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'GENDER').eq('is_active', true).order('lookup_label'),
       Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'ATTENDANCE_TIMEZONE').eq('is_active', true).order('lookup_label'),
@@ -2995,10 +2995,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       if (!combinationsMap.has(comboKey)) {
         combinationsMap.set(comboKey, {
           company_id: company.id,
-          company_code: company.company_code || null,
+          company_legacy_id: company.legacy_id || null,
           company_name: company.company_name || null,
           payroll_group_id: payrollGroup?.id || null,
-          payroll_group_code: payrollGroup?.payroll_group_code || null,
+          payroll_group_legacy_id: payrollGroup?.legacy_id || null,
           payroll_group_name: payrollGroup?.payroll_group_name || null,
         });
       }
@@ -3092,13 +3092,13 @@ router.get('/holidays/location-catalogs', async (req: Request, res: Response) =>
     const [companies, workLocations, countries, statesRaw, citiesRaw, holidayTypeGroup] = await Promise.all([
       Postgres
         .from('companies')
-        .select('id, company_code, company_name')
+        .select('id, legacy_id, company_name')
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
         .order('company_name'),
       Postgres
         .from('work_locations')
-        .select('id, work_location_code, work_location_name, company_id')
+        .select('id, legacy_id, work_location_name, company_id')
         .eq('tenant_id', tenantId)
         .eq('is_active', true)
         .order('work_location_name'),

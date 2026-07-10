@@ -42,7 +42,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             id,
             profile_name,
             profile_short_name,
-            employee_profile_code,
+            legacy_id AS employee_profile_code,
             is_active
           FROM public.employee_profiles
           WHERE tenant_id = $1

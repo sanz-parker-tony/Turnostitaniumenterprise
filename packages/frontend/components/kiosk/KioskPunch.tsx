@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
 const LOCATION_CACHE_MAX_AGE_MS = 45_000;
 const LOCATION_REQUEST_TIMEOUT_MS = 6_000;
+const CLIENT_APP_INSTANCE_STORAGE_KEY = 'tt-client-app-instance-id';
 const KEY_LABEL_OVERRIDES: Record<number, string> = {
   1: 'Entrada',
   2: 'Inicio Lunch',
@@ -85,6 +86,103 @@ function getBrowserPosition(
       maximumAge: maximumAgeMs,
     });
   });
+}
+
+function getOrCreateClientAppInstanceId(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const current = window.localStorage.getItem(CLIENT_APP_INSTANCE_STORAGE_KEY);
+    if (current) return current;
+    const next =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `tt-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    window.localStorage.setItem(CLIENT_APP_INSTANCE_STORAGE_KEY, next);
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+function detectClientDeviceType(): 'mobile' | 'tablet' | 'desktop' | 'other' {
+  if (typeof navigator === 'undefined') return 'other';
+  const userAgent = navigator.userAgent || '';
+  const maxTouchPoints = Number((navigator as any).maxTouchPoints || 0);
+  const isTouch = maxTouchPoints > 1;
+  const ua = userAgent.toLowerCase();
+  if (/ipad|tablet|kindle|silk/.test(ua)) return 'tablet';
+  if (/mobi|iphone|android.*mobile|windows phone/.test(ua)) return 'mobile';
+  if (/android/.test(ua) && isTouch) return 'tablet';
+  return 'desktop';
+}
+
+function collectPunchClientMetadata() {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') {
+    return {
+      clientDeviceType: 'other',
+      clientPlatform: null,
+      clientAppInstanceId: null,
+      clientUserAgent: null,
+      clientMetadata: {},
+    };
+  }
+
+  const nav = navigator as any;
+  const screenInfo = typeof window.screen !== 'undefined' ? window.screen : null;
+  const userAgentData = nav.userAgentData || null;
+  const clientDeviceType = detectClientDeviceType();
+  const clientPlatform = userAgentData?.platform || navigator.platform || null;
+  const clientAppInstanceId = getOrCreateClientAppInstanceId();
+  const connection = nav.connection || nav.mozConnection || nav.webkitConnection || null;
+
+  return {
+    clientDeviceType,
+    clientPlatform,
+    clientAppInstanceId,
+    clientUserAgent: navigator.userAgent || null,
+    clientMetadata: {
+      app_instance_id: clientAppInstanceId,
+      device_type: clientDeviceType,
+      platform: clientPlatform,
+      user_agent: navigator.userAgent || null,
+      user_agent_brands: userAgentData?.brands || null,
+      user_agent_mobile: userAgentData?.mobile ?? null,
+      language: navigator.language || null,
+      languages: Array.isArray(navigator.languages) ? navigator.languages : null,
+      time_zone: getClientTimeZone(),
+      screen: screenInfo
+        ? {
+          width: screenInfo.width,
+          height: screenInfo.height,
+          avail_width: screenInfo.availWidth,
+          avail_height: screenInfo.availHeight,
+          color_depth: screenInfo.colorDepth,
+          pixel_depth: screenInfo.pixelDepth,
+        }
+        : null,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        device_pixel_ratio: window.devicePixelRatio || 1,
+      },
+      hardware_concurrency: nav.hardwareConcurrency || null,
+      device_memory_gb: nav.deviceMemory || null,
+      max_touch_points: nav.maxTouchPoints || 0,
+      connection: connection
+        ? {
+          effective_type: connection.effectiveType || null,
+          downlink: connection.downlink || null,
+          rtt: connection.rtt || null,
+          save_data: connection.saveData || null,
+        }
+        : null,
+      standalone_display:
+        window.matchMedia?.('(display-mode: standalone)')?.matches ||
+        Boolean(nav.standalone) ||
+        false,
+      captured_at: new Date().toISOString(),
+    },
+  };
 }
 
 function DeviceStatusIcon({
@@ -416,6 +514,7 @@ export default function KioskPunch() {
     setSavingLookupId(punchKeyLookupId);
     try {
       const clientPunchDate = new Date();
+      const clientMetadata = collectPunchClientMetadata();
       const payload = await request('/kiosk/mark/punch', {
         method: 'POST',
         body: JSON.stringify({
@@ -428,6 +527,11 @@ export default function KioskPunch() {
           latitud,
           longitud,
           location_accuracy_meters: locationAccuracyMeters,
+          client_user_agent: clientMetadata.clientUserAgent,
+          client_device_type: clientMetadata.clientDeviceType,
+          client_platform: clientMetadata.clientPlatform,
+          client_app_instance_id: clientMetadata.clientAppInstanceId,
+          client_metadata: clientMetadata.clientMetadata,
         }),
       });
       if (payload?.route_tracking) {

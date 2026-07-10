@@ -66,7 +66,7 @@ const getHolidayCatalogs = withDocs(
 
       const companiesPromise = pool.query(
         `
-          SELECT id, company_code, company_name
+          SELECT id, legacy_id AS company_code, company_name
           FROM public.companies
           WHERE tenant_id = $1::uuid
             AND is_active = true
@@ -134,7 +134,7 @@ const getHolidayCatalogs = withDocs(
           SELECT
             wl.id,
             wl.work_location_name,
-            wl.work_location_code,
+            wl.legacy_id AS work_location_code,
             wl.company_id,
             c.company_name
           FROM public.work_locations wl
@@ -276,7 +276,7 @@ const getHolidays = withDocs(
             h.id,
             h.tenant_id,
             h.company_id,
-            c.company_code,
+            c.legacy_id AS company_code,
             c.company_name,
             h.country_id,
             co.country_key,
@@ -287,7 +287,7 @@ const getHolidays = withDocs(
             h.city_id,
             ci.city_label,
             h.work_location_id,
-            wl.work_location_code,
+            wl.legacy_id AS work_location_code,
             wl.work_location_name,
             h.holiday_type_id,
             ht.lookup_key AS holiday_type_key,
@@ -375,7 +375,7 @@ const getHolidayById = withDocs(
             h.id,
             h.tenant_id,
             h.company_id,
-            c.company_code,
+            c.legacy_id AS company_code,
             c.company_name,
             h.country_id,
             co.country_key,
@@ -386,7 +386,7 @@ const getHolidayById = withDocs(
             h.city_id,
             ci.city_label,
             h.work_location_id,
-            wl.work_location_code,
+            wl.legacy_id AS work_location_code,
             wl.work_location_name,
             h.holiday_type_id,
             ht.lookup_key AS holiday_type_key,

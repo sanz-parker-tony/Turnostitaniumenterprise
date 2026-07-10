@@ -107,15 +107,15 @@ export async function fetchOrganizationCatalogs(tenantId: string): Promise<Organ
     contractTypeRes,
     genderRes,
   ] = await Promise.all([
-    ApiClient.from('companies').select('id, company_code, company_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('payroll_groups').select('id, payroll_group_code, payroll_group_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('departments').select('id, department_code, department_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('areas').select('id, area_code, area_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('cost_centers').select('id, cost_center_code, cost_center_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('job_titles').select('id, job_title_code, job_title_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('work_groups').select('id, work_group_code, work_group_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('work_locations').select('id, work_location_code, work_location_name').eq('tenant_id', tenantId).eq('is_active', true),
-    ApiClient.from('employee_profiles').select('id, employee_profile_code, profile_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('companies').select('id, legacy_id, company_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('payroll_groups').select('id, legacy_id, payroll_group_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('departments').select('id, legacy_id, department_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('areas').select('id, legacy_id, area_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('cost_centers').select('id, legacy_id, cost_center_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('job_titles').select('id, legacy_id, job_title_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('work_groups').select('id, legacy_id, work_group_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('work_locations').select('id, legacy_id, work_location_name').eq('tenant_id', tenantId).eq('is_active', true),
+    ApiClient.from('employee_profiles').select('id, legacy_id, profile_name').eq('tenant_id', tenantId).eq('is_active', true),
     ApiClient
       .from('lookup_values')
       .select('id, lookup_key, lookup_label, lookup_groups!inner(lookup_group_key)')
@@ -129,15 +129,15 @@ export async function fetchOrganizationCatalogs(tenantId: string): Promise<Organ
   ]);
 
   return {
-    companies: mapCatalog(companiesRes.data as any[] | null, 'company_code', 'company_name'),
-    payrollGroups: mapCatalog(payrollRes.data as any[] | null, 'payroll_group_code', 'payroll_group_name'),
-    departments: mapCatalog(deptRes.data as any[] | null, 'department_code', 'department_name'),
-    areas: mapCatalog(areaRes.data as any[] | null, 'area_code', 'area_name'),
-    costCenters: mapCatalog(ccRes.data as any[] | null, 'cost_center_code', 'cost_center_name'),
-    jobTitles: mapCatalog(jobRes.data as any[] | null, 'job_title_code', 'job_title_name'),
-    workGroups: mapCatalog(workGroupRes.data as any[] | null, 'work_group_code', 'work_group_name'),
-    workLocations: mapCatalog(workLocationRes.data as any[] | null, 'work_location_code', 'work_location_name'),
-    employeeProfiles: mapCatalog(profileRes.data as any[] | null, 'employee_profile_code', 'profile_name'),
+    companies: mapCatalog(companiesRes.data as any[] | null, 'legacy_id', 'company_name'),
+    payrollGroups: mapCatalog(payrollRes.data as any[] | null, 'legacy_id', 'payroll_group_name'),
+    departments: mapCatalog(deptRes.data as any[] | null, 'legacy_id', 'department_name'),
+    areas: mapCatalog(areaRes.data as any[] | null, 'legacy_id', 'area_name'),
+    costCenters: mapCatalog(ccRes.data as any[] | null, 'legacy_id', 'cost_center_name'),
+    jobTitles: mapCatalog(jobRes.data as any[] | null, 'legacy_id', 'job_title_name'),
+    workGroups: mapCatalog(workGroupRes.data as any[] | null, 'legacy_id', 'work_group_name'),
+    workLocations: mapCatalog(workLocationRes.data as any[] | null, 'legacy_id', 'work_location_name'),
+    employeeProfiles: mapCatalog(profileRes.data as any[] | null, 'legacy_id', 'profile_name'),
     contractTypes: mapCatalog(contractTypeRes.data as any[] | null, 'lookup_key', 'lookup_label'),
     genders: mapCatalog(genderRes.data as any[] | null, 'lookup_key', 'lookup_label'),
   };
