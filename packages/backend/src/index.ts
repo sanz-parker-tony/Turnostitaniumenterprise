@@ -282,21 +282,39 @@ router.get('/users/profile', requireAuth, async (req: Request, res: Response) =>
 router.post('/users/change-password', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const body = req.body;
-    const { newPassword } = body;
+    const { currentPassword, newPassword, confirmPassword } = req.body || {};
 
-    if (!newPassword || newPassword.length < 8) {
-      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: 'La contraseña actual, la nueva contraseña y su confirmación son obligatorias.',
+      });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+    }
+    if (String(newPassword) !== String(confirmPassword)) {
+      return res.status(400).json({ error: 'La nueva contraseña y su confirmación no coinciden.' });
+    }
+    if (String(currentPassword) === String(newPassword)) {
+      return res.status(400).json({ error: 'La nueva contraseña debe ser diferente de la actual.' });
+    }
+
+    const { data: currentCredentials, error: credentialsError } = await authLogin(
+      String(user.email),
+      String(currentPassword)
+    );
+    if (credentialsError || !currentCredentials?.user || currentCredentials.user.id !== user.id) {
+      return res.status(400).json({ error: 'La contraseña actual es incorrecta.' });
     }
 
     const Postgres = getPostgresClient();
 
     const { error: updateError } = await Postgres.auth.admin.updateUserById(user.id, {
-      password: newPassword,
+      password: String(newPassword),
     });
 
     if (updateError) {
-      return res.status(500).json({ error: 'Error updating password' });
+      return res.status(500).json({ error: 'No se pudo actualizar la contraseña.' });
     }
 
     await Postgres
@@ -304,9 +322,9 @@ router.post('/users/change-password', requireAuth, async (req: Request, res: Res
       .update({ must_change_password: false })
       .eq('auth_user_id', user.id);
 
-    return res.json({ success: true });
-  } catch (error) {
-    return res.status(500).json({ error: 'Internal server error' });
+    return res.json({ success: true, message: 'Contraseña actualizada correctamente.' });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Error interno al cambiar la contraseña.' });
   }
 });
 
@@ -4678,6 +4696,91 @@ router.post('/auth/login', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * @openapi
+ * /auth/change-password:
+ *   post:
+ *     tags:
+ *       - Auth
+ *     summary: Cambia la contraseña desde la interfaz de login
+ *     description: Verifica el usuario y la contraseña actual antes de guardar la nueva contraseña.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [loginId, currentPassword, newPassword, confirmPassword]
+ *             properties:
+ *               loginId:
+ *                 type: string
+ *                 description: Usuario o correo del usuario.
+ *               currentPassword:
+ *                 type: string
+ *                 format: password
+ *               newPassword:
+ *                 type: string
+ *                 format: password
+ *                 minLength: 8
+ *               confirmPassword:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200:
+ *         description: Contraseña actualizada correctamente.
+ *       400:
+ *         description: Solicitud inválida o confirmación incorrecta.
+ *       401:
+ *         description: Usuario o contraseña actual incorrectos.
+ */
+router.post('/auth/change-password', async (req: Request, res: Response) => {
+  try {
+    const { loginId, currentPassword, newPassword, confirmPassword } = req.body || {};
+    const normalizedLoginId = String(loginId || '').trim();
+
+    if (!normalizedLoginId || !currentPassword || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        error: 'El usuario, la contraseña actual, la nueva contraseña y su confirmación son obligatorios.',
+      });
+    }
+    if (String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+    }
+    if (String(newPassword) !== String(confirmPassword)) {
+      return res.status(400).json({ error: 'La nueva contraseña y su confirmación no coinciden.' });
+    }
+    if (String(currentPassword) === String(newPassword)) {
+      return res.status(400).json({ error: 'La nueva contraseña debe ser diferente de la actual.' });
+    }
+
+    const { data: currentCredentials, error: credentialsError } = await authLogin(
+      normalizedLoginId,
+      String(currentPassword)
+    );
+    if (credentialsError || !currentCredentials?.user?.id) {
+      return res.status(401).json({ error: 'Usuario o contraseña actual incorrectos.' });
+    }
+
+    const Postgres = getPostgresClient();
+    const { error: updateError } = await Postgres.auth.admin.updateUserById(
+      currentCredentials.user.id,
+      { password: String(newPassword) }
+    );
+    if (updateError) {
+      return res.status(500).json({ error: 'No se pudo actualizar la contraseña.' });
+    }
+
+    await Postgres
+      .from('users')
+      .update({ must_change_password: false })
+      .eq('auth_user_id', currentCredentials.user.id);
+
+    return res.json({ success: true, message: 'Contraseña actualizada correctamente.' });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Error interno al cambiar la contraseña.' });
+  }
+});
+
 router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
   const user = (req as any).user;
   return res.json({
@@ -5096,7 +5199,7 @@ router.use('/actions', requireAuth, actionsRouter);
 router.use('/actions-management', requireAuth, actionsRouter); // Legacy alias
 
 // Attendance Events
-router.use('/attendance-events', attendanceRouter);
+router.use('/attendance-events', requireAuth, attendanceRouter);
 
 // Holidays
 router.use('/holidays', requireAuth, holidaysRouter);

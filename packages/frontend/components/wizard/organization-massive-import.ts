@@ -190,9 +190,33 @@ export type ImportCapabilities = {
 
 export type ReverseImportResponse = {
   success: boolean;
+  already_reversed?: boolean;
   summary: Record<string, number>;
   events: ImportLogEvent[];
   started_at: string;
+};
+
+export type MassImportRunStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'aborted'
+  | 'reversing'
+  | 'reversed';
+
+export type MassImportRun = {
+  id: string;
+  fileName: string;
+  status: MassImportRunStatus;
+  importStartedAt: string;
+  completedAt: string | null;
+  reversedAt: string | null;
+  importSummary: Record<string, any>;
+  reversalSummary: Record<string, any>;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string | null;
 };
 
 export type WorkbookTabStat = {
@@ -1130,6 +1154,39 @@ async function postWithAuth<T>(path: string, body: any, signal?: AbortSignal): P
   return payload as T;
 }
 
+async function jsonWithAuth<T>(path: string, method: 'GET' | 'PATCH', body?: any): Promise<T> {
+  const token = await getAccessToken();
+  const response = await fetch(buildApiUrl(path), {
+    method,
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      Authorization: `Bearer ${token}`,
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error || payload?.message || `Error HTTP ${response.status}`);
+  }
+  return payload as T;
+}
+
+function mapMassImportRun(row: any): MassImportRun {
+  return {
+    id: String(row?.id || ''),
+    fileName: String(row?.file_name || 'workbook.xlsx'),
+    status: (row?.status || 'pending') as MassImportRunStatus,
+    importStartedAt: String(row?.import_started_at || row?.created_at || ''),
+    completedAt: row?.completed_at || null,
+    reversedAt: row?.reversed_at || null,
+    importSummary: row?.import_summary || {},
+    reversalSummary: row?.reversal_summary || {},
+    errorMessage: row?.error_message || null,
+    createdAt: String(row?.created_at || row?.import_started_at || ''),
+    updatedAt: row?.updated_at || null,
+  };
+}
+
 function getFileNameFromDisposition(headerValue: string | null): string | null {
   if (!headerValue) return null;
   const utfMatch = headerValue.match(/filename\*=UTF-8''([^;]+)/i);
@@ -1207,14 +1264,61 @@ export async function getMassImportCapabilities(): Promise<ImportCapabilities> {
   return payload?.capabilities || { can_import: false, can_abort: false, can_reverse: false };
 }
 
-export async function runReverseMassiveImport(payload: {
+export async function listMassImportRuns(limit = 50): Promise<MassImportRun[]> {
+  const payload = await jsonWithAuth<{ success: boolean; runs: any[] }>(
+    `/organization/mass-import/runs?limit=${encodeURIComponent(String(limit))}`,
+    'GET'
+  );
+  return (payload.runs || []).map(mapMassImportRun);
+}
+
+export async function createMassImportRun(payload: {
+  fileName: string;
+  importStartedAt: string;
   structureRows: StructureImportRow[];
   employeeRows: EmployeeImportRow[];
+}): Promise<MassImportRun> {
+  const response = await postWithAuth<{ success: boolean; run: any }>('/organization/mass-import/runs', {
+    file_name: payload.fileName,
+    import_started_at: payload.importStartedAt,
+    structure_rows: payload.structureRows,
+    employee_rows: payload.employeeRows,
+  });
+  return mapMassImportRun(response.run);
+}
+
+export async function updateMassImportRun(
+  runId: string,
+  patch: {
+    status?: 'running' | 'completed' | 'failed' | 'aborted';
+    stagedAssignments?: StagedAssignment[];
+    importSummary?: Record<string, any>;
+    errorMessage?: string | null;
+  }
+): Promise<MassImportRun> {
+  const response = await jsonWithAuth<{ success: boolean; run: any }>(
+    `/organization/mass-import/runs/${encodeURIComponent(runId)}`,
+    'PATCH',
+    {
+      status: patch.status,
+      staged_assignments: patch.stagedAssignments,
+      import_summary: patch.importSummary,
+      error_message: patch.errorMessage,
+    }
+  );
+  return mapMassImportRun(response.run);
+}
+
+export async function runReverseMassiveImport(payload: {
+  importRunId?: string;
+  structureRows?: StructureImportRow[];
+  employeeRows?: EmployeeImportRow[];
   importStartedAt?: string | null;
 }): Promise<ReverseImportResponse> {
   return postWithAuth<ReverseImportResponse>('/organization/mass-import/reverse', {
-    structure_rows: payload.structureRows,
-    employee_rows: payload.employeeRows,
+    import_run_id: payload.importRunId || null,
+    structure_rows: payload.structureRows || [],
+    employee_rows: payload.employeeRows || [],
     import_started_at: payload.importStartedAt || null,
   });
 }

@@ -5,10 +5,11 @@
 
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { Mail, Lock, Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, AlertCircle, KeyRound, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
 import AdminPasswordReset from './AdminPasswordReset';
+import ChangePasswordModal from './ChangePasswordModal';
 
 export default function Login() {
   const { signIn, authStatusMessage } = useAuth();
@@ -17,6 +18,7 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,7 +167,15 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-4 text-center">
+          <div className="mt-4 flex flex-col items-center gap-2 text-center">
+            <button
+              type="button"
+              onClick={() => setChangePasswordOpen(true)}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              <KeyRound className="h-4 w-4" />
+              Cambiar mi contraseña
+            </button>
             <AdminPasswordReset />
           </div>
         </div>
@@ -175,6 +185,13 @@ export default function Login() {
           <p className="mt-1">2025 Titanium Labs Corp. Todos los derechos reservados.</p>
         </div>
       </div>
+
+      <ChangePasswordModal
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        mode="login"
+        initialLoginId={loginId}
+      />
     </div>
   );
 }

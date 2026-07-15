@@ -78,24 +78,23 @@ function shouldRestrictByEmployeeScope(roleKeys: string[]): boolean {
   return roleKeys.some((roleKey) => restrictedRoles.has(roleKey)) && !roleKeys.includes('TENANT_ADMIN');
 }
 
-async function resolveAssignedEmployeeIds(tenantId: string, userId: string | null): Promise<string[]> {
+async function resolveAuthorizedEmployeeIds(tenantId: string, userId: string | null): Promise<string[]> {
   if (!userId) return [];
 
   const result = await pool.query(
     `
-      SELECT DISTINCT ura.employee_id::text AS employee_id
+      SELECT DISTINCT scope.employee_id::text AS employee_id
       FROM public.user_roles ur
       INNER JOIN public.roles r
         ON r.id = ur.role_id
        AND r.tenant_id = ur.tenant_id
        AND r.is_active = true
-      INNER JOIN public.user_role_employee_assignments ura
-        ON ura.tenant_id = ur.tenant_id
-       AND ura.user_role_id = ur.id
-       AND ura.is_active = true
+      INNER JOIN public.v_user_role_authorized_employees scope
+        ON scope.tenant_id = ur.tenant_id
+       AND scope.user_role_id = ur.id
       INNER JOIN public.employees e
-        ON e.id = ura.employee_id
-       AND e.tenant_id = ura.tenant_id
+        ON e.id = scope.employee_id
+       AND e.tenant_id = scope.tenant_id
        AND e.is_active = true
       WHERE ur.tenant_id = $1
         AND ur.user_id = $2
@@ -177,31 +176,32 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     const accessibleAssignmentsSql = restrictByEmployeeScope
       ? `
           SELECT
-            ec.tenant_id,
-            ec.employee_id,
-            ec.company_id,
-            ec.work_location_id,
-            ec.department_id,
-            ec.area_id,
-            ec.work_group_id,
-            ec.employee_profile_id,
-            ec.work_on_holidays
+            scope.tenant_id,
+            scope.employee_id,
+            scope.company_id,
+            scope.work_location_id,
+            scope.department_id,
+            scope.area_id,
+            scope.work_group_id,
+            scope.employee_profile_id,
+            COALESCE(ec.work_on_holidays, false) AS work_on_holidays,
+            ec.created_at AS assignment_created_at
           FROM public.user_roles ur
           INNER JOIN public.roles r
             ON r.id = ur.role_id
            AND r.tenant_id = ur.tenant_id
            AND r.is_active = true
-          INNER JOIN public.user_role_employee_assignments ura
-            ON ura.tenant_id = ur.tenant_id
-           AND ura.user_role_id = ur.id
-           AND ura.is_active = true
-          INNER JOIN public.employee_companies ec
-            ON ec.tenant_id = ura.tenant_id
-           AND ec.employee_id = ura.employee_id
+          INNER JOIN public.v_user_role_authorized_employees scope
+            ON scope.tenant_id = ur.tenant_id
+           AND scope.user_role_id = ur.id
+          LEFT JOIN public.employee_companies ec
+            ON ec.tenant_id = scope.tenant_id
+           AND ec.employee_id = scope.employee_id
+           AND ec.company_id = scope.company_id
            AND ec.is_active = true
           INNER JOIN public.employees e
-            ON e.id = ura.employee_id
-           AND e.tenant_id = ura.tenant_id
+            ON e.id = scope.employee_id
+           AND e.tenant_id = scope.tenant_id
            AND e.is_active = true
           WHERE ur.tenant_id = $1
             AND ur.user_id = $2
@@ -220,7 +220,8 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             ec.area_id,
             ec.work_group_id,
             ec.employee_profile_id,
-            ec.work_on_holidays
+            ec.work_on_holidays,
+            ec.created_at AS assignment_created_at
           FROM public.employee_companies ec
           INNER JOIN public.employees e
             ON e.id = ec.employee_id
@@ -273,7 +274,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             ON wg.id = aa.work_group_id
           WHERE e.tenant_id = $1
             AND e.is_active = true
-          ORDER BY e.id, e.employee_lastname ASC, e.employee_name ASC
+          ORDER BY e.id, aa.assignment_created_at DESC NULLS LAST, e.employee_lastname ASC, e.employee_name ASC
         `,
         assignmentParams
       ),
@@ -437,9 +438,9 @@ router.get('/plans', async (req: Request, res: Response) => {
     const userId = await resolveInternalUserId(req, tenantId);
     const roleKeys = await resolveUserRoleKeys(tenantId, userId);
     const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
-    const assignedEmployeeIds = restrictByEmployeeScope ? await resolveAssignedEmployeeIds(tenantId, userId) : [];
+    const authorizedEmployeeIds = restrictByEmployeeScope ? await resolveAuthorizedEmployeeIds(tenantId, userId) : [];
 
-    if (restrictByEmployeeScope && assignedEmployeeIds.length === 0) {
+    if (restrictByEmployeeScope && authorizedEmployeeIds.length === 0) {
       return res.status(200).json({
         success: true,
         tenant_id: tenantId,
@@ -451,7 +452,7 @@ router.get('/plans', async (req: Request, res: Response) => {
 
     const params: any[] = [tenantId, dateFrom, dateTo];
     const employeeScopeSql = restrictByEmployeeScope ? `AND p.employee_id = ANY($4::uuid[])` : '';
-    if (restrictByEmployeeScope) params.push(assignedEmployeeIds);
+    if (restrictByEmployeeScope) params.push(authorizedEmployeeIds);
 
     const plansResult = await pool.query(
       `
@@ -505,8 +506,8 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
     const userId = await resolveInternalUserId(req, tenantId);
     const roleKeys = await resolveUserRoleKeys(tenantId, userId);
     const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
-    const assignedEmployeeIds = restrictByEmployeeScope ? await resolveAssignedEmployeeIds(tenantId, userId) : [];
-    const assignedEmployeeIdSet = new Set(assignedEmployeeIds);
+    const authorizedEmployeeIds = restrictByEmployeeScope ? await resolveAuthorizedEmployeeIds(tenantId, userId) : [];
+    const authorizedEmployeeIdSet = new Set(authorizedEmployeeIds);
 
     const shiftsResult = await client.query(
       `
@@ -618,8 +619,8 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         throw new Error(`No se pueden modificar turnos con fecha anterior a la fecha actual (${shiftDate})`);
       }
 
-      if (restrictByEmployeeScope && !assignedEmployeeIdSet.has(employeeId)) {
-        throw new Error(`El empleado ${employeeId} no está asignado al usuario autenticado`);
+      if (restrictByEmployeeScope && !authorizedEmployeeIdSet.has(employeeId)) {
+        throw new Error(`El empleado ${employeeId} no está autorizado para el usuario autenticado`);
       }
 
       let companyId =

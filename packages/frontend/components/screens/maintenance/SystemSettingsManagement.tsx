@@ -11,7 +11,7 @@
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Plus, Edit2, Check, Power, PowerOff, Search, Filter, X } from 'lucide-react';
+import { AlertCircle, Plus, Edit2, Check, Power, PowerOff, Search, Filter, X, RotateCcw, Building2, Users, UserRound, Layers } from 'lucide-react';
 import { publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
 import GridActionIconButton from '@/components/shared/GridActionIconButton';
@@ -59,13 +59,15 @@ interface LookupItemPreview {
   is_active?: boolean;
 }
 
-type SourceLevel = 'PROFILE' | 'COMPANY' | 'TENANT' | 'SYSTEM';
+type SourceLevel = 'EMPLOYEE' | 'PROFILE' | 'COMPANY' | 'TENANT' | 'SYSTEM';
+type OverrideLevel = 'TENANT' | 'COMPANY' | 'PROFILE' | 'EMPLOYEE';
 
 interface EffectiveSetting {
   system_setting_id: string;
   setting_key: string;
   setting_name: string;
   setting_short_key: string;
+  is_active: boolean;
   value_type_id: string | null;
   value_type_key: string | null;
   allowed_lookup_group_id?: string | null;
@@ -75,6 +77,20 @@ interface EffectiveSetting {
   effective_value: string | null;
   local_value: string | null;
   source_level: SourceLevel;
+}
+
+interface OverrideContext {
+  tenant: { id: string; tenant_key: string; tenant_name: string } | null;
+  companies: Array<{ id: string; company_name: string; company_short_name: string }>;
+  employee_profiles: Array<{ id: string; profile_name: string; profile_short_name: string }>;
+  employees: Array<{
+    id: string;
+    employee_code: string;
+    employee_name: string;
+    employee_lastname: string;
+    company_id: string | null;
+    employee_profile_id: string | null;
+  }>;
 }
 
 interface FormData {
@@ -88,8 +104,6 @@ interface FormData {
   is_active: boolean;
 }
 
-const DATA_TYPE_GROUP_ID = 'c4563361-5cf8-4333-c7d1-0868f75e6c2d';
-
 export function SystemSettingsManagement() {
   const { profile } = useAuth();
   const isSystemAdmin = String(profile?.role_key || '').trim().toUpperCase() === 'SYSTEM_ADMIN';
@@ -99,6 +113,11 @@ export function SystemSettingsManagement() {
   const [effectiveSettings, setEffectiveSettings] = useState<EffectiveSetting[]>([]);
   const [valueTypes, setValueTypes] = useState<LookupValue[]>([]);
   const [lookupGroups, setLookupGroups] = useState<LookupGroup[]>([]);
+  const [overrideContext, setOverrideContext] = useState<OverrideContext | null>(null);
+  const [overrideLevel, setOverrideLevel] = useState<OverrideLevel>('TENANT');
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [selectedProfileId, setSelectedProfileId] = useState('');
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -137,6 +156,15 @@ export function SystemSettingsManagement() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.tenant_id, profile?.role_key]);
 
+  useEffect(() => {
+    if (isSystemAdmin || !tenantId || !overrideContext) return;
+    loadEffectiveSettings().catch((err) => {
+      console.error('[SYSTEM-SETTINGS] Error recargando jerarquía:', err);
+      setError(err.message || 'Error cargando valores efectivos');
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overrideLevel, selectedCompanyId, selectedProfileId, selectedEmployeeId, overrideContext]);
+
   const authHeaders = () => {
     const token = localStorage.getItem('tt-access-token');
     return {
@@ -152,7 +180,7 @@ export function SystemSettingsManagement() {
       if (isSystemAdmin) {
         await Promise.all([loadSettings(), loadValueTypes(), loadLookupGroups()]);
       } else {
-        await Promise.all([loadEffectiveSettings(), loadValueTypes()]);
+        await Promise.all([loadEffectiveSettings(), loadValueTypes(), loadOverrideContext()]);
       }
     } catch (err: any) {
       console.error('[SYSTEM-SETTINGS] Error en carga inicial:', err);
@@ -180,7 +208,22 @@ export function SystemSettingsManagement() {
   const loadEffectiveSettings = async () => {
     if (!tenantId) throw new Error('No se pudo identificar el tenant del usuario');
 
-    const response = await fetch(buildApiUrl(`/settings/all-effective?tenant_id=${tenantId}`), {
+    const query = new URLSearchParams({ tenant_id: tenantId });
+    if (overrideLevel === 'COMPANY' && selectedCompanyId) {
+      query.set('company_id', selectedCompanyId);
+    }
+    if (overrideLevel === 'PROFILE' && selectedProfileId) {
+      if (selectedCompanyId) query.set('company_id', selectedCompanyId);
+      query.set('profile_id', selectedProfileId);
+    }
+    if (overrideLevel === 'EMPLOYEE' && selectedEmployeeId) {
+      const employee = overrideContext?.employees.find(item => item.id === selectedEmployeeId);
+      if (employee?.company_id) query.set('company_id', employee.company_id);
+      if (employee?.employee_profile_id) query.set('profile_id', employee.employee_profile_id);
+      query.set('employee_id', selectedEmployeeId);
+    }
+
+    const response = await fetch(buildApiUrl(`/settings/all-effective?${query.toString()}`), {
       headers: authHeaders(),
     });
 
@@ -189,9 +232,25 @@ export function SystemSettingsManagement() {
     setEffectiveSettings(Array.isArray(data.effective_settings) ? data.effective_settings : []);
   };
 
+  const loadOverrideContext = async () => {
+    const response = await fetch(buildApiUrl('/settings/override-context'), { headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Error cargando niveles de parámetros');
+    const context: OverrideContext = {
+      tenant: data.tenant || null,
+      companies: Array.isArray(data.companies) ? data.companies : [],
+      employee_profiles: Array.isArray(data.employee_profiles) ? data.employee_profiles : [],
+      employees: Array.isArray(data.employees) ? data.employees : [],
+    };
+    setOverrideContext(context);
+    setSelectedCompanyId(current => current || context.companies[0]?.id || '');
+    setSelectedProfileId(current => current || context.employee_profiles[0]?.id || '');
+    setSelectedEmployeeId(current => current || context.employees[0]?.id || '');
+  };
+
   const loadValueTypes = async () => {
     const response = await fetch(
-      buildApiUrl(`/settings/lookup-values/setting-data-types?lookup_group_id=${DATA_TYPE_GROUP_ID}`),
+      buildApiUrl('/settings/lookup-values/setting-data-types'),
       { headers: authHeaders() }
     );
 
@@ -348,6 +407,13 @@ export function SystemSettingsManagement() {
   const resolveEffectiveTypeKey = (setting: EffectiveSetting): string | null =>
     valueTypeById.get(setting.value_type_id || '')?.lookup_key || setting.value_type_key || null;
 
+  const activeOverrideEndpoint = () => {
+    if (overrideLevel === 'TENANT') return tenantId ? `/settings/tenants/${tenantId}/settings-overrides` : null;
+    if (overrideLevel === 'COMPANY') return selectedCompanyId ? `/settings/companies/${selectedCompanyId}/settings-overrides` : null;
+    if (overrideLevel === 'PROFILE') return selectedProfileId ? `/settings/employee-profiles/${selectedProfileId}/settings-overrides` : null;
+    return selectedEmployeeId ? `/settings/employees/${selectedEmployeeId}/settings-overrides` : null;
+  };
+
   const loadInlineLookupOptions = async (groupId: string) => {
     setInlineLookupLoading(true);
     try {
@@ -371,7 +437,7 @@ export function SystemSettingsManagement() {
   const startInlineEdit = async (s: EffectiveSetting) => {
     const typeKey = resolveEffectiveTypeKey(s);
     setInlineEditingId(s.system_setting_id);
-    setInlineValue((s.source_level === 'TENANT' ? s.local_value : s.effective_value) ?? '');
+    setInlineValue((s.source_level === overrideLevel ? s.local_value : s.effective_value) ?? '');
     if (isLookupType(typeKey) && s.allowed_lookup_group_id) {
       await loadInlineLookupOptions(String(s.allowed_lookup_group_id));
     } else {
@@ -381,8 +447,9 @@ export function SystemSettingsManagement() {
   };
 
   const saveInlineEdit = async (s: EffectiveSetting) => {
-    if (!tenantId) {
-      alert('No se pudo identificar el tenant');
+    const endpoint = activeOverrideEndpoint();
+    if (!endpoint) {
+      alert('Debe seleccionar el nivel donde guardará el valor');
       return;
     }
 
@@ -401,13 +468,13 @@ export function SystemSettingsManagement() {
 
     setInlineSaving(true);
     try {
-      const response = await fetch(buildApiUrl(`/settings/tenants/${tenantId}/settings-overrides`), {
+      const response = await fetch(buildApiUrl(endpoint), {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({
           system_setting_id: s.system_setting_id,
           setting_value: nextValue,
-          created_by: profile?.email || profile?.username || 'ADMIN',
+          company_id: overrideLevel === 'PROFILE' ? selectedCompanyId || null : undefined,
         }),
       });
 
@@ -419,15 +486,33 @@ export function SystemSettingsManagement() {
       setInlineValue('');
       setInlineLookupOptions([]);
     } catch (err: any) {
-      console.error('[SYSTEM-SETTINGS] Error guardando override tenant:', err);
-      alert(err.message || 'Error guardando override tenant');
+      console.error('[SYSTEM-SETTINGS] Error guardando override:', err);
+      alert(err.message || 'Error guardando override');
     } finally {
       setInlineSaving(false);
     }
   };
 
+  const restoreInheritance = async (s: EffectiveSetting) => {
+    const endpoint = activeOverrideEndpoint();
+    if (!endpoint || s.source_level !== overrideLevel) return;
+    if (!confirm(`¿Restablecer la herencia de ${s.setting_key} en el nivel ${overrideLevel.toLowerCase()}?`)) return;
+    try {
+      const response = await fetch(buildApiUrl(`${endpoint}/${s.system_setting_id}`), {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Error restableciendo herencia');
+      await loadEffectiveSettings();
+    } catch (err: any) {
+      alert(err.message || 'Error restableciendo herencia');
+    }
+  };
+
   const sourceLabel = (source: SourceLevel) => {
     switch (source) {
+      case 'EMPLOYEE': return 'employee';
       case 'PROFILE': return 'employee_profile';
       case 'COMPANY': return 'company';
       case 'TENANT': return 'tenant';
@@ -545,12 +630,17 @@ export function SystemSettingsManagement() {
       setting.setting_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       setting.setting_short_key.toLowerCase().includes(searchTerm.toLowerCase());
 
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && setting.is_active) ||
+      (statusFilter === 'inactive' && !setting.is_active);
+
     const matchesValueType =
       valueTypeFilter === 'all' ||
       setting.value_type_id === valueTypeFilter;
 
-    return matchesSearch && matchesValueType;
-  }), [effectiveSettings, searchTerm, valueTypeFilter]);
+    return matchesSearch && matchesStatus && matchesValueType;
+  }), [effectiveSettings, searchTerm, statusFilter, valueTypeFilter]);
 
   if (loading && settings.length === 0 && effectiveSettings.length === 0) {
     return (
@@ -582,20 +672,28 @@ export function SystemSettingsManagement() {
 
   const listCount = isSystemAdmin ? filteredSettings.length : filteredEffective.length;
   const totalCount = isSystemAdmin ? settings.length : effectiveSettings.length;
+  const overrideLevelOptions: Array<{ key: OverrideLevel; label: string; icon: any }> = [
+    { key: 'TENANT', label: 'Tenant', icon: Layers },
+    { key: 'COMPANY', label: 'Empresa', icon: Building2 },
+    { key: 'PROFILE', label: 'Perfil de empleado', icon: Users },
+    { key: 'EMPLOYEE', label: 'Empleado', icon: UserRound },
+  ];
 
   return (
     <div className="p-6 max-w-full space-y-6">
       <SystemAdminPageHeader
         icon={Edit2}
-        title="Parametros del Sistema"
-        subtitle="Gestion de configuraciones y parametros del sistema"
+        title={isSystemAdmin ? 'Parámetros del Sistema' : 'Parámetros de Configuración'}
+        subtitle={isSystemAdmin
+          ? 'Catálogo maestro y valores predeterminados del sistema'
+          : 'Sobrescribe únicamente el valor del parámetro en el nivel seleccionado'}
         rightSlot={isSystemAdmin ? (
           <>
             <HeaderInfoTips
               items={[
                 {
                   title: 'Herencia de valores',
-                  text: 'La prioridad de valores es: system -> tenant -> company -> employee_profile.',
+                  text: 'La prioridad de valores es: system -> tenant -> company -> employee_profile -> employee.',
                 },
                 {
                   title: 'Catalogos',
@@ -613,6 +711,96 @@ export function SystemSettingsManagement() {
           </>
         ) : null}
       />
+
+      {!isSystemAdmin && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
+          <div>
+            <div className="text-sm font-semibold text-gray-900">Nivel del override</div>
+            <div className="text-xs text-gray-500 mt-1">
+              Prioridad efectiva: Empleado → Perfil → Empresa → Tenant → Sistema. Solo se modifica el valor.
+            </div>
+          </div>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {overrideLevelOptions.map(option => {
+              const Icon = option.icon;
+              const active = overrideLevel === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => {
+                    setInlineEditingId(null);
+                    setOverrideLevel(option.key);
+                  }}
+                  className={`flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                    active ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {overrideLevel === 'TENANT' && (
+            <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 text-sm text-slate-700">
+              Tenant: <strong>{overrideContext?.tenant?.tenant_name || profile?.tenant_name || tenantId}</strong>
+            </div>
+          )}
+
+          {(overrideLevel === 'COMPANY' || overrideLevel === 'PROFILE') && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Empresa</label>
+                <select
+                  value={selectedCompanyId}
+                  onChange={event => setSelectedCompanyId(event.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value="">Seleccione empresa</option>
+                  {(overrideContext?.companies || []).map(company => (
+                    <option key={company.id} value={company.id}>{company.company_name}</option>
+                  ))}
+                </select>
+              </div>
+              {overrideLevel === 'PROFILE' && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Perfil de empleado</label>
+                  <select
+                    value={selectedProfileId}
+                    onChange={event => setSelectedProfileId(event.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  >
+                    <option value="">Seleccione perfil</option>
+                    {(overrideContext?.employee_profiles || []).map(item => (
+                      <option key={item.id} value={item.id}>{item.profile_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
+          {overrideLevel === 'EMPLOYEE' && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Empleado</label>
+              <select
+                value={selectedEmployeeId}
+                onChange={event => setSelectedEmployeeId(event.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+              >
+                <option value="">Seleccione empleado</option>
+                {(overrideContext?.employees || []).map(employee => (
+                  <option key={employee.id} value={employee.id}>
+                    {employee.employee_lastname} {employee.employee_name} ({employee.employee_code})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-lg border border-gray-200 p-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -633,8 +821,7 @@ export function SystemSettingsManagement() {
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
-              disabled={!isSystemAdmin}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="all">Todos los estados</option>
               <option value="active">Activos</option>
@@ -745,7 +932,14 @@ export function SystemSettingsManagement() {
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">{s.setting_name}</div>
+                      <div className="flex items-center gap-2 text-sm text-gray-900">
+                        <span>{s.setting_name}</span>
+                        {!s.is_active && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                            Inactivo
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
@@ -793,13 +987,24 @@ export function SystemSettingsManagement() {
                       <div className="text-sm text-gray-900">{s.default_value ?? '—'}</div>
                     </td>
                     <td className="px-6 py-4 text-right text-sm font-medium">
-                      <GridActionIconButton
-                        onClick={() => inlineEditingId === s.system_setting_id ? saveInlineEdit(s) : startInlineEdit(s)}
-                        icon={inlineEditingId === s.system_setting_id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
-                        label={inlineEditingId === s.system_setting_id ? 'Grabar valor' : 'Editar valor del tenant'}
-                        disabled={inlineSaving}
-                        tone={inlineEditingId === s.system_setting_id ? 'green' : 'blue'}
-                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <GridActionIconButton
+                          onClick={() => inlineEditingId === s.system_setting_id ? saveInlineEdit(s) : startInlineEdit(s)}
+                          icon={inlineEditingId === s.system_setting_id ? <Check className="h-4 w-4" /> : <Edit2 className="h-4 w-4" />}
+                          label={inlineEditingId === s.system_setting_id ? 'Grabar valor' : `Editar valor de ${overrideLevel.toLowerCase()}`}
+                          disabled={inlineSaving || !s.is_active || !activeOverrideEndpoint()}
+                          tone={inlineEditingId === s.system_setting_id ? 'green' : 'blue'}
+                        />
+                        {s.source_level === overrideLevel && (
+                          <GridActionIconButton
+                            onClick={() => restoreInheritance(s)}
+                            icon={<RotateCcw className="h-4 w-4" />}
+                            label="Restablecer herencia"
+                            disabled={inlineSaving}
+                            tone="amber"
+                          />
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))

@@ -102,6 +102,13 @@ type DayCellChange = {
 type ViewMode = 'employees' | 'shifts';
 type ShiftKind = 'M' | 'T' | 'N' | 'L' | 'O' | 'X';
 type ShiftDistributionMode = 'staggered' | 'same';
+type PatternSelectionMode = 'patterns' | 'custom';
+
+type CustomPatternRow = {
+  id: string;
+  shift_id: string;
+  days: string;
+};
 
 type EmployeeCombinationRow = {
   employee_id: string;
@@ -399,6 +406,10 @@ export function EmployeeShiftPlanningManagement() {
   const [fechaFin, setFechaFin] = useState(() => toIsoDate(initialEnd));
   const [workPatterns, setWorkPatterns] = useState<WorkPattern[]>(DEFAULT_WORK_PATTERNS);
   const [activePatternId, setActivePatternId] = useState('p-5x2');
+  const [patternSelectionMode, setPatternSelectionMode] = useState<PatternSelectionMode>('patterns');
+  const [customPatternRows, setCustomPatternRows] = useState<CustomPatternRow[]>([
+    { id: 'custom-pattern-1', shift_id: '', days: '' },
+  ]);
   const [legendShiftIds, setLegendShiftIds] = useState<string[]>([]);
   const [hasAppliedParameters, setHasAppliedParameters] = useState(false);
 
@@ -560,6 +571,31 @@ export function EmployeeShiftPlanningManagement() {
   const activePattern = useMemo(() => {
     return workPatterns.find((pattern) => pattern.id === activePatternId) || null;
   }, [workPatterns, activePatternId]);
+
+  const customShiftOptions = useMemo(() => {
+    return shifts
+      .filter((shift) => companyFilter === 'ALL' || shift.company_id === companyFilter)
+      .sort((a, b) => a.shift_name.localeCompare(b.shift_name));
+  }, [shifts, companyFilter]);
+
+  const customPatternTotalDays = useMemo(() => {
+    return customPatternRows.reduce((total, row) => {
+      const days = Number(row.days);
+      return total + (Number.isInteger(days) && days > 0 ? days : 0);
+    }, 0);
+  }, [customPatternRows]);
+
+  const customPatternRowsAreValid = useMemo(() => {
+    return customPatternRows.length > 0 && customPatternRows.every((row) => {
+      const days = Number(row.days);
+      return Boolean(row.shift_id) && Number.isInteger(days) && days > 0;
+    });
+  }, [customPatternRows]);
+
+  const customPatternIsComplete = customPatternRowsAreValid
+    && rangeDays.length > 0
+    && customPatternTotalDays === rangeDays.length;
+  const customPatternDayDifference = rangeDays.length - customPatternTotalDays;
 
   const shiftTypeIdByKind = useMemo(() => {
     const map: Partial<Record<ShiftKind, string>> = {};
@@ -837,6 +873,31 @@ export function EmployeeShiftPlanningManagement() {
     setRequiredEmployeesPerShift((prev) => Math.max(1, prev - 1));
   };
 
+  const addCustomPatternRow = () => {
+    setCustomPatternRows((rows) => [
+      ...rows,
+      {
+        id: `custom-pattern-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        shift_id: '',
+        days: '',
+      },
+    ]);
+  };
+
+  const updateCustomPatternRow = (id: string, field: 'shift_id' | 'days', value: string) => {
+    if (field === 'days' && value !== '' && !/^\d+$/.test(value)) return;
+    setCustomPatternRows((rows) => rows.map((row) => (
+      row.id === id ? { ...row, [field]: value } : row
+    )));
+  };
+
+  const removeCustomPatternRow = (id: string) => {
+    setCustomPatternRows((rows) => {
+      if (rows.length === 1) return rows;
+      return rows.filter((row) => row.id !== id);
+    });
+  };
+
   const activePatternShiftSequence = useMemo(() => {
     const rows = [...(activePattern?.pattern_shifts || [])]
       .filter((item) => String(item.shift_id || '').trim())
@@ -848,6 +909,17 @@ export function EmployeeShiftPlanningManagement() {
       });
     return rows;
   }, [activePattern]);
+
+  const configuredShiftIds = useMemo(() => {
+    if (patternSelectionMode === 'custom') {
+      return Array.from(new Set(customPatternRows.map((row) => row.shift_id).filter(Boolean)));
+    }
+    return Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id)));
+  }, [patternSelectionMode, customPatternRows, activePatternShiftSequence]);
+
+  const analysisShiftIds = hasAppliedParameters && legendShiftIds.length > 0
+    ? legendShiftIds
+    : configuredShiftIds;
 
   const buildShiftPlanningPayload = (): ShiftPlanningGeneratePayload => {
     const uniquePatternShifts = Array.from(
@@ -1072,7 +1144,10 @@ export function EmployeeShiftPlanningManagement() {
         const existingShiftId = plansByKey.get(keyOf(employee.id, dateIso))?.shift_id || null;
         const effectiveShiftId = cellShiftId(employee, dateIso);
 
-        if (!canAssignShiftOnDate(effectiveShiftId, dateIso)) return;
+        // Los cambios explícitos ya fueron validados al crearse. Esto permite que
+        // una secuencia personalizada incluya el primer día cuando es la fecha actual,
+        // aunque el turno seleccionado ya haya iniciado.
+        if (!explicitChange && !canAssignShiftOnDate(effectiveShiftId, dateIso)) return;
 
         if (existingShiftId === effectiveShiftId && !explicitChange) return;
         if (!existingShiftId && !effectiveShiftId && !explicitChange) return;
@@ -1154,14 +1229,87 @@ export function EmployeeShiftPlanningManagement() {
       return;
     }
 
-    const editableRangeDays = rangeDays.filter((day) => isFutureDateIso(toIsoDate(day)));
+    const editableRangeDays = rangeDays.filter((day) => (
+      patternSelectionMode === 'custom'
+        ? isCurrentOrFutureDateIso(toIsoDate(day))
+        : isFutureDateIso(toIsoDate(day))
+    ));
     if (editableRangeDays.length === 0) {
-      setError('No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
+      setError(patternSelectionMode === 'custom'
+        ? 'No hay fechas actuales o futuras en el rango seleccionado.'
+        : 'No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
       return;
     }
 
     if (filteredEmployees.length === 0) {
       setError('No hay empleados para los filtros seleccionados.');
+      return;
+    }
+
+    if (patternSelectionMode === 'custom') {
+      if (editableRangeDays.length !== rangeDays.length) {
+        setError('La asignación personalizada debe iniciar en la fecha actual o en una fecha futura para cubrir el rango completo desde el primer día.');
+        return;
+      }
+
+      if (!customPatternRowsAreValid) {
+        setError('Complete el turno y una cantidad de días mayor a cero en todas las filas de Personalizado.');
+        return;
+      }
+
+      if (customPatternTotalDays !== rangeDays.length) {
+        const difference = rangeDays.length - customPatternTotalDays;
+        setError(difference > 0
+          ? `Faltan configurar ${difference} día${difference === 1 ? '' : 's'} para cubrir el rango seleccionado.`
+          : `La configuración personalizada excede el rango por ${Math.abs(difference)} día${Math.abs(difference) === 1 ? '' : 's'}.`);
+        return;
+      }
+
+      const customSequence = customPatternRows.flatMap((row) => (
+        Array.from({ length: Number(row.days) }, () => row.shift_id)
+      ));
+      const missingCustomShifts = customSequence.filter((shiftId) => !shiftsById.has(shiftId));
+      if (missingCustomShifts.length > 0) {
+        setError('La configuración personalizada contiene turnos que ya no están disponibles.');
+        return;
+      }
+
+      const uniqueCustomShiftIds = Array.from(new Set(customSequence));
+      const incompatibleEmployee = filteredEmployees.find((employee) => (
+        uniqueCustomShiftIds.some((shiftId) => {
+          const shift = shiftsById.get(shiftId);
+          return shift ? !isShiftCompatibleWithEmployee(shift, employee) : false;
+        })
+      ));
+      if (incompatibleEmployee) {
+        setError(`Uno o más turnos personalizados no pertenecen a la empresa del empleado ${incompatibleEmployee.employee_code}. Ajuste el filtro de Empresa o seleccione turnos compatibles.`);
+        return;
+      }
+
+      const generated: Record<string, DayCellChange> = {};
+
+      filteredEmployees.forEach((employee) => {
+        editableRangeDays.forEach((day, dayIndex) => {
+          const dateIso = toIsoDate(day);
+          const shiftId = customSequence[dayIndex] || null;
+          const shift = shiftId ? shiftsById.get(shiftId) || null : null;
+          const kind = shift ? classifyShift(shift) : 'O';
+          generated[keyOf(employee.id, dateIso)] = {
+            employee_id: employee.id,
+            shift_date: dateIso,
+            shift_id: shiftId,
+            shift_type_id: shift ? (shiftTypeIdByKind[kind] || null) : null,
+            company_id: employee.company_id,
+          };
+        });
+      });
+
+      setChanges(generated);
+      setLegendShiftIds(uniqueCustomShiftIds);
+      setHasAppliedParameters(true);
+      setConfirmed(false);
+      setError(null);
+      setSuccess(`Configuración personalizada aplicada desde ${formatDayMonth(toIsoDate(editableRangeDays[0]))} durante ${editableRangeDays.length} días para ${filteredEmployees.length} empleado${filteredEmployees.length === 1 ? '' : 's'}.`);
       return;
     }
 
@@ -1387,8 +1535,8 @@ export function EmployeeShiftPlanningManagement() {
     const required = Math.max(1, Number(requiredEmployeesPerShift || 1));
     const productiveShiftIds = Array.from(
       new Set(
-        activePatternShiftSequence
-          .map((item) => String(item.shift_id || '').trim())
+        analysisShiftIds
+          .map((shiftId) => String(shiftId || '').trim())
           .filter((shiftId) => {
             const shift = shiftsById.get(shiftId);
             return !!shift && classifyShift(shift) !== 'L';
@@ -1448,15 +1596,15 @@ export function EmployeeShiftPlanningManagement() {
     });
 
     return list.filter((item) => !ignoredSuggestionIds[item.id]).slice(0, 6);
-  }, [filteredEmployees, rangeDays, activePatternShiftSequence, requiredEmployeesPerShift, countByDayAndShift, ignoredSuggestionIds, shiftsById, plansByKey, changes]);
+  }, [filteredEmployees, rangeDays, analysisShiftIds, requiredEmployeesPerShift, countByDayAndShift, ignoredSuggestionIds, shiftsById, plansByKey, changes]);
 
   const alerts = useMemo(() => {
     const issues: string[] = [];
     const required = Math.max(1, Number(requiredEmployeesPerShift || 1));
     const productiveShiftIds = Array.from(
       new Set(
-        activePatternShiftSequence
-          .map((item) => String(item.shift_id || '').trim())
+        analysisShiftIds
+          .map((shiftId) => String(shiftId || '').trim())
           .filter((shiftId) => {
             const shift = shiftsById.get(shiftId);
             return !!shift && classifyShift(shift) !== 'L';
@@ -1474,7 +1622,7 @@ export function EmployeeShiftPlanningManagement() {
       });
     });
     return issues.slice(0, 5);
-  }, [rangeDays, activePatternShiftSequence, requiredEmployeesPerShift, countByDayAndShift, shiftsById]);
+  }, [rangeDays, analysisShiftIds, requiredEmployeesPerShift, countByDayAndShift, shiftsById]);
 
   const pendingChanges = pendingPersistChanges.length;
 
@@ -1484,6 +1632,19 @@ export function EmployeeShiftPlanningManagement() {
     setDiasTrabajo(pattern.work_days);
     setDiasLibres(pattern.free_days);
   }, [activePatternId, workPatterns]);
+
+  useEffect(() => {
+    const availableIds = new Set(customShiftOptions.map((shift) => shift.id));
+    setCustomPatternRows((rows) => {
+      let changed = false;
+      const nextRows = rows.map((row) => {
+        if (!row.shift_id || availableIds.has(row.shift_id)) return row;
+        changed = true;
+        return { ...row, shift_id: '' };
+      });
+      return changed ? nextRows : rows;
+    });
+  }, [customShiftOptions]);
 
   return (
     <div className="space-y-4">
@@ -1668,13 +1829,19 @@ export function EmployeeShiftPlanningManagement() {
 
               <div className="flex flex-wrap items-center justify-end gap-3">
               <button
-                onClick={() => void handleGeneratePlanning()}
-                disabled={loading || saving || generatingPlanning || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0}
+                onClick={() => patternSelectionMode === 'custom'
+                  ? void applyParameters()
+                  : void handleGeneratePlanning()}
+                disabled={loading || saving || generatingPlanning || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0 || (patternSelectionMode === 'custom' && !customPatternIsComplete)}
                 className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
               >
                 <span className="inline-flex items-center gap-2">
                   <Sparkles className="size-4" />
-                  {generatingPlanning ? 'Generando...' : 'Generar planificación'}
+                  {generatingPlanning
+                    ? 'Generando...'
+                    : patternSelectionMode === 'custom'
+                      ? 'Aplicar personalizado'
+                      : 'Generar planificación'}
                 </span>
               </button>
               <button
@@ -1893,53 +2060,178 @@ export function EmployeeShiftPlanningManagement() {
 
           <div className="rounded-2xl border bg-white p-4">
             <div className="mb-2 text-lg font-semibold">Patrón de Trabajo</div>
-            <div className="space-y-3">
-              <select
-                value={activePatternId}
-                onChange={(event) => setActivePatternId(event.target.value)}
-                className="w-full rounded-xl border px-3 py-2 text-sm"
+            <div className="mb-3 grid grid-cols-2 rounded-xl bg-gray-100 p-1">
+              <button
+                type="button"
+                onClick={() => setPatternSelectionMode('patterns')}
+                aria-pressed={patternSelectionMode === 'patterns'}
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  patternSelectionMode === 'patterns'
+                    ? 'bg-white text-[#0058A3] shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
               >
-                {workPatterns.map((pattern) => (
-                  <option key={pattern.id} value={pattern.id}>
-                    {pattern.name} ({pattern.work_days}/{pattern.free_days})
-                  </option>
-                ))}
-              </select>
-              <div className="text-xs text-gray-600">Esquema actual: {diasTrabajo}/{diasLibres}</div>
+                Patrones
+              </button>
+              <button
+                type="button"
+                onClick={() => setPatternSelectionMode('custom')}
+                aria-pressed={patternSelectionMode === 'custom'}
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  patternSelectionMode === 'custom'
+                    ? 'bg-white text-[#0058A3] shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Personalizado
+              </button>
+            </div>
 
-              <div className="pt-1">
-                <label className="mb-2 block text-sm font-medium">Distribución de Turnos</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setShiftDistributionMode('staggered')}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
-                      shiftDistributionMode === 'staggered'
-                        ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
-                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    Turnos escalonados
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShiftDistributionMode('same')}
-                    className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
-                      shiftDistributionMode === 'same'
-                        ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
-                        : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                  >
-                    Turnos iguales
-                  </button>
+            {patternSelectionMode === 'patterns' ? (
+              <div className="space-y-3">
+                <select
+                  value={activePatternId}
+                  onChange={(event) => setActivePatternId(event.target.value)}
+                  className="w-full rounded-xl border px-3 py-2 text-sm"
+                >
+                  {workPatterns.map((pattern) => (
+                    <option key={pattern.id} value={pattern.id}>
+                      {pattern.name} ({pattern.work_days}/{pattern.free_days})
+                    </option>
+                  ))}
+                </select>
+                <div className="text-xs text-gray-600">Esquema actual: {diasTrabajo}/{diasLibres}</div>
+
+                <div className="pt-1">
+                  <label className="mb-2 block text-sm font-medium">Distribución de Turnos</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShiftDistributionMode('staggered')}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+                        shiftDistributionMode === 'staggered'
+                          ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      Turnos escalonados
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShiftDistributionMode('same')}
+                      className={`rounded-xl border px-3 py-2 text-sm font-medium transition ${
+                        shiftDistributionMode === 'same'
+                          ? 'border-[#0074D9] bg-blue-50 text-[#0058A3]'
+                          : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      Turnos iguales
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    {shiftDistributionMode === 'staggered'
+                      ? 'Cada empleado inicia el patrón con desfase para distribuir la carga.'
+                      : 'Todos los empleados siguen el mismo turno por día (sin desfase).'}
+                  </p>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  {shiftDistributionMode === 'staggered'
-                    ? 'Cada empleado inicia el patrón con desfase para distribuir la carga.'
-                    : 'Todos los empleados siguen el mismo turno por día (sin desfase).'}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="overflow-hidden rounded-xl border border-gray-200">
+                  <table className="w-full table-fixed text-sm">
+                    <thead className="bg-gray-50 text-gray-700">
+                      <tr>
+                        <th className="w-[68%] px-2 py-2 text-left font-semibold">Turno</th>
+                        <th className="w-[32%] px-2 py-2 text-left font-semibold">Días</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customPatternRows.map((row, index) => (
+                        <tr key={row.id} className="border-t border-gray-200">
+                          <td className="px-2 py-2 align-top">
+                            <select
+                              value={row.shift_id}
+                              onChange={(event) => updateCustomPatternRow(row.id, 'shift_id', event.target.value)}
+                              aria-label={`Turno personalizado ${index + 1}`}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-2 text-xs"
+                            >
+                              <option value="">Seleccionar turno...</option>
+                              {customShiftOptions.map((shift) => {
+                                const kind = classifyShift(shift);
+                                const timeHint = getShiftTimeHint(shift, kind);
+                                return (
+                                  <option key={shift.id} value={shift.id}>
+                                    {shift.shift_name} ({timeHint})
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2 align-top">
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                max={Math.max(1, rangeDays.length)}
+                                value={row.days}
+                                onChange={(event) => updateCustomPatternRow(row.id, 'days', event.target.value)}
+                                aria-label={`Días del turno personalizado ${index + 1}`}
+                                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-2 text-center text-xs font-semibold"
+                                placeholder="0"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeCustomPatternRow(row.id)}
+                                disabled={customPatternRows.length === 1}
+                                className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-red-200 text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                                title="Eliminar fila"
+                                aria-label={`Eliminar fila personalizada ${index + 1}`}
+                              >
+                                <Minus className="size-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={addCustomPatternRow}
+                  disabled={customPatternRows.length >= 62}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                >
+                  <Plus className="size-4" /> Agregar fila
+                </button>
+
+                <div className={`rounded-lg border px-3 py-2 text-xs ${
+                  customPatternIsComplete
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                    : customPatternDayDifference < 0
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-amber-200 bg-amber-50 text-amber-700'
+                }`}>
+                  <div className="font-semibold">
+                    Días configurados: {customPatternTotalDays} de {rangeDays.length}
+                  </div>
+                  <div className="mt-1">
+                    {customPatternIsComplete
+                      ? 'La configuración cubre todo el rango seleccionado.'
+                      : customPatternDayDifference > 0
+                        ? `Faltan ${customPatternDayDifference} día${customPatternDayDifference === 1 ? '' : 's'} por configurar.`
+                        : customPatternDayDifference < 0
+                          ? `La configuración excede el rango por ${Math.abs(customPatternDayDifference)} día${Math.abs(customPatternDayDifference) === 1 ? '' : 's'}.`
+                          : 'Seleccione un turno y una cantidad de días mayor a cero en cada fila.'}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Las filas se aplican en orden desde la Fecha Inicio y solo para el rango seleccionado.
                 </p>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="rounded-2xl border bg-white p-4">
@@ -1974,9 +2266,14 @@ export function EmployeeShiftPlanningManagement() {
               </button>
               <span className="text-xs text-gray-500">empleados/turno</span>
             </div>
-            {activePatternShiftSequence.length > 0 && (
+            {configuredShiftIds.length > 0 && (
               <div className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                Turnos del patrón: {Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_name || item.shift_short_name || item.shift_id))).join(' · ')}
+                {patternSelectionMode === 'custom' ? 'Turnos personalizados' : 'Turnos del patrón'}:{' '}
+                {configuredShiftIds
+                  .map((shiftId) => shiftsById.get(shiftId))
+                  .filter((shift): shift is ShiftRow => Boolean(shift))
+                  .map((shift) => shift.shift_name || shift.shift_short_name || shift.id)
+                  .join(' · ')}
               </div>
             )}
           </div>

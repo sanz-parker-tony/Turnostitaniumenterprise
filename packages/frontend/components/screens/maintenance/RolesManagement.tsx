@@ -38,6 +38,9 @@ interface Role {
   is_system_role: boolean;
   is_locked: boolean;
   data_scope: 'ALL' | 'DIRECT_REPORTS' | 'SELF';
+  user_manager_role_id: string | null;
+  is_org_scope_target: boolean;
+  is_employee_access_target: boolean;
   locked_by: string | null;
   locked_at: string | null;
   created_by: string;
@@ -64,6 +67,9 @@ interface FormData {
   role_scope: string;
   base_role_id: string;
   data_scope: string;
+  user_manager_role_id: string;
+  is_org_scope_target: boolean;
+  is_employee_access_target: boolean;
   is_active: boolean;
 }
 
@@ -74,6 +80,9 @@ const EMPTY_FORM: FormData = {
   role_scope: 'TENANT',
   base_role_id: '',
   data_scope: 'ALL',
+  user_manager_role_id: '',
+  is_org_scope_target: false,
+  is_employee_access_target: false,
   is_active: true,
 };
 
@@ -253,6 +262,9 @@ export function RolesManagement() {
       role_scope: role.role_scope,
       base_role_id: role.base_role_id || '',
       data_scope: role.data_scope,
+      user_manager_role_id: role.user_manager_role_id || '',
+      is_org_scope_target: role.is_org_scope_target,
+      is_employee_access_target: role.is_employee_access_target,
       is_active: role.is_active,
     });
     setFormErrors({});
@@ -364,6 +376,7 @@ export function RolesManagement() {
       errors.role_key = 'Solo mayúsculas, números y _ (mínimo 2 caracteres)';
     }
     if (!formData.role_name.trim()) errors.role_name = 'El nombre es obligatorio';
+    if (!formData.user_manager_role_id) errors.user_manager_role_id = 'Debe seleccionar el rol responsable de administrar sus usuarios';
 
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -787,6 +800,61 @@ export function RolesManagement() {
                         ))}
                     </select>
                     <p className="text-xs text-gray-400 mt-1">Opcional. Para herencia de permisos.</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Rol responsable de administrar sus usuarios <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={formData.user_manager_role_id}
+                      onChange={e => setFormData(f => ({ ...f, user_manager_role_id: e.target.value }))}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0074D9]/30 ${
+                        formErrors.user_manager_role_id ? 'border-red-400' : 'border-gray-300'
+                      }`}
+                    >
+                      <option value="">Seleccionar responsable...</option>
+                      {roles
+                        .filter(r => r.is_active && r.tenant_id === formData.tenant_id)
+                        .map(r => (
+                          <option key={r.id} value={r.id}>
+                            {r.role_name} ({r.role_key})
+                          </option>
+                        ))}
+                    </select>
+                    {formErrors.user_manager_role_id && (
+                      <p className="text-xs text-red-500 mt-1">{formErrors.user_manager_role_id}</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">
+                      Los usuarios de este rol solo podrán ser creados y modificados por usuarios que tengan el rol seleccionado.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_org_scope_target}
+                        onChange={e => setFormData(f => ({ ...f, is_org_scope_target: e.target.checked }))}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="block font-medium">Admite alcance organizacional</span>
+                        <span className="block text-xs text-gray-500">Empresa, localización, departamento, área y demás niveles.</span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 text-sm text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_employee_access_target}
+                        onChange={e => setFormData(f => ({ ...f, is_employee_access_target: e.target.checked }))}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        <span className="block font-medium">Admite acceso a empleados</span>
+                        <span className="block text-xs text-gray-500">Permite autorizar o revocar empleados específicos.</span>
+                      </span>
+                    </label>
                   </div>
 
                   {/* Estado */}

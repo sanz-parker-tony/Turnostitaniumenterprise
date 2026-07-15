@@ -7,8 +7,25 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
+
+async function resolveTenantId(req: Request): Promise<string | null> {
+  const authUserId = String((req as any)?.user?.id || '').trim();
+  if (!authUserId) return null;
+
+  const { rows } = await pool.query(
+    `SELECT tenant_id
+       FROM public.users
+      WHERE auth_user_id = $1::uuid
+        AND is_active = true
+      LIMIT 1`,
+    [authUserId]
+  );
+
+  return rows[0]?.tenant_id ? String(rows[0].tenant_id) : null;
+}
 
 // ============================================================================
 // GET /attendance-events - Listar todas las novedades
@@ -16,38 +33,33 @@ const router = Router();
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const Postgres = createDbClient(
-      process.env.Postgres_URL || '',
-      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+
+    const { rows: eventsWithLabels } = await pool.query(
+      `SELECT
+         ae.*,
+         transaction_direction.lookup_key AS transaction_direction_key,
+         transaction_direction.lookup_label AS transaction_direction_label,
+         event_type.lookup_key AS event_type_key,
+         event_type.lookup_label AS event_type_label,
+         movement.movement_short_name AS movement_code,
+         movement.movement_name AS movement_name,
+         calculation_method.lookup_key AS calculation_method_key,
+         calculation_method.lookup_label AS calculation_method_label
+       FROM public.attendance_events ae
+       LEFT JOIN public.lookup_values transaction_direction
+         ON transaction_direction.id = ae.transaction_direction_id
+       LEFT JOIN public.lookup_values event_type
+         ON event_type.id = ae.event_type_id
+       LEFT JOIN public.attendance_movements movement
+         ON movement.id = ae.movement_id
+       LEFT JOIN public.lookup_values calculation_method
+         ON calculation_method.id = ae.calculation_method_id
+       WHERE ae.tenant_id = $1::uuid
+       ORDER BY ae.event_short_name`,
+      [tenantId]
     );
-
-    // Query principal con JOINs para obtener labels
-    const { data: events, error } = await Postgres
-      .from('attendance_events')
-      .select(`
-        *,
-        transaction_direction:lookup_values!attendance_events_transaction_direction_id_fkey(lookup_key, lookup_label),
-        event_type:lookup_values!attendance_events_event_type_id_fkey(lookup_key, lookup_label),
-        movement:attendance_movements!attendance_events_movement_id_fkey(movement_short_name, movement_name),
-        calculation_method:lookup_values!attendance_events_calculation_method_id_fkey(lookup_key, lookup_label)
-      `)
-      .order('event_short_name', { ascending: true });
-
-    if (error) {
-      console.error('[ATTENDANCE-EVENTS] Error cargando novedades:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    // Transformar datos para incluir labels desnormalizados
-    const eventsWithLabels = (events || []).map((event: any) => ({
-      ...event,
-      transaction_direction_key: event.transaction_direction?.lookup_key || null,
-      transaction_direction_label: event.transaction_direction?.lookup_label || null,
-      event_type_key: event.event_type?.lookup_key || null,
-      event_type_label: event.event_type?.lookup_label || null,
-      movement_code: event.movement?.movement_short_name || null,
-      calculation_method_label: event.calculation_method?.lookup_label || null,
-    }));
 
     return res.status(200).json({
       success: true,
@@ -106,28 +118,35 @@ router.get('/catalogs/movements', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
-    
-    const Postgres = createDbClient(
-      process.env.Postgres_URL || '',
-      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+
+    const { rows } = await pool.query(
+      `SELECT
+         ae.*,
+         transaction_direction.lookup_key AS transaction_direction_key,
+         transaction_direction.lookup_label AS transaction_direction_label,
+         event_type.lookup_key AS event_type_key,
+         event_type.lookup_label AS event_type_label,
+         movement.movement_short_name AS movement_code,
+         movement.movement_name AS movement_name,
+         calculation_method.lookup_key AS calculation_method_key,
+         calculation_method.lookup_label AS calculation_method_label
+       FROM public.attendance_events ae
+       LEFT JOIN public.lookup_values transaction_direction
+         ON transaction_direction.id = ae.transaction_direction_id
+       LEFT JOIN public.lookup_values event_type
+         ON event_type.id = ae.event_type_id
+       LEFT JOIN public.attendance_movements movement
+         ON movement.id = ae.movement_id
+       LEFT JOIN public.lookup_values calculation_method
+         ON calculation_method.id = ae.calculation_method_id
+       WHERE ae.id = $1::uuid
+         AND ae.tenant_id = $2::uuid
+       LIMIT 1`,
+      [id, tenantId]
     );
-
-    const { data: event, error } = await Postgres
-      .from('attendance_events')
-      .select(`
-        *,
-        transaction_direction:lookup_values!attendance_events_transaction_direction_id_fkey(lookup_key, lookup_label),
-        event_type:lookup_values!attendance_events_event_type_id_fkey(lookup_key, lookup_label),
-        movement:attendance_movements!attendance_events_movement_id_fkey(movement_short_name, movement_name),
-        calculation_method:lookup_values!attendance_events_calculation_method_id_fkey(lookup_key, lookup_label)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      console.error('[ATTENDANCE-EVENTS] Error cargando novedad:', error);
-      return res.status(500).json({ error: error.message });
-    }
+    const event = rows[0];
 
     if (!event) {
       return res.status(404).json({ error: 'Novedad no encontrada' });
@@ -135,13 +154,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     return res.status(200).json({
       success: true,
-      event: {
-        ...event,
-        transaction_direction_label: event.transaction_direction?.lookup_label || null,
-        event_type_label: event.event_type?.lookup_label || null,
-        movement_code: event.movement?.movement_short_name || null,
-        calculation_method_label: event.calculation_method?.lookup_label || null,
-      },
+      event,
     });
 
   } catch (err) {

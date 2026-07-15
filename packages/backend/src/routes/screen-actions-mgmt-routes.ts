@@ -7,6 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
@@ -53,29 +54,25 @@ router.get('/catalogs/actions', async (req: Request, res: Response) => {
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const Postgres = getPostgres();
-    const { data, error } = await Postgres
-      .from('screen_actions')
-      .select(`
-        *,
-        screen:screens!screen_actions_screen_id_fkey(screen_key, screen_name, menu_label),
-        action:actions!screen_actions_action_id_fkey(action_key, action_name)
-      `)
-      .order('created_at', { ascending: false });
+    const screenId = String(req.query.screen_id || '').trim();
+    const params: any[] = [];
+    const screenFilter = screenId ? 'WHERE sa.screen_id = $1::uuid' : '';
+    if (screenId) params.push(screenId);
 
-    if (error) {
-      console.error('[SCREEN-ACTIONS] GET /:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    const result = (data || []).map((sa: any) => ({
-      ...sa,
-      screen_key: sa.screen?.screen_key || null,
-      screen_name: sa.screen?.screen_name || null,
-      screen_menu_label: sa.screen?.menu_label || null,
-      action_key: sa.action?.action_key || null,
-      action_name: sa.action?.action_name || null,
-    }));
+    const { rows: result } = await pool.query(`
+      SELECT
+        sa.*,
+        s.screen_key,
+        s.screen_name,
+        s.menu_label AS screen_menu_label,
+        a.action_key,
+        a.action_name
+      FROM public.screen_actions sa
+      JOIN public.screens s ON s.id = sa.screen_id
+      JOIN public.actions a ON a.id = sa.action_id
+      ${screenFilter}
+      ORDER BY sa.created_at DESC
+    `, params);
 
     return res.status(200).json({ success: true, screenActions: result, count: result.length });
   } catch (err: any) {
@@ -116,32 +113,27 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Campos obligatorios: screen_id, action_id' });
     }
 
-    const Postgres = getPostgres();
-    const { data: existing } = await Postgres
-      .from('screen_actions')
-      .select('id')
-      .eq('screen_id', screen_id)
-      .eq('action_id', action_id)
-      .maybeSingle();
-    if (existing) return res.status(409).json({ error: 'Ya existe esa combinación pantalla-acción' });
+    const { rows } = await pool.query(
+      `
+        INSERT INTO public.screen_actions (
+          screen_id, action_id, ui_element_key, is_active, created_by
+        )
+        VALUES ($1::uuid, $2::uuid, $3, $4, 'SYSTEM')
+        ON CONFLICT (screen_id, action_id) DO UPDATE SET
+          ui_element_key = COALESCE(EXCLUDED.ui_element_key, public.screen_actions.ui_element_key),
+          is_active = true,
+          updated_by = 'SYSTEM',
+          updated_at = now()
+        RETURNING *
+      `,
+      [screen_id, action_id, ui_element_key || null, is_active !== false]
+    );
 
-    const { data, error } = await Postgres
-      .from('screen_actions')
-      .insert({
-        screen_id,
-        action_id,
-        ui_element_key: ui_element_key || null,
-        is_active,
-        created_by: 'system',
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('[SCREEN-ACTIONS] POST /:', error);
-      return res.status(500).json({ error: error.message });
-    }
-    return res.status(201).json({ success: true, screenAction: data, message: 'Acción de pantalla creada' });
+    return res.status(200).json({
+      success: true,
+      screenAction: rows[0],
+      message: 'Acción vinculada o reactivada correctamente',
+    });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }

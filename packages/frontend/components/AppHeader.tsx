@@ -8,7 +8,7 @@ import { API_BASE_URL } from '../utils/api-config';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { useState, useEffect, useRef } from 'react';
-import { Bell, ChevronRight, Home, LogOut, User } from 'lucide-react';
+import { Bell, ChevronRight, Home, KeyRound, LogOut, User } from 'lucide-react';
 import { SidebarTrigger } from './ui/sidebar';
 import { Separator } from './ui/separator';
 import {
@@ -30,6 +30,7 @@ import {
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { DevicePermissionToolbar } from './shared/DevicePermissionToolbar';
+import ChangePasswordModal from './ChangePasswordModal';
 
 type UserNotification = {
   id: string;
@@ -62,6 +63,7 @@ export function AppHeader() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const headerRef = useRef<HTMLElement | null>(null);
 
   // Detectar ruta actual
@@ -104,7 +106,6 @@ export function AppHeader() {
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const isEmployee = roleKey === 'EMPLOYEE';
   const showDevicePermissionToolbar = roleKey === 'EMPLOYEE';
   const isKioskPunchRoute = [
     '/dashboard/kiosk/timeclock',
@@ -196,12 +197,13 @@ export function AppHeader() {
   }, [notificationsOpen]);
 
   return (
-    <header
-      ref={headerRef}
-      className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow ${
-        isElevated ? 'shadow-sm' : 'shadow-none'
-      }`}
-    >
+    <>
+      <header
+        ref={headerRef}
+        className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow ${
+          isElevated ? 'shadow-sm' : 'shadow-none'
+        }`}
+      >
       <div className="flex items-center gap-2 flex-1">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="h-6" />
@@ -305,12 +307,7 @@ export function AppHeader() {
         </DropdownMenu>
 
         {/* User Menu */}
-        {isEmployee ? (
-          <Button variant="ghost" size="icon" onClick={() => void handleLogout()} title="Cerrar Sesión">
-            <LogOut className="h-5 w-5" />
-          </Button>
-        ) : (
-          <DropdownMenu>
+        <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon">
                 <User className="h-5 w-5" />
@@ -337,14 +334,24 @@ export function AppHeader() {
                   <DropdownMenuSeparator />
                 </>
               ) : null}
+              <DropdownMenuItem onClick={() => setChangePasswordOpen(true)} className="cursor-pointer">
+                <KeyRound className="mr-2 h-4 w-4" />
+                Cambiar contraseña
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600">
                 <LogOut className="mr-2 h-4 w-4" />
                 Cerrar Sesión
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        )}
       </div>
-    </header>
+      </header>
+      <ChangePasswordModal
+        isOpen={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+        mode="authenticated"
+      />
+    </>
   );
 }

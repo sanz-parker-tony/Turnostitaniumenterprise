@@ -12,10 +12,199 @@
  * PolÃ­tica: NO se pueden eliminar registros.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
+
+type UserAdministrationContext = {
+  userId: string;
+  tenantId: string;
+  authUserId: string;
+};
+
+function administrationContext(req: Request): UserAdministrationContext {
+  return (req as any).userAdministrationContext as UserAdministrationContext;
+}
+
+async function resolveAdministrationContext(req: Request): Promise<UserAdministrationContext | null> {
+  const authUserId = String((req as any)?.user?.id || '').trim();
+  if (!authUserId) return null;
+
+  const result = await pool.query(
+    `
+      SELECT u.id AS user_id, u.tenant_id
+      FROM users u
+      WHERE u.auth_user_id = $1
+        AND u.is_active = true
+      LIMIT 1
+    `,
+    [authUserId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return { userId: String(row.user_id), tenantId: String(row.tenant_id), authUserId };
+}
+
+async function manageableRoleIds(ctx: UserAdministrationContext): Promise<string[]> {
+  const result = await pool.query(
+    `
+      SELECT DISTINCT target_role.id
+      FROM user_roles actor_ur
+      JOIN roles actor_role ON actor_role.id = actor_ur.role_id AND actor_role.is_active = true
+      JOIN roles target_role
+        ON target_role.tenant_id = actor_ur.tenant_id
+       AND target_role.user_manager_role_id = actor_role.id
+       AND target_role.is_active = true
+      WHERE actor_ur.user_id = $1
+        AND actor_ur.tenant_id = $2
+        AND actor_ur.is_active = true
+    `,
+    [ctx.userId, ctx.tenantId]
+  );
+  return result.rows.map((row) => String(row.id));
+}
+
+async function manageableUserIds(ctx: UserAdministrationContext): Promise<string[]> {
+  const result = await pool.query(
+    `
+      WITH actor_roles AS (
+        SELECT ur.role_id
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id AND r.is_active = true
+        WHERE ur.user_id = $1
+          AND ur.tenant_id = $2
+          AND ur.is_active = true
+      )
+      SELECT target_user.id
+      FROM users target_user
+      JOIN user_roles target_ur
+        ON target_ur.user_id = target_user.id
+       AND target_ur.tenant_id = target_user.tenant_id
+       AND target_ur.is_active = true
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+      WHERE target_user.tenant_id = $2
+      GROUP BY target_user.id
+      HAVING bool_and(target_role.user_manager_role_id IN (SELECT role_id FROM actor_roles))
+    `,
+    [ctx.userId, ctx.tenantId]
+  );
+  return result.rows.map((row) => String(row.id));
+}
+
+async function canManageRole(ctx: UserAdministrationContext, roleId: string): Promise<boolean> {
+  const roleIds = await manageableRoleIds(ctx);
+  return roleIds.includes(roleId);
+}
+
+async function canManageUser(ctx: UserAdministrationContext, userId: string): Promise<boolean> {
+  const userIds = await manageableUserIds(ctx);
+  return userIds.includes(userId);
+}
+
+async function canCreateUsers(ctx: UserAdministrationContext): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM user_roles actor_ur
+        JOIN roles actor_role
+          ON actor_role.id = actor_ur.role_id
+         AND actor_role.is_active = true
+        JOIN role_screen_actions rsa
+          ON rsa.tenant_id = actor_ur.tenant_id
+         AND rsa.role_id = actor_ur.role_id
+         AND rsa.is_active = true
+         AND rsa.is_allowed = true
+        JOIN screen_actions sa
+          ON sa.id = rsa.screen_action_id
+         AND sa.is_active = true
+        JOIN screens screen
+          ON screen.id = sa.screen_id
+         AND screen.is_active = true
+         AND screen.screen_key = 'USER_MANAGEMENT'
+        JOIN actions action
+          ON action.id = sa.action_id
+         AND action.is_active = true
+         AND action.action_key = 'CREATE'
+        WHERE actor_ur.user_id = $1
+          AND actor_ur.tenant_id = $2
+          AND actor_ur.is_active = true
+      ) AS can_create_users
+    `,
+    [ctx.userId, ctx.tenantId]
+  );
+  return Boolean(result.rows[0]?.can_create_users);
+}
+
+async function canManageUserRole(
+  ctx: UserAdministrationContext,
+  userRoleId: string,
+  requireOrgScope = false
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM user_roles target_ur
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+      JOIN user_roles actor_ur
+        ON actor_ur.user_id = $1
+       AND actor_ur.tenant_id = target_ur.tenant_id
+       AND actor_ur.role_id = target_role.user_manager_role_id
+       AND actor_ur.is_active = true
+      WHERE target_ur.id = $2
+        AND target_ur.tenant_id = $3
+        AND ($4::boolean = false OR target_role.is_org_scope_target = true)
+      LIMIT 1
+    `,
+    [ctx.userId, userRoleId, ctx.tenantId, requireOrgScope]
+  );
+  return result.rows.length > 0;
+}
+
+async function canManageScope(ctx: UserAdministrationContext, scopeId: string): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM user_role_scopes scope
+      JOIN user_roles target_ur ON target_ur.id = scope.user_role_id
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+       AND target_role.is_org_scope_target = true
+      JOIN user_roles actor_ur
+        ON actor_ur.user_id = $1
+       AND actor_ur.tenant_id = target_ur.tenant_id
+       AND actor_ur.role_id = target_role.user_manager_role_id
+       AND actor_ur.is_active = true
+      WHERE scope.id = $2
+        AND target_ur.tenant_id = $3
+      LIMIT 1
+    `,
+    [ctx.userId, scopeId, ctx.tenantId]
+  );
+  return result.rows.length > 0;
+}
+
+router.use(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ctx = await resolveAdministrationContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+    const roleIds = await manageableRoleIds(ctx);
+    if (roleIds.length === 0) {
+      return res.status(403).json({ error: 'Su rol no tiene responsabilidad para administrar usuarios' });
+    }
+    (req as any).userAdministrationContext = ctx;
+    return next();
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Error validando gobierno de usuarios', details: error.message });
+  }
+});
 
 function getPostgres() {
   return createDbClient(
@@ -23,6 +212,20 @@ function getPostgres() {
     process.env.Postgres_SERVICE_ROLE_KEY || ''
   );
 }
+
+// GET /capabilities - Capacidades efectivas de la pantalla para el usuario actor.
+// Se resuelve desde role_screen_actions; no depende de nombres de roles en el código.
+router.get('/capabilities', async (req: Request, res: Response) => {
+  try {
+    const ctx = administrationContext(req);
+    return res.status(200).json({
+      success: true,
+      can_create_users: await canCreateUsers(ctx),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Error resolviendo capacidades de usuarios', details: err.message });
+  }
+});
 
 type ScopeEntityConfig = {
   table: string;
@@ -136,10 +339,12 @@ async function resolveScopeEntityLabels(Postgres: any, scopes: any[]) {
 // GET /catalogs/tenants - Tenants disponibles
 router.get('/catalogs/tenants', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
     const Postgres = getPostgres();
     const { data, error } = await Postgres
       .from('tenants')
       .select('id, tenant_key, tenant_name')
+      .eq('id', ctx.tenantId)
       .order('tenant_name');
 
     if (error) return res.status(500).json({ error: error.message });
@@ -152,12 +357,15 @@ router.get('/catalogs/tenants', async (req: Request, res: Response) => {
 // GET /catalogs/roles - Roles disponibles (para selector)
 router.get('/catalogs/roles', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
+    const roleIds = await manageableRoleIds(ctx);
+    if (roleIds.length === 0) return res.status(200).json({ success: true, roles: [] });
     const Postgres = getPostgres();
     const { data, error } = await Postgres
       .from('roles')
-      .select('id, role_key, role_name, role_scope, tenant_id, is_active')
+      .select('id, role_key, role_name, role_scope, tenant_id, is_active, user_manager_role_id, is_org_scope_target, is_employee_access_target')
       .eq('is_active', true)
-      .neq('role_key', 'EMPLOYEE')
+      .in('id', roleIds)
       .order('role_name');
 
     if (error) return res.status(500).json({ error: error.message });
@@ -187,10 +395,12 @@ router.get('/catalogs/scope-types', async (req: Request, res: Response) => {
 // GET /catalogs/companies - Empresas disponibles (para selector de user_roles)
 router.get('/catalogs/companies', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
     const Postgres = getPostgres();
     const { data, error } = await Postgres
       .from('companies')
       .select('id, company_name, tenant_id')
+      .eq('tenant_id', ctx.tenantId)
       .eq('is_active', true)
       .order('company_name');
 
@@ -204,10 +414,15 @@ router.get('/catalogs/companies', async (req: Request, res: Response) => {
 // GET /catalogs/scope-entities - Entidades disponibles segun tipo de alcance
 router.get('/catalogs/scope-entities', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
     const Postgres = getPostgres();
     const scopeTypeId = String(req.query.scope_type_id || '').trim();
     const scopeTypeKeyParam = String(req.query.scope_type_key || '').trim().toUpperCase();
     const tenantId = String(req.query.tenant_id || '').trim();
+
+    if (tenantId && tenantId !== ctx.tenantId) {
+      return res.status(403).json({ error: 'No puede consultar entidades de otro tenant' });
+    }
 
     if (!scopeTypeId && !scopeTypeKeyParam) {
       return res.status(400).json({ error: 'scope_type_id o scope_type_key es obligatorio' });
@@ -411,6 +626,11 @@ router.get('/catalogs/languages', async (req: Request, res: Response) => {
 // GET /catalogs/user-role-summaries - Resumen de roles activos por usuario
 router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
+    const userIds = await manageableUserIds(ctx);
+    if (userIds.length === 0) {
+      return res.status(200).json({ success: true, summaries: [], count: 0 });
+    }
     const Postgres = getPostgres();
     const { data, error } = await Postgres
       .from('user_roles')
@@ -420,6 +640,7 @@ router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) 
         created_at,
         role:roles!user_roles_role_id_fkey(role_name, role_key)
       `)
+      .in('user_id', userIds)
       .eq('is_active', true)
       .order('created_at', { ascending: false });
 
@@ -494,6 +715,10 @@ router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) 
 router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId))) {
+      return res.status(403).json({ error: 'No puede administrar esta asignación de rol' });
+    }
     const body = req.body;
     const { tenant_id, role_id, company_id, valid_from, valid_to, is_active } = body;
 
@@ -513,6 +738,10 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
     const nextRoleId = role_id || currentUserRole.role_id;
     const nextCompanyId = company_id === undefined ? currentUserRole.company_id : (company_id || null);
 
+    if (!(await canManageRole(ctx, nextRoleId))) {
+      return res.status(403).json({ error: 'No puede asignar el rol solicitado' });
+    }
+
     const { data: duplicated } = await Postgres
       .from('user_roles')
       .select('id, is_active')
@@ -527,7 +756,7 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Ya existe una asignaciÃ³n con ese rol y empresa para este usuario' });
     }
 
-    const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
+    const updateData: any = { updated_by: ctx.userId, updated_at: new Date().toISOString() };
     if (tenant_id !== undefined) updateData.tenant_id = nextTenantId;
     if (role_id !== undefined) updateData.role_id = nextRoleId;
     if (company_id !== undefined) updateData.company_id = nextCompanyId;
@@ -562,6 +791,10 @@ router.put('/user-roles/:user_role_id', async (req: Request, res: Response) => {
 router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId))) {
+      return res.status(403).json({ error: 'No puede administrar esta asignación de rol' });
+    }
     const body = req.body;
     const { is_active } = body;
 
@@ -573,7 +806,7 @@ router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Respo
 
     const { data: updatedUserRole, error } = await Postgres
       .from('user_roles')
-      .update({ is_active, updated_by: 'system', updated_at: new Date().toISOString() })
+      .update({ is_active, updated_by: ctx.userId, updated_at: new Date().toISOString() })
       .eq('id', userRoleId)
       .select()
       .single();
@@ -596,6 +829,10 @@ router.patch('/user-roles/:user_role_id/status', async (req: Request, res: Respo
 router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId))) {
+      return res.status(403).json({ error: 'No puede administrar esta asignación de rol' });
+    }
     const Postgres = getPostgres();
 
     const { data: existingUserRole, error: existingError } = await Postgres
@@ -632,6 +869,10 @@ router.delete('/user-roles/:user_role_id', async (req: Request, res: Response) =
 router.delete('/user-roles/:user_role_id/scopes/inactive', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId, true))) {
+      return res.status(403).json({ error: 'Este rol de usuario no admite administración de alcances' });
+    }
     const Postgres = getPostgres();
 
     const { data: deletedScopes, error } = await Postgres
@@ -657,6 +898,10 @@ router.delete('/user-roles/:user_role_id/scopes/inactive', async (req: Request, 
 router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId, true))) {
+      return res.status(403).json({ error: 'Este rol de usuario no admite administración de alcances' });
+    }
     const Postgres = getPostgres();
 
     const { data: scopes, error } = await Postgres
@@ -735,6 +980,10 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
 router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Response) => {
   try {
     const userRoleId = req.params.user_role_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUserRole(ctx, userRoleId, true))) {
+      return res.status(403).json({ error: 'Este rol de usuario no admite administración de alcances' });
+    }
     const body = req.body;
     const { tenant_id, scope_type_id, scope_entity_id } = body;
 
@@ -762,7 +1011,7 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
         .from('user_role_scopes')
         .update({
           is_active: true,
-          updated_by: 'system',
+          updated_by: ctx.userId,
           updated_at: new Date().toISOString(),
         })
         .eq('id', existing.id)
@@ -785,7 +1034,7 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
         scope_type_id,
         scope_entity_id,
         is_active: true,
-        created_by: 'system',
+        created_by: ctx.userId,
       })
       .select()
       .single();
@@ -806,6 +1055,10 @@ router.post('/user-roles/:user_role_id/scopes', async (req: Request, res: Respon
 router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
   try {
     const scopeId = req.params.scope_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageScope(ctx, scopeId))) {
+      return res.status(403).json({ error: 'No puede administrar este alcance' });
+    }
     const body = req.body;
     const { tenant_id, user_role_id, scope_type_id, scope_entity_id } = body;
 
@@ -845,7 +1098,7 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
       scope_type_id,
       scope_entity_id,
       is_active: true,
-      updated_by: 'system',
+      updated_by: ctx.userId,
       updated_at: new Date().toISOString(),
     };
 
@@ -870,6 +1123,10 @@ router.put('/scopes/:scope_id', async (req: Request, res: Response) => {
 router.patch('/scopes/:scope_id/status', async (req: Request, res: Response) => {
   try {
     const scopeId = req.params.scope_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageScope(ctx, scopeId))) {
+      return res.status(403).json({ error: 'No puede administrar este alcance' });
+    }
     const body = req.body;
     const { is_active } = body;
 
@@ -881,7 +1138,7 @@ router.patch('/scopes/:scope_id/status', async (req: Request, res: Response) => 
 
     const { data: updatedScope, error } = await Postgres
       .from('user_role_scopes')
-      .update({ is_active, updated_by: 'system', updated_at: new Date().toISOString() })
+      .update({ is_active, updated_by: ctx.userId, updated_at: new Date().toISOString() })
       .eq('id', scopeId)
       .select()
       .single();
@@ -908,6 +1165,10 @@ router.patch('/scopes/:scope_id/status', async (req: Request, res: Response) => 
 router.delete('/scopes/:scope_id', async (req: Request, res: Response) => {
   try {
     const scopeId = req.params.scope_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageScope(ctx, scopeId))) {
+      return res.status(403).json({ error: 'No puede administrar este alcance' });
+    }
     const Postgres = getPostgres();
 
     const { data: deletedScope, error } = await Postgres
@@ -934,6 +1195,9 @@ router.delete('/scopes/:scope_id', async (req: Request, res: Response) => {
 // GET / - Listar usuarios
 router.get('/', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
+    const userIds = await manageableUserIds(ctx);
+    if (userIds.length === 0) return res.status(200).json({ success: true, users: [], count: 0 });
     const Postgres = getPostgres();
 
     const { data: users, error } = await Postgres
@@ -943,6 +1207,7 @@ router.get('/', async (req: Request, res: Response) => {
         tenant:tenants!users_tenant_id_fkey(tenant_key, tenant_name),
         language:system_languages!users_preferred_language_code_fkey(language_name)
       `)
+      .in('id', userIds)
       .order('username', { ascending: true });
 
     if (error) {
@@ -950,51 +1215,7 @@ router.get('/', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    const { data: employeeRoles, error: employeeRolesError } = await Postgres
-      .from('roles')
-      .select('id')
-      .eq('role_key', 'EMPLOYEE')
-      .eq('is_active', true);
-
-    if (employeeRolesError) {
-      console.error('[USERS-MGMT] Error cargando roles EMPLOYEE:', employeeRolesError);
-      return res.status(500).json({ error: employeeRolesError.message });
-    }
-
-    const employeeRoleIds = (employeeRoles || []).map((role: any) => role.id).filter(Boolean);
-    const employeeUserIds = new Set<string>();
-    const { data: linkedEmployeeUsers, error: linkedEmployeeUsersError } = await Postgres
-      .from('employees')
-      .select('user_id')
-      .not('user_id', 'is', null);
-
-    if (linkedEmployeeUsersError) {
-      console.error('[USERS-MGMT] Error cargando usuarios vinculados a empleados:', linkedEmployeeUsersError);
-      return res.status(500).json({ error: linkedEmployeeUsersError.message });
-    }
-
-    for (const row of linkedEmployeeUsers || []) {
-      if (row.user_id) employeeUserIds.add(row.user_id);
-    }
-
-    if (employeeRoleIds.length > 0) {
-      const { data: employeeUserRoles, error: employeeUserRolesError } = await Postgres
-        .from('user_roles')
-        .select('user_id')
-        .in('role_id', employeeRoleIds)
-        .eq('is_active', true);
-
-      if (employeeUserRolesError) {
-        console.error('[USERS-MGMT] Error cargando usuarios EMPLOYEE:', employeeUserRolesError);
-        return res.status(500).json({ error: employeeUserRolesError.message });
-      }
-
-      for (const row of employeeUserRoles || []) {
-        if (row.user_id) employeeUserIds.add(row.user_id);
-      }
-    }
-
-    const usersWithLabels = (users || []).filter((u: any) => !employeeUserIds.has(u.id)).map((u: any) => ({
+    const usersWithLabels = (users || []).map((u: any) => ({
       ...u,
       tenant_key: u.tenant?.tenant_key || null,
       tenant_name: u.tenant?.tenant_name || null,
@@ -1012,6 +1233,10 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUser(ctx, id))) {
+      return res.status(403).json({ error: 'No puede administrar este usuario' });
+    }
     const Postgres = getPostgres();
 
     const { data: user, error } = await Postgres
@@ -1046,6 +1271,11 @@ router.get('/:id', async (req: Request, res: Response) => {
 // POST / - Crear usuario (crea auth.users + public.users)
 router.post('/', async (req: Request, res: Response) => {
   try {
+    const ctx = administrationContext(req);
+    if (!(await canCreateUsers(ctx))) {
+      return res.status(403).json({ error: 'No tiene permiso para crear nuevos usuarios' });
+    }
+
     const body = req.body;
     const {
       tenant_id,
@@ -1054,12 +1284,20 @@ router.post('/', async (req: Request, res: Response) => {
       email,
       phone,
       preferred_language_code,
+      role_id,
       password,
       is_active = true,
     } = body;
 
-    if (!tenant_id || !username || !email || !password) {
-      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, username, email, password' });
+    if (!tenant_id || !username || !email || !password || !role_id) {
+      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, username, email, password, role_id' });
+    }
+
+    if (tenant_id !== ctx.tenantId) {
+      return res.status(403).json({ error: 'No puede crear usuarios en otro tenant' });
+    }
+    if (!(await canManageRole(ctx, role_id))) {
+      return res.status(403).json({ error: 'Su rol no puede crear usuarios con el rol solicitado' });
     }
 
     if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email)) {
@@ -1108,7 +1346,7 @@ router.post('/', async (req: Request, res: Response) => {
         phone: phone || null,
         preferred_language_code: preferred_language_code || null,
         is_active,
-        created_by: 'system',
+        created_by: ctx.userId,
       })
       .select()
       .single();
@@ -1117,6 +1355,23 @@ router.post('/', async (req: Request, res: Response) => {
       console.error('[USERS-MGMT] Error creando public user:', userError);
       await Postgres.auth.admin.deleteUser(authUserId);
       return res.status(500).json({ error: 'Error al crear perfil de usuario', details: userError.message });
+    }
+
+    const { error: roleAssignmentError } = await Postgres
+      .from('user_roles')
+      .insert({
+        tenant_id,
+        user_id: newUser.id,
+        role_id,
+        company_id: null,
+        is_active: true,
+        created_by: ctx.userId,
+      });
+
+    if (roleAssignmentError) {
+      await Postgres.from('users').delete().eq('id', newUser.id);
+      await Postgres.auth.admin.deleteUser(authUserId);
+      return res.status(500).json({ error: 'Error al asignar el rol inicial', details: roleAssignmentError.message });
     }
 
     const { error: syncPasswordError } = await Postgres.auth.admin.updateUserById(authUserId, {
@@ -1129,7 +1384,7 @@ router.post('/', async (req: Request, res: Response) => {
       });
     }
 
-    return res.status(201).json({ success: true, user: newUser, message: 'Usuario creado exitosamente' });
+    return res.status(201).json({ success: true, user: newUser, role_id, message: 'Usuario creado exitosamente' });
   } catch (err: any) {
     console.error('[USERS-MGMT] Error en POST /:', err);
     return res.status(500).json({ error: 'Error interno del servidor', details: err.message });
@@ -1140,6 +1395,10 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUser(ctx, id))) {
+      return res.status(403).json({ error: 'No puede administrar este usuario' });
+    }
     const body = req.body;
     const { username, display_name, email, phone, preferred_language_code, is_active, password } = body;
 
@@ -1179,7 +1438,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
     }
 
-    const updateData: any = { updated_by: 'system', updated_at: new Date().toISOString() };
+    const updateData: any = { updated_by: ctx.userId, updated_at: new Date().toISOString() };
     if (username !== undefined) updateData.username = username;
     if (display_name !== undefined) updateData.display_name = display_name || null;
     if (email !== undefined) updateData.email = email;
@@ -1221,6 +1480,10 @@ router.put('/:id', async (req: Request, res: Response) => {
 router.patch('/:id/status', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUser(ctx, id))) {
+      return res.status(403).json({ error: 'No puede administrar este usuario' });
+    }
     const body = req.body;
     const { is_active } = body;
 
@@ -1232,7 +1495,7 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 
     const { data: updatedUser, error } = await Postgres
       .from('users')
-      .update({ is_active, updated_by: 'system', updated_at: new Date().toISOString() })
+      .update({ is_active, updated_by: ctx.userId, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();
@@ -1255,6 +1518,10 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
 router.patch('/:id/reset-password', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUser(ctx, id))) {
+      return res.status(403).json({ error: 'No puede administrar este usuario' });
+    }
     const body = req.body;
     const { new_password } = body;
 
@@ -1293,13 +1560,17 @@ router.patch('/:id/reset-password', async (req: Request, res: Response) => {
 router.get('/:user_id/roles', async (req: Request, res: Response) => {
   try {
     const userId = req.params.user_id;
+    const ctx = administrationContext(req);
+    if (!(await canManageUser(ctx, userId))) {
+      return res.status(403).json({ error: 'No puede administrar este usuario' });
+    }
     const Postgres = getPostgres();
 
     const { data: userRoles, error } = await Postgres
       .from('user_roles')
       .select(`
         *,
-        role:roles!user_roles_role_id_fkey(role_key, role_name, role_scope, data_scope),
+        role:roles!user_roles_role_id_fkey(role_key, role_name, role_scope, data_scope, is_org_scope_target, is_employee_access_target),
         company:companies!user_roles_company_id_fkey(id, company_name)
       `)
       .eq('user_id', userId)
@@ -1315,7 +1586,7 @@ router.get('/:user_id/roles', async (req: Request, res: Response) => {
     if (roleIds.length > 0) {
       const { data: roleRows } = await Postgres
         .from('roles')
-        .select('id, role_key, role_name, role_scope, data_scope')
+        .select('id, role_key, role_name, role_scope, data_scope, is_org_scope_target, is_employee_access_target')
         .in('id', roleIds);
       for (const roleRow of roleRows || []) roleMap.set(roleRow.id, roleRow);
     }
@@ -1328,6 +1599,8 @@ router.get('/:user_id/roles', async (req: Request, res: Response) => {
       role_name: ur.role?.role_name || fallbackRole?.role_name || null,
       role_scope: ur.role?.role_scope || fallbackRole?.role_scope || null,
       data_scope: ur.role?.data_scope || fallbackRole?.data_scope || null,
+      is_org_scope_target: ur.role?.is_org_scope_target ?? fallbackRole?.is_org_scope_target ?? false,
+      is_employee_access_target: ur.role?.is_employee_access_target ?? fallbackRole?.is_employee_access_target ?? false,
       company_name: ur.company?.company_name || null,
       });
     });
@@ -1343,11 +1616,16 @@ router.get('/:user_id/roles', async (req: Request, res: Response) => {
 router.post('/:user_id/roles', async (req: Request, res: Response) => {
   try {
     const userId = req.params.user_id;
+    const ctx = administrationContext(req);
     const body = req.body;
     const { tenant_id, role_id, company_id, valid_from, valid_to, is_active = true } = body;
 
     if (!tenant_id || !role_id) {
       return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_id' });
+    }
+
+    if (!(await canManageUser(ctx, userId)) || !(await canManageRole(ctx, role_id))) {
+      return res.status(403).json({ error: 'No puede asignar este rol al usuario' });
     }
 
     const Postgres = getPostgres();
@@ -1375,7 +1653,7 @@ router.post('/:user_id/roles', async (req: Request, res: Response) => {
         is_active,
         valid_from: valid_from || null,
         valid_to: valid_to || null,
-        created_by: 'system',
+        created_by: ctx.userId,
       })
       .select()
       .single();

@@ -1,17 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Loader2, StopCircle, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Loader2, RefreshCw, StopCircle, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   downloadMigrationExport,
+  createMassImportRun,
   generateSingleWorkbook15TabsTemplate,
   getMassImportCapabilities,
   ImportCapabilities,
   ImportLogEvent,
+  listMassImportRuns,
+  MassImportRun,
   parseSingleWorkbook15Tabs,
   runEmployeesMassiveImport,
   runReverseMassiveImport,
   runStructureMassiveImport,
   SingleWorkbookPreparedPayload,
+  updateMassImportRun,
 } from './organization-massive-import';
 import { downloadTemplate } from '../../utils/excel-templates';
 
@@ -25,22 +29,6 @@ type ActivityBar = {
   progress: number;
   level: ImportLogEvent['level'];
 };
-
-type ImportRunRecord = {
-  id: string;
-  fileName: string;
-  createdAt: string;
-  completedAt?: string | null;
-  status: 'pending' | 'completed' | 'reversed' | 'failed' | 'aborted';
-  progress: number;
-  importStartedAt: string | null;
-  structureRows: SingleWorkbookPreparedPayload['structureRows'];
-  employeeRows: SingleWorkbookPreparedPayload['employeeRows'];
-  stagedAssignments: any[];
-  summary: Record<string, any> | null;
-};
-
-const RUN_STORAGE_KEY = 'tt.organization.massive.runs';
 
 function nowEvent(
   level: ImportLogEvent['level'],
@@ -65,6 +53,12 @@ function formatTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   return date.toLocaleTimeString();
+}
+
+function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString();
 }
 
 function inferActivity(event: ImportLogEvent): { key: string; label: string } | null {
@@ -101,8 +95,9 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
   const [summary, setSummary] = useState<Record<string, any> | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importStartedAt, setImportStartedAt] = useState<string | null>(null);
-  const [runs, setRuns] = useState<ImportRunRecord[]>([]);
+  const [runs, setRuns] = useState<MassImportRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [loadingRuns, setLoadingRuns] = useState(false);
   const [capabilities, setCapabilities] = useState<ImportCapabilities>({
     can_import: true,
     can_abort: true,
@@ -112,27 +107,22 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
   const abortControllerRef = useRef<AbortController | null>(null);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => {
+  const loadRuns = async () => {
+    setLoadingRuns(true);
     try {
-      const raw = window.sessionStorage.getItem(RUN_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setRuns(parsed);
-        setSelectedRunId(parsed[0]?.id || null);
-      }
-    } catch {
-      // Ignore storage issues.
+      const history = await listMassImportRuns();
+      setRuns(history);
+      setSelectedRunId((current) => (current && history.some((run) => run.id === current) ? current : history[0]?.id || null));
+    } catch (error: any) {
+      toast.error(error?.message || 'No se pudo cargar el historial de importaciones');
+    } finally {
+      setLoadingRuns(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
-    try {
-      window.sessionStorage.setItem(RUN_STORAGE_KEY, JSON.stringify(runs));
-    } catch {
-      // Ignore storage issues.
-    }
-  }, [runs]);
+    void loadRuns();
+  }, []);
 
   useEffect(() => {
     if (!processing && !reversing) return;
@@ -183,7 +173,13 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
   );
 
   const canProcess = !!prepared && !parsing && !processing && !reversing && errors.length === 0 && capabilities.can_import;
-  const canReverse = !!selectedRun && !parsing && !processing && !reversing && capabilities.can_reverse;
+  const canReverse = !!selectedRun
+    && !parsing
+    && !processing
+    && !reversing
+    && capabilities.can_reverse
+    && selectedRun.status !== 'reversed'
+    && selectedRun.status !== 'reversing';
 
   const activityBars = useMemo<ActivityBar[]>(() => {
     const map = new Map<string, ActivityBar>();
@@ -204,15 +200,15 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     return Array.from(map.values());
   }, [logs]);
 
-  const upsertRun = (run: ImportRunRecord) => {
+  const upsertRun = (run: MassImportRun) => {
     setRuns((current) => {
-      const next = [run, ...current.filter((item) => item.id !== run.id)].slice(0, 12);
+      const next = [run, ...current.filter((item) => item.id !== run.id)].slice(0, 50);
       return next;
     });
     setSelectedRunId(run.id);
   };
 
-  const patchRun = (runId: string, patch: Partial<ImportRunRecord>) => {
+  const patchRun = (runId: string, patch: Partial<MassImportRun>) => {
     setRuns((current) =>
       current.map((run) => {
         if (run.id !== runId) return run;
@@ -221,9 +217,14 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     );
   };
 
-  const reverseRun = async (run: ImportRunRecord, reason: string) => {
+  const reverseRun = async (run: MassImportRun, reason: string) => {
+    const confirmed = window.confirm(
+      `Se eliminaran los registros creados por la carga "${run.fileName}". El historial se conservara como revertido. ¿Desea continuar?`
+    );
+    if (!confirmed) return;
     setReversing(true);
     setSelectedRunId(run.id);
+    patchRun(run.id, { status: 'reversing' });
     setLogs((prev) => [
       ...prev,
       nowEvent('warn', `Iniciando reversa de ${run.fileName}: ${reason}`, 2, 'reverse', {
@@ -234,9 +235,7 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     ]);
     try {
       const reverseResponse = await runReverseMassiveImport({
-        structureRows: run.structureRows,
-        employeeRows: run.employeeRows,
-        importStartedAt: run.importStartedAt,
+        importRunId: run.id,
       });
       setLogs((prev) => [
         ...prev,
@@ -250,20 +249,12 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
         ...reverseResponse.summary,
       });
       setProgress(100);
-      patchRun(run.id, {
-        status: 'reversed',
-        completedAt: new Date().toISOString(),
-        progress: 100,
-        summary: {
-          ...(run.summary || {}),
-          reversal_started_at: reverseResponse.started_at,
-          ...reverseResponse.summary,
-        },
-      });
-      toast.success(`Reversa ejecutada para ${run.fileName}`);
+      patchRun(run.id, { status: 'reversed', reversedAt: new Date().toISOString(), reversalSummary: reverseResponse.summary });
+      await loadRuns();
+      toast.success(`La informacion de ${run.fileName} fue eliminada`);
     } catch (error: any) {
       setLogs((prev) => [...prev, nowEvent('error', error?.message || 'Error ejecutando reversa', progress, 'reverse')]);
-      patchRun(run.id, { status: 'failed' });
+      patchRun(run.id, { status: 'failed', errorMessage: error?.message || 'Error ejecutando reversa' });
       toast.error(error?.message || 'No se pudo ejecutar la reversa');
     } finally {
       setReversing(false);
@@ -340,21 +331,7 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     setProcessing(true);
     const startedAt = new Date().toISOString();
     setImportStartedAt(startedAt);
-    const runId = `${startedAt}-${Math.random().toString(36).slice(2, 8)}`;
-    const runRecord: ImportRunRecord = {
-      id: runId,
-      fileName: fileName || 'workbook.xlsx',
-      createdAt: startedAt,
-      completedAt: null,
-      status: 'pending',
-      progress: 35,
-      importStartedAt: startedAt,
-      structureRows: prepared.structureRows,
-      employeeRows: prepared.employeeRows,
-      stagedAssignments: [],
-      summary: null,
-    };
-    upsertRun(runRecord);
+    let runRecord: MassImportRun | null = null;
     setProgress((prev) => Math.max(prev, 35));
     setLogs((prev) => [
       ...prev,
@@ -366,12 +343,25 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
     ]);
 
     try {
-      const structureResponse = await runStructureMassiveImport(prepared.structureRows, controller.signal);
-      runRecord.stagedAssignments = structureResponse.staged_assignments || [];
-      patchRun(runId, {
-        stagedAssignments: structureResponse.staged_assignments || [],
-        progress: 70,
+      runRecord = await createMassImportRun({
+        fileName: fileName || 'workbook.xlsx',
+        importStartedAt: startedAt,
+        structureRows: prepared.structureRows,
+        employeeRows: prepared.employeeRows,
       });
+      upsertRun(runRecord);
+      const structureResponse = await runStructureMassiveImport(prepared.structureRows, controller.signal);
+      const structureSummary = {
+        ...runRecord.importSummary,
+        rows_staged_assignments: (structureResponse.staged_assignments || []).length,
+        structure: structureResponse.summary,
+      };
+      runRecord = await updateMassImportRun(runRecord.id, {
+        status: 'running',
+        stagedAssignments: structureResponse.staged_assignments || [],
+        importSummary: structureSummary,
+      });
+      upsertRun(runRecord);
       setProgress(70);
       setLogs((prev) => [
         ...prev,
@@ -415,17 +405,15 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
         rows_staged_assignments: (structureResponse.staged_assignments || []).length,
         ...employeesResponse.summary,
       });
-      patchRun(runId, {
+      runRecord = await updateMassImportRun(runRecord.id, {
         status: 'completed',
-        completedAt: new Date().toISOString(),
-        progress: 100,
-        summary: {
-          rows_structure_payload: prepared.structureRows.length,
-          rows_employees_payload: prepared.employeeRows.length,
-          rows_staged_assignments: (structureResponse.staged_assignments || []).length,
+        importSummary: {
+          ...structureSummary,
           ...employeesResponse.summary,
         },
+        errorMessage: null,
       });
+      upsertRun(runRecord);
       toast.success('Carga masiva finalizada');
       onComplete();
     } catch (error: any) {
@@ -433,13 +421,12 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
       const isAbort = abortRequested || /cancelada|abort/i.test(message);
       if (isAbort) {
         setLogs((prev) => [...prev, nowEvent('warn', `Importacion interrumpida: ${message}`, 0)]);
-        patchRun(runId, {
-          status: 'aborted',
-          completedAt: new Date().toISOString(),
-          progress: 0,
-        });
+        if (runRecord) {
+          runRecord = await updateMassImportRun(runRecord.id, { status: 'aborted', errorMessage: message });
+          upsertRun(runRecord);
+        }
         if (capabilities.can_reverse) {
-          await reverseRun(runRecord, 'Abort de usuario');
+          if (runRecord) await reverseRun(runRecord, 'Abort de usuario');
         } else {
           setLogs((prev) => [
             ...prev,
@@ -449,6 +436,14 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
       } else {
         setProgress(0);
         setLogs((prev) => [...prev, nowEvent('error', message, 0)]);
+        if (runRecord) {
+          try {
+            runRecord = await updateMassImportRun(runRecord.id, { status: 'failed', errorMessage: message });
+            upsertRun(runRecord);
+          } catch {
+            // El error original de la importacion tiene prioridad.
+          }
+        }
         toast.error(message || 'No se pudo completar la importacion');
       }
     } finally {
@@ -590,7 +585,8 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
             className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700 disabled:opacity-50"
           >
             {reversing && <Loader2 className="w-4 h-4 animate-spin" />}
-            Reversar importacion
+            <Trash2 className="w-4 h-4" />
+            Eliminar carga seleccionada
           </button>
           <button
             type="button"
@@ -636,25 +632,27 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
         <div className="flex items-center justify-between gap-3 mb-3">
           <div>
             <div className="font-semibold text-slate-900">Historial de cargas</div>
-            <div className="text-xs text-slate-500">Mantiene las cargas recientes de esta sesion para reversa o limpieza visual.</div>
+            <div className="text-xs text-slate-500">
+              Registro persistente por tenant. Eliminar carga revierte sus datos y conserva la trazabilidad.
+            </div>
           </div>
           <button
             type="button"
-            onClick={() => {
-              setRuns([]);
-              setSelectedRunId(null);
-              try {
-                window.sessionStorage.removeItem(RUN_STORAGE_KEY);
-              } catch {
-                // Ignore storage issues.
-              }
-            }}
+            onClick={() => void loadRuns()}
+            disabled={loadingRuns}
             className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
           >
-            Limpiar historial
+            <span className="inline-flex items-center gap-2">
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingRuns ? 'animate-spin' : ''}`} />
+              Actualizar historial
+            </span>
           </button>
         </div>
-        {runs.length === 0 ? (
+        {loadingRuns && runs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            Cargando historial...
+          </div>
+        ) : runs.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
             Aun no hay cargas registradas.
           </div>
@@ -667,6 +665,8 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
                   ? 'Completada'
                   : run.status === 'reversed'
                     ? 'Revertida'
+                    : run.status === 'reversing'
+                      ? 'Revirtiendo'
                     : run.status === 'aborted'
                       ? 'Abortada'
                       : run.status === 'failed'
@@ -677,6 +677,8 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
                   ? 'bg-emerald-100 text-emerald-700'
                   : run.status === 'reversed'
                     ? 'bg-amber-100 text-amber-700'
+                    : run.status === 'reversing'
+                      ? 'bg-blue-100 text-blue-700'
                     : run.status === 'aborted'
                       ? 'bg-orange-100 text-orange-700'
                       : run.status === 'failed'
@@ -702,24 +704,26 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="font-medium text-slate-900">{run.fileName}</div>
-                      <div className="text-xs text-slate-500">{formatTime(run.createdAt)}</div>
+                      <div className="text-xs text-slate-500">{formatDateTime(run.createdAt)}</div>
                     </div>
                     <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${statusClass}`}>{statusLabel}</span>
                   </div>
-                  <div className="mt-3 h-2 rounded-full bg-slate-200 overflow-hidden">
-                    <div className="h-full bg-[#0F4C81] transition-all duration-300" style={{ width: `${run.progress}%` }} />
-                  </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-                    <div>Structure rows: {run.structureRows.length}</div>
-                    <div>Employee rows: {run.employeeRows.length}</div>
+                    <div>Filas de estructura: {Number(run.importSummary.rows_structure_payload || 0)}</div>
+                    <div>Filas de empleados: {Number(run.importSummary.rows_employees_payload || 0)}</div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <span className="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
-                      {run.summary ? 'Con resumen' : 'Sin resumen'}
+                      {Object.keys(run.importSummary || {}).length > 0 ? 'Con resumen' : 'Sin resumen'}
                     </span>
                     <span className="rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
-                      {run.stagedAssignments.length} asignaciones
+                      {Number(run.importSummary.rows_staged_assignments || 0)} asignaciones
                     </span>
+                    {run.reversedAt && (
+                      <span className="rounded bg-amber-100 px-2 py-1 text-[10px] text-amber-700">
+                        Revertida {formatDateTime(run.reversedAt)}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button
@@ -728,21 +732,11 @@ export default function OrganizationMassiveSingleFileStep({ onComplete }: Organi
                         event.stopPropagation();
                         reverseRun(run, 'Reversa desde historial');
                       }}
-                      disabled={!capabilities.can_reverse || reversing || run.status === 'reversed' || run.status === 'pending'}
-                      className="rounded-lg bg-amber-600 px-3 py-2 text-xs text-white hover:bg-amber-700 disabled:opacity-50"
+                      disabled={!capabilities.can_reverse || reversing || run.status === 'reversed' || run.status === 'reversing'}
+                      className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-xs text-white hover:bg-red-700 disabled:opacity-50"
                     >
-                      Reversar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setRuns((current) => current.filter((item) => item.id !== run.id));
-                        if (selectedRunId === run.id) setSelectedRunId(null);
-                      }}
-                      className="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 hover:bg-slate-50"
-                    >
-                      Borrar de lista
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {run.status === 'reversed' ? 'Carga eliminada' : 'Eliminar carga'}
                     </button>
                   </div>
                 </div>

@@ -1,7 +1,6 @@
-import { Router, Request, Response } from 'express';
+﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { withDocs } from '../lib/swagger-docs.js';
-import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 
 const router = Router();
 
@@ -116,9 +115,9 @@ function normalizeNullableText(value: any): string | null {
 
 function repairCommonMojibake(value: string): string {
   if (!value) return value;
-  if (!/[ÃÂâ€]/.test(value)) return value;
+  if (!/[ÃƒÃ‚Ã¢â‚¬]/.test(value)) return value;
   const repaired = Buffer.from(value, 'latin1').toString('utf8');
-  return repaired.includes('�') ? value : repaired;
+  return repaired.includes('ï¿½') ? value : repaired;
 }
 
 function normalizeNullableInt(value: any): number | null {
@@ -1084,7 +1083,7 @@ router.post('/', async (req: Request, res: Response) => {
     if (!companyId) return res.status(400).json({ error: 'company_id es obligatorio' });
     if (!employeeId) return res.status(400).json({ error: 'employee_id es obligatorio' });
     if (!punchDatetime || !isValidDateTime(punchDatetime)) {
-      return res.status(400).json({ error: 'punch_datetime es obligatorio y debe ser una fecha válida' });
+      return res.status(400).json({ error: 'punch_datetime es obligatorio y debe ser una fecha vÃ¡lida' });
     }
     if (punchKey === null) {
       return res.status(400).json({ error: 'punch_key es obligatorio y debe ser entero' });
@@ -1149,8 +1148,6 @@ router.post('/', async (req: Request, res: Response) => {
         actor,
       ]
     );
-
-    publishTenantDashboardEvent(tenantId, 'time_punch_created', employeeId);
     return res.status(201).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1183,7 +1180,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (!companyId) return res.status(400).json({ error: 'company_id es obligatorio' });
     if (!employeeId) return res.status(400).json({ error: 'employee_id es obligatorio' });
     if (!punchDatetime || !isValidDateTime(punchDatetime)) {
-      return res.status(400).json({ error: 'punch_datetime es obligatorio y debe ser una fecha válida' });
+      return res.status(400).json({ error: 'punch_datetime es obligatorio y debe ser una fecha vÃ¡lida' });
     }
     if (punchKey === null) {
       return res.status(400).json({ error: 'punch_key es obligatorio y debe ser entero' });
@@ -1247,8 +1244,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       ]
     );
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Marcación no encontrada' });
-    publishTenantDashboardEvent(tenantId, 'time_punch_updated', employeeId);
+    if (!result.rows[0]) return res.status(404).json({ error: 'MarcaciÃ³n no encontrada' });
     return res.status(200).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1273,8 +1269,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       [id, tenantId]
     );
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Marcación no encontrada' });
-    publishTenantDashboardEvent(tenantId, 'time_punch_deleted', null);
+    if (!result.rows[0]) return res.status(404).json({ error: 'MarcaciÃ³n no encontrada' });
     return res.status(200).json({ success: true, deleted_id: result.rows[0].id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

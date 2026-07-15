@@ -7,6 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
@@ -15,6 +16,14 @@ function getPostgres() {
     process.env.Postgres_URL || '',
     process.env.Postgres_SERVICE_ROLE_KEY || ''
   );
+}
+
+function parseOrderedIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const ids = value.map((id) => String(id || '').trim());
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  if (ids.some((id) => !uuidPattern.test(id)) || new Set(ids).size !== ids.length) return null;
+  return ids;
 }
 
 // ── Catálogos ────────────────────────────────────────────────────────────────
@@ -58,6 +67,55 @@ router.get('/', async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, menuGroups: data || [], count: (data || []).length });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Reordena todos los grupos, incluidos los inactivos, en una sola transaccion.
+router.patch('/reorder', async (req: Request, res: Response) => {
+  const orderedIds = parseOrderedIds(req.body?.ordered_ids);
+  if (!orderedIds) {
+    return res.status(400).json({ error: 'ordered_ids debe contener UUID unicos' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: menuGroupRows } = await client.query(
+      `SELECT id
+         FROM public.system_menu_groups
+        ORDER BY sort_order, menu_group_name
+        FOR UPDATE`
+    );
+    const menuGroupIds = menuGroupRows.map((row: { id: string }) => row.id);
+    if (menuGroupIds.length !== orderedIds.length || menuGroupIds.some((id: string) => !orderedIds.includes(id))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'ordered_ids debe incluir todos los grupos de menu activos e inactivos' });
+    }
+
+    const { rows } = await client.query(
+      `WITH desired AS (
+         SELECT id, (ordinality * 10)::integer AS sort_order
+           FROM unnest($1::uuid[]) WITH ORDINALITY AS item(id, ordinality)
+       )
+       UPDATE public.system_menu_groups AS menu_group
+          SET sort_order = desired.sort_order,
+              updated_by = 'SYSTEM_ADMIN',
+              updated_at = now()
+         FROM desired
+        WHERE menu_group.id = desired.id
+       RETURNING menu_group.*`,
+      [orderedIds]
+    );
+
+    await client.query('COMMIT');
+    rows.sort((a: any, b: any) => a.sort_order - b.sort_order);
+    return res.status(200).json({ success: true, menuGroups: rows, message: 'Orden de grupos actualizado' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

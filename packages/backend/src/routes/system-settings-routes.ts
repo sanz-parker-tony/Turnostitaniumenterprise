@@ -58,39 +58,27 @@ async function requireSystemAdminRole(req: Request, res: Response): Promise<bool
 
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const Postgres = createDbClient(
-      process.env.Postgres_URL || '',
-      process.env.Postgres_SERVICE_ROLE_KEY || ''
-    );
+    if (!(await requireSystemAdminRole(req, res))) return;
 
-    // Query principal con JOINs para obtener labels
-    const { data: settings, error } = await Postgres
-      .from('system_settings')
-      .select(`
-        *,
-        value_type:lookup_values!system_settings_value_type_id_fkey(lookup_key, lookup_label),
-        allowed_lookup_group:lookup_groups!system_settings_allowed_lookup_group_id_fkey(group_key, group_name)
-      `)
-      .order('setting_short_key', { ascending: true });
-
-    if (error) {
-      console.error('[SYSTEM-SETTINGS] Error cargando parámetros:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    // Transformar datos para incluir labels desnormalizados
-    const settingsWithLabels = (settings || []).map((setting: any) => ({
-      ...setting,
-      value_type_key: setting.value_type?.lookup_key || null,
-      value_type_label: setting.value_type?.lookup_label || null,
-      allowed_lookup_group_key: setting.allowed_lookup_group?.group_key || null,
-      allowed_lookup_group_name: setting.allowed_lookup_group?.group_name || null,
-    }));
+    const result = await pool.query(`
+      SELECT
+        ss.*,
+        value_type.lookup_key AS value_type_key,
+        value_type.lookup_label AS value_type_label,
+        allowed_group.lookup_group_key AS allowed_lookup_group_key,
+        allowed_group.lookup_group_label AS allowed_lookup_group_name
+      FROM public.system_settings ss
+      JOIN public.lookup_values value_type
+        ON value_type.id = ss.value_type_id
+      LEFT JOIN public.lookup_groups allowed_group
+        ON allowed_group.id = ss.allowed_lookup_group_id
+      ORDER BY ss.setting_short_key ASC
+    `);
 
     return res.status(200).json({
       success: true,
-      settings: settingsWithLabels,
-      count: settingsWithLabels.length,
+      settings: result.rows,
+      count: result.rows.length,
     });
 
   } catch (err) {
@@ -105,39 +93,35 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.get('/:id', async (req: Request, res: Response) => {
   try {
+    if (!(await requireSystemAdminRole(req, res))) return;
+
     const id = req.params.id;
-    
-    const Postgres = createDbClient(
-      process.env.Postgres_URL || '',
-      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    const result = await pool.query(
+      `
+        SELECT
+          ss.*,
+          value_type.lookup_key AS value_type_key,
+          value_type.lookup_label AS value_type_label,
+          allowed_group.lookup_group_key AS allowed_lookup_group_key,
+          allowed_group.lookup_group_label AS allowed_lookup_group_name
+        FROM public.system_settings ss
+        JOIN public.lookup_values value_type
+          ON value_type.id = ss.value_type_id
+        LEFT JOIN public.lookup_groups allowed_group
+          ON allowed_group.id = ss.allowed_lookup_group_id
+        WHERE ss.id = $1::uuid
+        LIMIT 1
+      `,
+      [id]
     );
 
-    const { data: setting, error } = await Postgres
-      .from('system_settings')
-      .select(`
-        *,
-        value_type:lookup_values!system_settings_value_type_id_fkey(lookup_key, lookup_label),
-        allowed_lookup_group:lookup_groups!system_settings_allowed_lookup_group_id_fkey(group_key, group_name)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (error) {
-      console.error('[SYSTEM-SETTINGS] Error cargando parámetro:', error);
-      return res.status(500).json({ error: error.message });
-    }
-
-    if (!setting) {
+    if (!result.rows.length) {
       return res.status(404).json({ error: 'Parámetro no encontrado' });
     }
 
     return res.status(200).json({
       success: true,
-      setting: {
-        ...setting,
-        value_type_label: setting.value_type?.lookup_label || null,
-        allowed_lookup_group_name: setting.allowed_lookup_group?.group_name || null,
-      },
+      setting: result.rows[0],
     });
 
   } catch (err) {

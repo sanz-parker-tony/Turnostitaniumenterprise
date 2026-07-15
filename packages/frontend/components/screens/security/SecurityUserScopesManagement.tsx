@@ -245,7 +245,7 @@ export default function SecurityUserScopesManagement() {
     if (!token) return;
     setIsLoadingTargets(true);
     try {
-      const response = await authorizedFetch('/targets');
+      const response = await authorizedFetch('/targets?capability=ORG_SCOPE');
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'No se pudo cargar usuarios objetivo');
       const nextTargets = (payload.targets || []) as Target[];

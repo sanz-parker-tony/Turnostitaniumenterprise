@@ -34,7 +34,7 @@ async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
   };
 }
 
-async function ensureTenantAdmin(ctx: AuthContext): Promise<boolean> {
+async function ensureSystemAdmin(ctx: AuthContext): Promise<boolean> {
   const result = await pool.query(
     `
       SELECT 1
@@ -44,7 +44,7 @@ async function ensureTenantAdmin(ctx: AuthContext): Promise<boolean> {
         AND ur.tenant_id = $2
         AND ur.is_active = true
         AND r.is_active = true
-        AND r.role_key = 'TENANT_ADMIN'
+        AND r.role_key = 'SYSTEM_ADMIN'
       LIMIT 1
     `,
     [ctx.userId, ctx.tenantId]
@@ -74,8 +74,8 @@ router.get('/catalogs/roles', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar permisos por rol' });
+    const isSystemAdmin = await ensureSystemAdmin(ctx);
+    if (!isSystemAdmin) return res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar permisos por rol' });
 
     const rolesResult = await pool.query(
       `
@@ -104,8 +104,8 @@ router.get('/catalogs/screen-actions', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar permisos por rol' });
+    const isSystemAdmin = await ensureSystemAdmin(ctx);
+    if (!isSystemAdmin) return res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar permisos por rol' });
 
     const result = await pool.query(
       `
@@ -150,8 +150,8 @@ router.get('/:role_id/permissions', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar permisos por rol' });
+    const isSystemAdmin = await ensureSystemAdmin(ctx);
+    if (!isSystemAdmin) return res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar permisos por rol' });
 
     const roleId = String(req.params.role_id || '').trim();
     if (!roleId) return res.status(400).json({ error: 'role_id es requerido' });
@@ -190,8 +190,8 @@ router.post('/:role_id/permissions/bulk-upsert', async (req: Request, res: Respo
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar permisos por rol' });
+    const isSystemAdmin = await ensureSystemAdmin(ctx);
+    if (!isSystemAdmin) return res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede gestionar permisos por rol' });
 
     const roleId = String(req.params.role_id || '').trim();
     const permissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];

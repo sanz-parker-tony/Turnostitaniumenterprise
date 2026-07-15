@@ -3,20 +3,93 @@
  * Turnos Titanium Enterprise — Servicio de Parámetros de Configuración
  *
  * Implementa la lógica de resolución jerárquica:
- *   employee_profile_settings > company_settings > tenant_settings > system_settings
+ *   employee_settings > employee_profile_settings > company_settings > tenant_settings > system_settings
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
 import { pool } from '../lib/db.js';
 
 const router = Router();
 
+type SettingsAuthContext = {
+  userId: string;
+  tenantId: string;
+  authUserId: string;
+};
+
+function settingsContext(req: Request): SettingsAuthContext {
+  return (req as any).settingsAuthContext as SettingsAuthContext;
+}
+
+async function resolveSettingsAuthContext(req: Request): Promise<SettingsAuthContext | null> {
+  const authUserId = String((req as any)?.user?.id || '').trim();
+  if (!authUserId) return null;
+
+  const result = await pool.query(
+    `
+      SELECT id AS user_id, tenant_id
+      FROM public.users
+      WHERE auth_user_id = $1
+        AND is_active = true
+      LIMIT 1
+    `,
+    [authUserId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return { userId: String(row.user_id), tenantId: String(row.tenant_id), authUserId };
+}
+
+async function hasSettingsScreenAction(ctx: SettingsAuthContext, actionKey: 'VIEW' | 'EDIT' | 'ASSIGN'): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT 1
+      FROM public.user_roles ur
+      JOIN public.roles r ON r.id = ur.role_id AND r.is_active = true
+      JOIN public.role_screen_actions rsa
+        ON rsa.tenant_id = ur.tenant_id
+       AND rsa.role_id = ur.role_id
+       AND rsa.is_active = true
+       AND rsa.is_allowed = true
+      JOIN public.screen_actions sa ON sa.id = rsa.screen_action_id AND sa.is_active = true
+      JOIN public.screens s ON s.id = sa.screen_id AND s.is_active = true
+      JOIN public.actions a ON a.id = sa.action_id AND a.is_active = true
+      WHERE ur.user_id = $1
+        AND ur.tenant_id = $2
+        AND ur.is_active = true
+        AND s.screen_key = 'SYSTEM_SETTINGS_MANAGEMENT'
+        AND a.action_key = $3
+      LIMIT 1
+    `,
+    [ctx.userId, ctx.tenantId, actionKey]
+  );
+  return result.rows.length > 0;
+}
+
+async function entityBelongsToTenant(
+  ctx: SettingsAuthContext,
+  entity: 'TENANT' | 'COMPANY' | 'PROFILE' | 'EMPLOYEE',
+  entityId: string
+): Promise<boolean> {
+  if (entity === 'TENANT') return entityId === ctx.tenantId;
+  const tableByEntity = {
+    COMPANY: 'companies',
+    PROFILE: 'employee_profiles',
+    EMPLOYEE: 'employees',
+  } as const;
+  const result = await pool.query(
+    `SELECT 1 FROM public.${tableByEntity[entity]} WHERE id = $1 AND tenant_id = $2 AND is_active = true LIMIT 1`,
+    [entityId, ctx.tenantId]
+  );
+  return result.rows.length > 0;
+}
+
 // ============================================================================
 // TIPOS
 // ============================================================================
 
-type SourceLevel = "PROFILE" | "COMPANY" | "TENANT" | "SYSTEM";
+type SourceLevel = "EMPLOYEE" | "PROFILE" | "COMPANY" | "TENANT" | "SYSTEM";
 type ValueType = "STRING" | "NUMBER" | "BOOLEAN" | "DATE" | "DATETIME" | "JSON";
 
 interface SystemSetting {
@@ -40,6 +113,7 @@ interface EffectiveSettingResult {
   setting_key: string;
   setting_name: string;
   setting_short_key: string;
+  is_active: boolean;
   value_type_id: string | null;
   value_type_key: string | null;
   allowed_lookup_group_id: string | null;
@@ -205,6 +279,56 @@ async function normalizeLookupValue(
 // CATÁLOGO MAESTRO — system_settings
 // ============================================================================
 
+router.use(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const ctx = await resolveSettingsAuthContext(req);
+    if (!ctx) return res.status(401).json({ error: 'No autenticado' });
+    (req as any).settingsAuthContext = ctx;
+
+    const overrideMatch = req.path.match(/^\/(tenants|companies|employee-profiles|employees)\/([^/]+)\/settings-overrides(?:\/|$)/);
+    if (overrideMatch) {
+      const entityByPath = {
+        tenants: 'TENANT',
+        companies: 'COMPANY',
+        'employee-profiles': 'PROFILE',
+        employees: 'EMPLOYEE',
+      } as const;
+      const entity = entityByPath[overrideMatch[1] as keyof typeof entityByPath];
+      const entityId = String(overrideMatch[2] || '');
+      const actionKey = req.method === 'GET' ? 'VIEW' : 'ASSIGN';
+
+      if (!(await hasSettingsScreenAction(ctx, actionKey))) {
+        return res.status(403).json({ error: `No autorizado para ${actionKey === 'VIEW' ? 'consultar' : 'asignar valores de'} parámetros` });
+      }
+      if (!(await entityBelongsToTenant(ctx, entity, entityId))) {
+        return res.status(403).json({ error: 'El nivel solicitado no pertenece al tenant autenticado' });
+      }
+    }
+
+    if (req.path === '/effective' || req.path === '/all-effective') {
+      const tenantId = String(req.query.tenant_id || '');
+      if (tenantId !== ctx.tenantId) {
+        return res.status(403).json({ error: 'No puede resolver parámetros de otro tenant' });
+      }
+      const checks: Array<['COMPANY' | 'PROFILE' | 'EMPLOYEE', string]> = [
+        ['COMPANY', String(req.query.company_id || '')],
+        ['PROFILE', String(req.query.profile_id || '')],
+        ['EMPLOYEE', String(req.query.employee_id || '')],
+      ];
+      for (const [entity, entityId] of checks) {
+        if (entityId && !(await entityBelongsToTenant(ctx, entity, entityId))) {
+          return res.status(403).json({ error: `${entity.toLowerCase()} no pertenece al tenant autenticado` });
+        }
+      }
+    }
+
+    return next();
+  } catch (error: any) {
+    console.error('[SETTINGS] Error validando contexto:', error);
+    return res.status(500).json({ error: 'Error validando seguridad de parámetros', details: error.message });
+  }
+});
+
 router.get('/system-settings', async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgresClient();
@@ -360,13 +484,14 @@ router.get('/effective', async (req: Request, res: Response) => {
     const settingKey = req.query.setting_key as string;
     const companyId = req.query.company_id as string;
     const profileId = req.query.profile_id as string;
+    const employeeId = req.query.employee_id as string;
 
     if (!tenantId) return res.status(400).json({ error: "tenant_id es obligatorio" });
     if (!settingKey) return res.status(400).json({ error: "setting_key es obligatorio" });
 
     const Postgres = getPostgresClient();
     const result = await resolveEffectiveSetting(Postgres, {
-      tenantId, companyId, profileId, settingKey,
+      tenantId, companyId, profileId, employeeId, settingKey,
     });
 
     if (!result) return res.status(404).json({ error: `Parámetro '${settingKey}' no encontrado` });
@@ -382,6 +507,7 @@ router.get('/all-effective', async (req: Request, res: Response) => {
     const tenantId = req.query.tenant_id as string;
     const companyId = req.query.company_id as string;
     const profileId = req.query.profile_id as string;
+    const employeeId = req.query.employee_id as string;
 
     if (!tenantId) return res.status(400).json({ error: "tenant_id es obligatorio" });
 
@@ -394,7 +520,6 @@ router.get('/all-effective', async (req: Request, res: Response) => {
         value_type:lookup_values!system_settings_value_type_fkey(lookup_key),
         allowed_lookup_group:lookup_groups!system_settings_allowed_lookup_group_id_fkey(group_key, group_name)
       `)
-      .eq("is_active", true)
       .order("setting_key");
 
     if (settingsError) throw settingsError;
@@ -402,7 +527,7 @@ router.get('/all-effective', async (req: Request, res: Response) => {
       return res.status(200).json({ effective_settings: [] });
     }
 
-    const [tenantOverrides, companyOverrides, profileOverrides] = await Promise.all([
+    const [tenantOverrides, companyOverrides, profileOverrides, employeeOverrides] = await Promise.all([
       Postgres
         .from("tenant_settings")
         .select("system_setting_id, setting_value, is_active")
@@ -423,6 +548,14 @@ router.get('/all-effective', async (req: Request, res: Response) => {
             .eq("tenant_id", tenantId)
             .eq("is_active", true)
         : Promise.resolve({ data: [], error: null }),
+      employeeId
+        ? Postgres
+            .from("employee_settings")
+            .select("system_setting_id, setting_value, is_active")
+            .eq("employee_id", employeeId)
+            .eq("tenant_id", tenantId)
+            .eq("is_active", true)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
     const tenantMap = new Map<string, string | null>(
@@ -433,6 +566,9 @@ router.get('/all-effective', async (req: Request, res: Response) => {
     );
     const profileMap = new Map<string, string | null>(
       (profileOverrides.data ?? []).map((r: any) => [r.system_setting_id, toNullableString(r.setting_value)])
+    );
+    const employeeMap = new Map<string, string | null>(
+      (employeeOverrides.data ?? []).map((r: any) => [r.system_setting_id, toNullableString(r.setting_value)])
     );
 
     const results: EffectiveSettingResult[] = allSettings.map((ss: any) => {
@@ -455,12 +591,18 @@ router.get('/all-effective', async (req: Request, res: Response) => {
         localValue = effectiveValue;
         sourceLevel = "PROFILE";
       }
+      if (employeeMap.has(ss.id)) {
+        effectiveValue = employeeMap.get(ss.id) ?? effectiveValue;
+        localValue = effectiveValue;
+        sourceLevel = "EMPLOYEE";
+      }
 
       return {
         system_setting_id: ss.id,
         setting_key: ss.setting_key,
         setting_name: ss.setting_name,
         setting_short_key: ss.setting_short_key,
+        is_active: ss.is_active !== false,
         value_type_id: ss.value_type_id,
         value_type_key: ss.value_type?.lookup_key ?? null,
         allowed_lookup_group_id: ss.allowed_lookup_group_id ?? null,
@@ -482,9 +624,9 @@ router.get('/all-effective', async (req: Request, res: Response) => {
 
 async function resolveEffectiveSetting(
   Postgres: any,
-  opts: { tenantId: string; companyId?: string | null; profileId?: string | null; settingKey: string }
+  opts: { tenantId: string; companyId?: string | null; profileId?: string | null; employeeId?: string | null; settingKey: string }
 ): Promise<EffectiveSettingResult | null> {
-  const { tenantId, companyId, profileId, settingKey } = opts;
+  const { tenantId, companyId, profileId, employeeId, settingKey } = opts;
 
   const { data: ss, error: ssError } = await Postgres
     .from("system_settings")
@@ -550,11 +692,29 @@ async function resolveEffectiveSetting(
     }
   }
 
+  if (employeeId) {
+    const { data: employeeOverride } = await Postgres
+      .from("employee_settings")
+      .select("setting_value")
+      .eq("employee_id", employeeId)
+      .eq("tenant_id", tenantId)
+      .eq("system_setting_id", ss.id)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (employeeOverride) {
+      effectiveValue = toNullableString(employeeOverride.setting_value) ?? effectiveValue;
+      localValue = effectiveValue;
+      sourceLevel = "EMPLOYEE";
+    }
+  }
+
   return {
     system_setting_id: ss.id,
     setting_key: ss.setting_key,
     setting_name: ss.setting_name,
     setting_short_key: ss.setting_short_key,
+    is_active: ss.is_active !== false,
     value_type_id: ss.value_type_id,
     value_type_key: ss.value_type?.lookup_key ?? null,
     allowed_lookup_group_id: ss.allowed_lookup_group_id ?? null,
@@ -614,8 +774,9 @@ router.get('/tenants/:id/settings-overrides', async (req: Request, res: Response
 router.post('/tenants/:id/settings-overrides', async (req: Request, res: Response) => {
   try {
     const tenantId = req.params.id;
+    const ctx = settingsContext(req);
     const body = req.body;
-    const { system_setting_id, setting_value, created_by, is_active } = body;
+    const { system_setting_id, setting_value, is_active } = body;
 
     if (!system_setting_id) return res.status(400).json({ error: "system_setting_id es obligatorio" });
     if (setting_value === undefined || setting_value === null) {
@@ -662,7 +823,7 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
         .update({
           setting_value: finalSettingValue,
           is_active: is_active !== false,
-          updated_by: created_by || "ADMIN",
+          updated_by: ctx.userId,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existing.id)
@@ -678,7 +839,7 @@ router.post('/tenants/:id/settings-overrides', async (req: Request, res: Respons
           system_setting_id,
           setting_value: finalSettingValue,
           is_active: is_active !== false,
-          created_by: created_by || "ADMIN",
+          created_by: ctx.userId,
         })
         .select()
         .single();
@@ -698,15 +859,10 @@ router.delete('/tenants/:id/settings-overrides/:setting_id', async (req: Request
   try {
     const tenantId = req.params.id;
     const settingId = req.params.setting_id;
-    const Postgres = getPostgresClient();
-
-    const { error } = await Postgres
-      .from("tenant_settings")
-      .delete()
-      .eq("id", settingId)
-      .eq("tenant_id", tenantId);
-
-    if (error) throw error;
+    await pool.query(
+      `DELETE FROM public.tenant_settings WHERE tenant_id = $1 AND (id = $2 OR system_setting_id = $2)`,
+      [tenantId, settingId]
+    );
     console.log(`✅ [deleteTenantSettingOverride] Override eliminado (herencia restaurada)`);
     return res.status(200).json({ success: true, message: "Override eliminado. El parámetro ahora hereda del sistema." });
   } catch (err: any) {
@@ -763,11 +919,11 @@ router.get('/companies/:id/settings-overrides', async (req: Request, res: Respon
 router.post('/companies/:id/settings-overrides', async (req: Request, res: Response) => {
   try {
     const companyId = req.params.id;
+    const ctx = settingsContext(req);
     const body = req.body;
-    const { system_setting_id, setting_value, tenant_id, created_by, is_active } = body;
+    const { system_setting_id, setting_value, is_active } = body;
 
     if (!system_setting_id) return res.status(400).json({ error: "system_setting_id es obligatorio" });
-    if (!tenant_id) return res.status(400).json({ error: "tenant_id es obligatorio" });
     if (setting_value === undefined || setting_value === null) {
       return res.status(400).json({ error: "setting_value es obligatorio. Para heredar, usar DELETE." });
     }
@@ -810,7 +966,7 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
         .update({
           setting_value: finalSettingValue,
           is_active: is_active !== false,
-          updated_by: created_by || "ADMIN",
+          updated_by: ctx.userId,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existing.id)
@@ -822,12 +978,12 @@ router.post('/companies/:id/settings-overrides', async (req: Request, res: Respo
       const { data, error } = await Postgres
         .from("company_settings")
         .insert({
-          tenant_id,
+          tenant_id: ctx.tenantId,
           company_id: companyId,
           system_setting_id,
           setting_value: finalSettingValue,
           is_active: is_active !== false,
-          created_by: created_by || "ADMIN",
+          created_by: ctx.userId,
         })
         .select()
         .single();
@@ -847,15 +1003,10 @@ router.delete('/companies/:id/settings-overrides/:setting_id', async (req: Reque
   try {
     const companyId = req.params.id;
     const settingId = req.params.setting_id;
-    const Postgres = getPostgresClient();
-
-    const { error } = await Postgres
-      .from("company_settings")
-      .delete()
-      .eq("id", settingId)
-      .eq("company_id", companyId);
-
-    if (error) throw error;
+    await pool.query(
+      `DELETE FROM public.company_settings WHERE company_id = $1 AND (id = $2 OR system_setting_id = $2)`,
+      [companyId, settingId]
+    );
     return res.status(200).json({ success: true, message: "Override eliminado. El parámetro ahora hereda del tenant/sistema." });
   } catch (err: any) {
     console.error("❌ [deleteCompanySettingOverride]", err);
@@ -870,10 +1021,8 @@ router.delete('/companies/:id/settings-overrides/:setting_id', async (req: Reque
 router.get('/employee-profiles/:id/settings-overrides', async (req: Request, res: Response) => {
   try {
     const profileId = req.params.id;
-    const tenantId = req.query.tenant_id as string;
+    const tenantId = settingsContext(req).tenantId;
     const Postgres = getPostgresClient();
-
-    if (!tenantId) return res.status(400).json({ error: "tenant_id es obligatorio" });
 
     const { data, error } = await Postgres
       .from("employee_profile_settings")
@@ -916,13 +1065,16 @@ router.get('/employee-profiles/:id/settings-overrides', async (req: Request, res
 router.post('/employee-profiles/:id/settings-overrides', async (req: Request, res: Response) => {
   try {
     const profileId = req.params.id;
+    const ctx = settingsContext(req);
     const body = req.body;
-    const { system_setting_id, setting_value, tenant_id, company_id, created_by, is_active } = body;
+    const { system_setting_id, setting_value, company_id, is_active } = body;
 
     if (!system_setting_id) return res.status(400).json({ error: "system_setting_id es obligatorio" });
-    if (!tenant_id) return res.status(400).json({ error: "tenant_id es obligatorio" });
     if (setting_value === undefined || setting_value === null) {
       return res.status(400).json({ error: "setting_value es obligatorio. Para heredar, usar DELETE." });
+    }
+    if (company_id && !(await entityBelongsToTenant(ctx, 'COMPANY', String(company_id)))) {
+      return res.status(403).json({ error: 'company_id no pertenece al tenant autenticado' });
     }
 
     const Postgres = getPostgresClient();
@@ -953,7 +1105,7 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
       .from("employee_profile_settings")
       .select("id")
       .eq("employee_profile_id", profileId)
-      .eq("tenant_id", tenant_id)
+      .eq("tenant_id", ctx.tenantId)
       .eq("system_setting_id", system_setting_id)
       .maybeSingle();
 
@@ -965,7 +1117,7 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
           setting_value: finalSettingValue,
           company_id: company_id || null,
           is_active: is_active !== false,
-          updated_by: created_by || "ADMIN",
+          updated_by: ctx.userId,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existing.id)
@@ -977,13 +1129,13 @@ router.post('/employee-profiles/:id/settings-overrides', async (req: Request, re
       const { data, error } = await Postgres
         .from("employee_profile_settings")
         .insert({
-          tenant_id,
+          tenant_id: ctx.tenantId,
           company_id: company_id || null,
           employee_profile_id: profileId,
           system_setting_id,
           setting_value: finalSettingValue,
           is_active: is_active !== false,
-          created_by: created_by || "ADMIN",
+          created_by: ctx.userId,
         })
         .select()
         .single();
@@ -1003,22 +1155,159 @@ router.delete('/employee-profiles/:id/settings-overrides/:setting_id', async (re
   try {
     const profileId = req.params.id;
     const settingId = req.params.setting_id;
-    const tenantId = req.query.tenant_id as string;
-    const Postgres = getPostgresClient();
-
-    let query = Postgres
-      .from("employee_profile_settings")
-      .delete()
-      .eq("id", settingId)
-      .eq("employee_profile_id", profileId);
-
-    if (tenantId) query = query.eq("tenant_id", tenantId);
-
-    const { error } = await query;
-    if (error) throw error;
+    const tenantId = settingsContext(req).tenantId;
+    await pool.query(
+      `DELETE FROM public.employee_profile_settings WHERE tenant_id = $1 AND employee_profile_id = $2 AND (id = $3 OR system_setting_id = $3)`,
+      [tenantId, profileId, settingId]
+    );
     return res.status(200).json({ success: true, message: "Override eliminado. El parámetro ahora hereda del nivel superior." });
   } catch (err: any) {
     console.error("❌ [deleteProfileSettingOverride]", err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// OVERRIDES — NIVEL EMPLOYEE (máxima prioridad)
+// ============================================================================
+
+router.get('/employees/:id/settings-overrides', async (req: Request, res: Response) => {
+  try {
+    const employeeId = req.params.id;
+    const ctx = settingsContext(req);
+    const Postgres = getPostgresClient();
+    const { data, error } = await Postgres
+      .from('employee_settings')
+      .select(`
+        id, tenant_id, employee_id, system_setting_id, setting_value, is_active,
+        created_by, created_at, updated_by, updated_at,
+        system_setting:system_settings (
+          id, setting_key, setting_name, setting_short_key, default_value, is_active,
+          value_type:lookup_values!system_settings_value_type_fkey (lookup_key, lookup_label)
+        )
+      `)
+      .eq('employee_id', employeeId)
+      .eq('tenant_id', ctx.tenantId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return res.status(200).json({ overrides: data ?? [] });
+  } catch (err: any) {
+    console.error('[getEmployeeSettingOverrides]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/employees/:id/settings-overrides', async (req: Request, res: Response) => {
+  try {
+    const employeeId = req.params.id;
+    const ctx = settingsContext(req);
+    const { system_setting_id, setting_value, is_active } = req.body;
+    if (!system_setting_id) return res.status(400).json({ error: 'system_setting_id es obligatorio' });
+    if (setting_value === undefined || setting_value === null) {
+      return res.status(400).json({ error: 'setting_value es obligatorio. Para heredar, usar DELETE.' });
+    }
+
+    const Postgres = getPostgresClient();
+    const { data: ss, error: ssErr } = await Postgres
+      .from('system_settings')
+      .select('id, setting_key, allowed_lookup_group_id, value_type:lookup_values!system_settings_value_type_fkey(lookup_key)')
+      .eq('id', system_setting_id)
+      .eq('is_active', true)
+      .single();
+    if (ssErr || !ss) return res.status(400).json({ error: 'Parámetro no encontrado o inactivo en el catálogo' });
+
+    const valueType = (ss as any).value_type;
+    const typeKey = Array.isArray(valueType) ? valueType[0]?.lookup_key ?? null : valueType?.lookup_key ?? null;
+    let finalSettingValue = String(setting_value);
+    const validationError = validateSettingValue(finalSettingValue, typeKey);
+    if (validationError) return res.status(400).json({ error: validationError });
+    if (String(typeKey || '').toUpperCase() === 'LOOKUP') {
+      const normalized = await normalizeLookupValue(Postgres, (ss as any).allowed_lookup_group_id ?? null, finalSettingValue);
+      if (normalized.error) return res.status(400).json({ error: normalized.error });
+      finalSettingValue = String(normalized.normalized);
+    }
+
+    const { data: existing } = await Postgres
+      .from('employee_settings')
+      .select('id')
+      .eq('employee_id', employeeId)
+      .eq('system_setting_id', system_setting_id)
+      .maybeSingle();
+
+    const mutation = existing
+      ? Postgres.from('employee_settings').update({
+          setting_value: finalSettingValue,
+          is_active: is_active !== false,
+          updated_by: ctx.userId,
+          updated_at: new Date().toISOString(),
+        }).eq('id', existing.id)
+      : Postgres.from('employee_settings').insert({
+          tenant_id: ctx.tenantId,
+          employee_id: employeeId,
+          system_setting_id,
+          setting_value: finalSettingValue,
+          is_active: is_active !== false,
+          created_by: ctx.userId,
+        });
+    const { data, error } = await mutation.select().single();
+    if (error) throw error;
+    return res.status(200).json({ override: data });
+  } catch (err: any) {
+    console.error('[upsertEmployeeSettingOverride]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/employees/:id/settings-overrides/:setting_id', async (req: Request, res: Response) => {
+  try {
+    const ctx = settingsContext(req);
+    await pool.query(
+      `DELETE FROM public.employee_settings WHERE tenant_id = $1 AND employee_id = $2 AND (id = $3 OR system_setting_id = $3)`,
+      [ctx.tenantId, req.params.id, req.params.setting_id]
+    );
+    return res.status(200).json({ success: true, message: 'Override eliminado. El parámetro ahora hereda del nivel superior.' });
+  } catch (err: any) {
+    console.error('[deleteEmployeeSettingOverride]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/override-context', async (req: Request, res: Response) => {
+  try {
+    const ctx = settingsContext(req);
+    if (!(await hasSettingsScreenAction(ctx, 'VIEW'))) {
+      return res.status(403).json({ error: 'No autorizado para consultar parámetros' });
+    }
+    const [tenant, companies, profiles, employees] = await Promise.all([
+      pool.query(`SELECT id, tenant_key, tenant_name FROM public.tenants WHERE id = $1 AND is_active = true`, [ctx.tenantId]),
+      pool.query(`SELECT id, company_name, company_short_name FROM public.companies WHERE tenant_id = $1 AND is_active = true ORDER BY company_name`, [ctx.tenantId]),
+      pool.query(`SELECT id, profile_name, profile_short_name FROM public.employee_profiles WHERE tenant_id = $1 AND is_active = true ORDER BY profile_name`, [ctx.tenantId]),
+      pool.query(
+        `
+          SELECT e.id, e.employee_code, e.employee_name, e.employee_lastname,
+                 ec.company_id, ec.employee_profile_id
+          FROM public.employees e
+          LEFT JOIN LATERAL (
+            SELECT company_id, employee_profile_id
+            FROM public.employee_companies
+            WHERE tenant_id = e.tenant_id AND employee_id = e.id AND is_active = true
+            ORDER BY created_at
+            LIMIT 1
+          ) ec ON true
+          WHERE e.tenant_id = $1 AND e.is_active = true
+          ORDER BY e.employee_lastname, e.employee_name
+        `,
+        [ctx.tenantId]
+      ),
+    ]);
+    return res.status(200).json({
+      tenant: tenant.rows[0] || null,
+      companies: companies.rows,
+      employee_profiles: profiles.rows,
+      employees: employees.rows,
+    });
+  } catch (err: any) {
+    console.error('[getSettingsOverrideContext]', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -1031,8 +1320,7 @@ router.get('/lookup-values/setting-data-types', async (req: Request, res: Respon
   try {
     const Postgres = getPostgresClient();
     const groupIdFromQuery = String(req.query.lookup_group_id || '').trim();
-    const DEFAULT_DATA_TYPE_GROUP_ID = 'c4563361-5cf8-4333-c7d1-0868f75e6c2d';
-    let targetGroupId = groupIdFromQuery || DEFAULT_DATA_TYPE_GROUP_ID;
+    let targetGroupId = groupIdFromQuery;
 
     if (!targetGroupId) {
       const { data: dataTypeGroup } = await Postgres

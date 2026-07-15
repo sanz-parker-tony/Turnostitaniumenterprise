@@ -167,7 +167,7 @@ export default function SecurityUserEmployeeAccessManagement() {
         setCapabilities(capsPayload.capabilities as EmployeeAccessCapabilities);
       }
 
-      const response = await authorizedFetch('/targets');
+      const response = await authorizedFetch('/targets?capability=EMPLOYEE_ACCESS');
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'No se pudo cargar usuarios objetivo');
       const list = (payload.targets || []) as Target[];

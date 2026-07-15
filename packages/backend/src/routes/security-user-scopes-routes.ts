@@ -56,17 +56,32 @@ async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
   };
 }
 
-async function ensureTenantAdmin(ctx: AuthContext): Promise<boolean> {
+type UserGovernanceCapability = 'ORG_SCOPE' | 'EMPLOYEE_ACCESS';
+
+function governanceCapabilityColumn(capability: UserGovernanceCapability): string {
+  return capability === 'ORG_SCOPE' ? 'is_org_scope_target' : 'is_employee_access_target';
+}
+
+async function ensureActorHasGovernedTargets(
+  ctx: AuthContext,
+  capability: UserGovernanceCapability
+): Promise<boolean> {
+  const capabilityColumn = governanceCapabilityColumn(capability);
   const result = await pool.query(
     `
       SELECT 1
-      FROM user_roles ur
-      JOIN roles r ON r.id = ur.role_id
-      WHERE ur.user_id = $1
-        AND ur.tenant_id = $2
-        AND ur.is_active = true
-        AND r.is_active = true
-        AND r.role_key = 'TENANT_ADMIN'
+      FROM user_roles actor_ur
+      JOIN roles actor_role
+        ON actor_role.id = actor_ur.role_id
+       AND actor_role.is_active = true
+      JOIN roles target_role
+        ON target_role.tenant_id = actor_ur.tenant_id
+       AND target_role.user_manager_role_id = actor_role.id
+       AND target_role.is_active = true
+       AND target_role.${capabilityColumn} = true
+      WHERE actor_ur.user_id = $1
+        AND actor_ur.tenant_id = $2
+        AND actor_ur.is_active = true
       LIMIT 1
     `,
     [ctx.userId, ctx.tenantId]
@@ -75,19 +90,40 @@ async function ensureTenantAdmin(ctx: AuthContext): Promise<boolean> {
   return result.rows.length > 0;
 }
 
-async function ensureTargetUserRole(tenantId: string, userRoleId: string): Promise<boolean> {
+async function ensureActorCanManageTargetUserRole(
+  ctx: AuthContext,
+  userRoleId: string,
+  capability: UserGovernanceCapability
+): Promise<boolean> {
+  const capabilityColumn = governanceCapabilityColumn(capability);
   const result = await pool.query(
     `
       SELECT 1
-      FROM v_user_roles_employee_scope_targets t
-      WHERE t.tenant_id = $1
-        AND t.user_role_id = $2
+      FROM user_roles target_ur
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+       AND target_role.${capabilityColumn} = true
+      JOIN user_roles actor_ur
+        ON actor_ur.tenant_id = target_ur.tenant_id
+       AND actor_ur.user_id = $1
+       AND actor_ur.is_active = true
+       AND actor_ur.role_id = target_role.user_manager_role_id
+      WHERE target_ur.tenant_id = $2
+        AND target_ur.id = $3
+        AND target_ur.is_active = true
       LIMIT 1
     `,
-    [tenantId, userRoleId]
+    [ctx.userId, ctx.tenantId, userRoleId]
   );
 
   return result.rows.length > 0;
+}
+
+function governanceError(capability: UserGovernanceCapability): string {
+  return capability === 'ORG_SCOPE'
+    ? 'Su rol no administra usuarios habilitados para alcances organizacionales'
+    : 'Su rol no administra usuarios habilitados para acceso a empleados';
 }
 
 async function hasScreenActionPermission(
@@ -277,14 +313,30 @@ router.get('/targets', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+    const capability: UserGovernanceCapability =
+      String(req.query.capability || '').trim().toUpperCase() === 'EMPLOYEE_ACCESS'
+        ? 'EMPLOYEE_ACCESS'
+        : 'ORG_SCOPE';
+    const canManageTargets = await ensureActorHasGovernedTargets(ctx, capability);
+    if (!canManageTargets) return res.status(403).json({ error: governanceError(capability) });
+    const capabilityColumn = governanceCapabilityColumn(capability);
 
     const roleKey = String(req.query.role_key || '').trim().toUpperCase();
     const search = normalizeSearch(req.query.search);
 
-    const params: any[] = [ctx.tenantId];
-    const where: string[] = ['t.tenant_id = $1'];
+    const params: any[] = [ctx.tenantId, ctx.userId];
+    const where: string[] = [
+      't.tenant_id = $1',
+      `t.${capabilityColumn} = true`,
+      `EXISTS (
+        SELECT 1
+        FROM user_roles actor_ur
+        WHERE actor_ur.tenant_id = t.tenant_id
+          AND actor_ur.user_id = $2
+          AND actor_ur.role_id = t.user_manager_role_id
+          AND actor_ur.is_active = true
+      )`,
+    ];
 
     if (roleKey) {
       params.push(roleKey);
@@ -325,8 +377,8 @@ router.get('/catalogs/hierarchy', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+    const canManageTargets = await ensureActorHasGovernedTargets(ctx, 'ORG_SCOPE');
+    if (!canManageTargets) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const companyId = normalizeUuid(req.query.company_id);
     const workLocationId = normalizeUuid(req.query.work_location_id);
@@ -450,8 +502,8 @@ router.get('/catalogs/tree', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+    const canManageTargets = await ensureActorHasGovernedTargets(ctx, 'ORG_SCOPE');
+    if (!canManageTargets) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const companyId = normalizeUuid(req.query.company_id);
     const workLocationId = normalizeUuid(req.query.work_location_id);
@@ -653,8 +705,8 @@ router.get('/employee-access/capabilities', async (req: Request, res: Response) 
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
+    const canManageTargets = await ensureActorHasGovernedTargets(ctx, 'EMPLOYEE_ACCESS');
+    if (!canManageTargets) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const screenKey = 'SEC_USER_EMPLOYEE_ACCESS';
     const [canAuthorizeOne, canAuthorizeAll, canRevokeOne, canRevokeAll] = await Promise.all([
@@ -684,14 +736,11 @@ router.get('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'ORG_SCOPE');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const result = await pool.query(
       `
@@ -753,14 +802,11 @@ router.post('/:user_role_id/scope-rules/removal-preview', async (req: Request, r
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'ORG_SCOPE');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const companyIds = Array.isArray(req.body?.company_ids)
       ? Array.from(new Set(req.body.company_ids.map((value: any) => normalizeRuleId(value)).filter(Boolean) as string[]))
@@ -796,14 +842,11 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'ORG_SCOPE');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const rules = Array.isArray(req.body?.rules) ? req.body.rules : null;
     if (rules === null) {
@@ -919,7 +962,7 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
                  AND ec.company_id = ANY($3::uuid[])
              )
         `,
-        [ctx.tenantId, userRoleId, confirmedCascadeCompanyIds, 'TENANT_ADMIN']
+        [ctx.tenantId, userRoleId, confirmedCascadeCompanyIds, ctx.userId]
       );
       revokedEmployeeAssignments = cascadeResult.rowCount || 0;
     }
@@ -966,7 +1009,7 @@ router.put('/:user_role_id/scope-rules', async (req: Request, res: Response) => 
           rule.cost_center_id,
           rule.work_group_id,
           rule.employee_profile_id,
-          'TENANT_ADMIN',
+          ctx.userId,
         ]
       );
     }
@@ -993,14 +1036,11 @@ router.get('/:user_role_id/scopes', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'ORG_SCOPE');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const result = await pool.query(
       `
@@ -1046,14 +1086,11 @@ router.put('/:user_role_id/scopes', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'ORG_SCOPE');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('ORG_SCOPE') });
 
     const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes : null;
     if (scopes === null) {
@@ -1149,7 +1186,7 @@ router.put('/:user_role_id/scopes', async (req: Request, res: Response) => {
           )
           VALUES (gen_random_uuid(), $1, $2, $3, $4, true, $5)
         `,
-        [ctx.tenantId, userRoleId, scopeTypeId, s.scopeEntityId, 'TENANT_ADMIN']
+        [ctx.tenantId, userRoleId, scopeTypeId, s.scopeEntityId, ctx.userId]
       );
     }
 
@@ -1217,14 +1254,11 @@ router.get('/:user_role_id/employees/authorized', async (req: Request, res: Resp
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const search = normalizeSearch(req.query.search);
     const limit = normalizeLimit(req.query.limit, 50, 200);
@@ -1350,14 +1384,11 @@ router.get('/:user_role_id/employees/unauthorized', async (req: Request, res: Re
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const search = normalizeSearch(req.query.search);
     const limit = normalizeLimit(req.query.limit, 50, 200);
@@ -1465,14 +1496,11 @@ router.get('/:user_role_id/employee-access/filters', async (req: Request, res: R
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const optionParams: any[] = [ctx.tenantId, userRoleId];
     const optionWhere: string[] = [
@@ -1593,14 +1621,11 @@ router.get('/:user_role_id/employee-access/authorized', async (req: Request, res
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const search = normalizeSearch(req.query.search);
     const limit = normalizeLimit(req.query.limit, 50, 500);
@@ -1711,14 +1736,11 @@ router.get('/:user_role_id/employee-access/unauthorized', async (req: Request, r
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const search = normalizeSearch(req.query.search);
     const limit = normalizeLimit(req.query.limit, 50, 500);
@@ -1815,14 +1837,11 @@ router.post('/:user_role_id/employee-access/authorize', async (req: Request, res
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const employeeIds = Array.isArray(req.body?.employee_ids)
       ? Array.from(new Set(req.body.employee_ids.map((x: any) => String(x || '').trim()).filter(Boolean)))
@@ -1867,15 +1886,15 @@ router.post('/:user_role_id/employee-access/authorize', async (req: Request, res
           updated_by,
           updated_at
         )
-        SELECT $1, $2, x.employee_id::uuid, true, 'TENANT_ADMIN', 'TENANT_ADMIN', now()
+        SELECT $1, $2, x.employee_id::uuid, true, $4, $4, now()
         FROM unnest($3::text[]) AS x(employee_id)
         ON CONFLICT (tenant_id, user_role_id, employee_id)
         DO UPDATE SET
           is_active = true,
-          updated_by = 'TENANT_ADMIN',
+          updated_by = $4,
           updated_at = now()
       `,
-      [ctx.tenantId, userRoleId, employeeIds]
+      [ctx.tenantId, userRoleId, employeeIds, ctx.userId]
     );
     await client.query('COMMIT');
 
@@ -1894,14 +1913,11 @@ router.post('/:user_role_id/employee-access/revoke', async (req: Request, res: R
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const isTenantAdmin = await ensureTenantAdmin(ctx);
-    if (!isTenantAdmin) return res.status(403).json({ error: 'Solo TENANT_ADMIN puede gestionar estos alcances' });
-
     const userRoleId = String(req.params.user_role_id || '').trim();
     if (!userRoleId) return res.status(400).json({ error: 'user_role_id es requerido' });
 
-    const targetExists = await ensureTargetUserRole(ctx.tenantId, userRoleId);
-    if (!targetExists) return res.status(404).json({ error: 'Asignacion de rol objetivo no encontrada para este tenant' });
+    const canManageTarget = await ensureActorCanManageTargetUserRole(ctx, userRoleId, 'EMPLOYEE_ACCESS');
+    if (!canManageTarget) return res.status(403).json({ error: governanceError('EMPLOYEE_ACCESS') });
 
     const employeeIds = Array.isArray(req.body?.employee_ids)
       ? Array.from(new Set(req.body.employee_ids.map((x: any) => String(x || '').trim()).filter(Boolean)))
@@ -1920,14 +1936,14 @@ router.post('/:user_role_id/employee-access/revoke', async (req: Request, res: R
       `
         UPDATE user_role_employee_assignments
            SET is_active = false,
-               updated_by = 'TENANT_ADMIN',
+               updated_by = $4,
                updated_at = now()
          WHERE tenant_id = $1
            AND user_role_id = $2
            AND employee_id = ANY($3::uuid[])
            AND is_active = true
       `,
-      [ctx.tenantId, userRoleId, employeeIds]
+      [ctx.tenantId, userRoleId, employeeIds, ctx.userId]
     );
 
     return res.status(200).json({ success: true, updated: result.rowCount || 0 });

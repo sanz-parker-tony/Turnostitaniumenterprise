@@ -2035,6 +2035,149 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/mass-import/runs', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const authCtx = await resolveActionAuthContext(req);
+    if (!authCtx || authCtx.tenantId !== tenantId) return res.status(401).json({ error: 'No autenticado' });
+
+    const canRead = await hasAnyScreenActionPermission(
+      tenantId,
+      authCtx.userId,
+      'ORG_STRUCTURE',
+      ['VIEW', 'IMPORT', 'REVERSE_IMPORT', 'DELETE']
+    );
+    if (!canRead) return res.status(403).json({ error: 'No tiene permisos para consultar el historial de importaciones' });
+
+    const requestedLimit = Number(req.query.limit || 50);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 100) : 50;
+    const { data, error } = await Postgres
+      .from('organization_import_runs')
+      .select('id, file_name, status, import_started_at, completed_at, reversed_at, import_summary, reversal_summary, error_message, created_at, updated_at')
+      .eq('tenant_id', tenantId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw new Error(error.message || 'Error consultando historial de importaciones');
+    return res.status(200).json({ success: true, runs: data || [] });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error consultando historial de importaciones' });
+  }
+});
+
+router.post('/mass-import/runs', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const authCtx = await resolveActionAuthContext(req);
+    if (!authCtx || authCtx.tenantId !== tenantId) return res.status(401).json({ error: 'No autenticado' });
+
+    const canImport = await hasAnyScreenActionPermission(
+      tenantId,
+      authCtx.userId,
+      'ORG_STRUCTURE',
+      ['IMPORT', 'CREATE', 'EDIT']
+    );
+    if (!canImport) return res.status(403).json({ error: 'No tiene permisos para registrar importaciones' });
+
+    const structureRows = Array.isArray(req.body?.structure_rows) ? req.body.structure_rows : [];
+    const employeeRows = Array.isArray(req.body?.employee_rows) ? req.body.employee_rows : [];
+    if (structureRows.length === 0 && employeeRows.length === 0) {
+      return res.status(400).json({ error: 'Debe enviar structure_rows o employee_rows' });
+    }
+
+    const actor = getActor(req);
+    const rawStartedAt = normalizeText(req.body?.import_started_at);
+    const importStartedAt = rawStartedAt && !Number.isNaN(new Date(rawStartedAt).getTime())
+      ? rawStartedAt
+      : new Date().toISOString();
+    const fileName = normalizeText(req.body?.file_name) || 'workbook.xlsx';
+    const initialSummary = {
+      rows_structure_payload: structureRows.length,
+      rows_employees_payload: employeeRows.length,
+    };
+
+    const { data, error } = await Postgres
+      .from('organization_import_runs')
+      .insert({
+        tenant_id: tenantId,
+        file_name: fileName,
+        status: 'running',
+        import_started_at: importStartedAt,
+        structure_rows: JSON.stringify(structureRows),
+        employee_rows: JSON.stringify(employeeRows),
+        import_summary: initialSummary,
+        created_by_user_id: authCtx.userId,
+        created_by: actor,
+      })
+      .select('id, file_name, status, import_started_at, completed_at, reversed_at, import_summary, reversal_summary, error_message, created_at, updated_at')
+      .single();
+
+    if (error) throw new Error(error.message || 'Error registrando importacion');
+    return res.status(201).json({ success: true, run: data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error registrando importacion' });
+  }
+});
+
+router.patch('/mass-import/runs/:runId', async (req: Request, res: Response) => {
+  try {
+    const Postgres = getPostgres();
+    const tenantId = await resolveTenantId(req, Postgres);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+
+    const authCtx = await resolveActionAuthContext(req);
+    if (!authCtx || authCtx.tenantId !== tenantId) return res.status(401).json({ error: 'No autenticado' });
+
+    const canImport = await hasAnyScreenActionPermission(
+      tenantId,
+      authCtx.userId,
+      'ORG_STRUCTURE',
+      ['IMPORT', 'CREATE', 'EDIT']
+    );
+    if (!canImport) return res.status(403).json({ error: 'No tiene permisos para actualizar importaciones' });
+
+    const allowedStatuses = new Set(['running', 'completed', 'failed', 'aborted']);
+    const status = normalizeText(req.body?.status);
+    if (status && !allowedStatuses.has(status)) return res.status(400).json({ error: 'Estado de importacion no permitido' });
+
+    const patch: Record<string, any> = {
+      updated_by: getActor(req),
+      updated_at: new Date().toISOString(),
+    };
+    if (status) patch.status = status;
+    if (Array.isArray(req.body?.staged_assignments)) {
+      patch.staged_assignments = JSON.stringify(req.body.staged_assignments);
+    }
+    if (req.body?.import_summary && typeof req.body.import_summary === 'object' && !Array.isArray(req.body.import_summary)) {
+      patch.import_summary = req.body.import_summary;
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'error_message')) {
+      patch.error_message = normalizeText(req.body?.error_message) || null;
+    }
+    if (status === 'completed' || status === 'failed' || status === 'aborted') patch.completed_at = new Date().toISOString();
+
+    const { data, error } = await Postgres
+      .from('organization_import_runs')
+      .update(patch)
+      .eq('tenant_id', tenantId)
+      .eq('id', req.params.runId)
+      .select('id, file_name, status, import_started_at, completed_at, reversed_at, import_summary, reversal_summary, error_message, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw new Error(error.message || 'Error actualizando importacion');
+    if (!data) return res.status(404).json({ error: 'Importacion no encontrada' });
+    return res.status(200).json({ success: true, run: data });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error actualizando importacion' });
+  }
+});
+
 router.get('/mass-import/capabilities', async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgres();
@@ -2079,10 +2222,13 @@ router.get('/mass-import/capabilities', async (req: Request, res: Response) => {
 });
 
 router.post('/mass-import/reverse', async (req: Request, res: Response) => {
+  let historyRunId: string | null = null;
+  let historyTenantId: string | null = null;
   try {
     const Postgres = getPostgres();
     const tenantId = await resolveTenantId(req, Postgres);
     if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    historyTenantId = tenantId;
 
     const authCtx = await resolveActionAuthContext(req);
     if (!authCtx || authCtx.tenantId !== tenantId) {
@@ -2102,10 +2248,37 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
     }
 
     const actor = getActor(req);
-    const structureRows = Array.isArray(req.body?.structure_rows)
+    historyRunId = normalizeText(req.body?.import_run_id) || null;
+    let historyRun: any = null;
+    if (historyRunId) {
+      const { data, error } = await Postgres
+        .from('organization_import_runs')
+        .select('id, status, import_started_at, structure_rows, employee_rows, reversal_summary')
+        .eq('tenant_id', tenantId)
+        .eq('id', historyRunId)
+        .maybeSingle();
+      if (error) throw new Error(error.message || 'Error consultando la importacion a revertir');
+      if (!data) return res.status(404).json({ error: 'Importacion no encontrada' });
+      historyRun = data;
+      if (historyRun.status === 'reversed') {
+        return res.status(200).json({
+          success: true,
+          already_reversed: true,
+          summary: historyRun.reversal_summary || {},
+          events: [],
+          started_at: historyRun.import_started_at,
+        });
+      }
+    }
+
+    const structureRows = historyRun
+      ? (Array.isArray(historyRun.structure_rows) ? historyRun.structure_rows as StructureImportRow[] : [])
+      : Array.isArray(req.body?.structure_rows)
       ? (req.body.structure_rows as StructureImportRow[])
       : [];
-    const employeeRows = Array.isArray(req.body?.employee_rows)
+    const employeeRows = historyRun
+      ? (Array.isArray(historyRun.employee_rows) ? historyRun.employee_rows as EmployeeImportRow[] : [])
+      : Array.isArray(req.body?.employee_rows)
       ? (req.body.employee_rows as EmployeeImportRow[])
       : [];
 
@@ -2114,9 +2287,18 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
     }
 
     const events: ImportLogEvent[] = [];
-    const rawStartAt = normalizeText(req.body?.import_started_at);
+    const rawStartAt = normalizeText(historyRun?.import_started_at || req.body?.import_started_at);
     const fallbackStartAt = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
     const startAt = rawStartAt && !Number.isNaN(new Date(rawStartAt).getTime()) ? rawStartAt : fallbackStartAt;
+
+    if (historyRunId) {
+      const { error } = await Postgres
+        .from('organization_import_runs')
+        .update({ status: 'reversing', updated_by: actor, updated_at: new Date().toISOString() })
+        .eq('tenant_id', tenantId)
+        .eq('id', historyRunId);
+      if (error) throw new Error(error.message || 'No se pudo marcar la importacion para reversa');
+    }
 
     pushImportEvent(
       events,
@@ -2535,6 +2717,22 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
       progress: 100,
     });
 
+    if (historyRunId) {
+      const { error } = await Postgres
+        .from('organization_import_runs')
+        .update({
+          status: 'reversed',
+          reversal_summary: summary,
+          reversed_at: new Date().toISOString(),
+          error_message: null,
+          updated_by: actor,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('tenant_id', tenantId)
+        .eq('id', historyRunId);
+      if (error) throw new Error(error.message || 'La carga se revirtio, pero no se pudo actualizar su historial');
+    }
+
     return res.status(200).json({
       success: true,
       summary,
@@ -2542,6 +2740,23 @@ router.post('/mass-import/reverse', async (req: Request, res: Response) => {
       started_at: startAt,
     });
   } catch (err: any) {
+    if (historyRunId) {
+      try {
+        const Postgres = getPostgres();
+        await Postgres
+          .from('organization_import_runs')
+          .update({
+            status: 'failed',
+            error_message: err?.message || 'Error revirtiendo importacion',
+            updated_by: getActor(req),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', historyRunId)
+          .eq('tenant_id', historyTenantId);
+      } catch {
+        // La respuesta principal conserva el error original.
+      }
+    }
     return res.status(500).json({ error: err?.message || 'Error revirtiendo importacion' });
   }
 });
@@ -2907,6 +3122,33 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
     }
 
+    const { data: lookupGroups, error: lookupGroupsError } = await Postgres
+      .from('lookup_groups')
+      .select('id, lookup_group_key')
+      .in('lookup_group_key', ['CONTRACT_TYPE', 'GENDER', 'ATTENDANCE_TIMEZONE']);
+
+    if (lookupGroupsError) {
+      return res.status(500).json({ error: lookupGroupsError.message || 'Error cargando grupos de catálogos' });
+    }
+
+    const lookupGroupIdByKey = new Map<string, string>();
+    (lookupGroups || []).forEach((group: any) => {
+      if (group?.id && group?.lookup_group_key) {
+        lookupGroupIdByKey.set(String(group.lookup_group_key), String(group.id));
+      }
+    });
+
+    const loadLookupValues = (groupKey: string) => {
+      const groupId = lookupGroupIdByKey.get(groupKey);
+      if (!groupId) return Promise.resolve({ data: [], error: null });
+      return Postgres
+        .from('lookup_values')
+        .select('id, lookup_key, lookup_label, lookup_short_label, is_active')
+        .eq('lookup_group_id', groupId)
+        .eq('is_active', true)
+        .order('lookup_label');
+    };
+
     const [
       companies,
       departments,
@@ -2936,9 +3178,9 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       Postgres.from('work_groups').select('id, legacy_id, work_group_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_group_name'),
       Postgres.from('work_locations').select('id, legacy_id, work_location_name').eq('tenant_id', tenantId).eq('is_active', true).order('work_location_name'),
       Postgres.from('job_titles').select('id, legacy_id, job_title_name').eq('tenant_id', tenantId).eq('is_active', true).order('job_title_name'),
-      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'CONTRACT_TYPE').eq('is_active', true).order('lookup_label'),
-      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'GENDER').eq('is_active', true).order('lookup_label'),
-      Postgres.from('lookup_values').select('id, lookup_key, lookup_label, lookup_short_label, lookup_groups!inner(lookup_group_key)').eq('lookup_groups.lookup_group_key', 'ATTENDANCE_TIMEZONE').eq('is_active', true).order('lookup_label'),
+      loadLookupValues('CONTRACT_TYPE'),
+      loadLookupValues('GENDER'),
+      loadLookupValues('ATTENDANCE_TIMEZONE'),
       Postgres.from('countries').select('*').eq('is_active', true),
       Postgres.from('states').select('*').eq('is_active', true),
       Postgres.from('cities').select('*').eq('is_active', true),

@@ -3,13 +3,14 @@
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Plus, Save, X, Pencil, Power, Search, Trash2 } from 'lucide-react';
-import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from 'react-leaflet';
-import type { LatLngExpression } from 'leaflet';
+import { MapContainer, Polygon, CircleMarker, Marker, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { divIcon, type LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
 import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
 import HeaderInfoTips from '../../shared/HeaderInfoTips';
 import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
 import GridActionIconButton from '../../shared/GridActionIconButton';
+import MapBaseLayers from '../../shared/MapBaseLayers';
 
 type EntityKey =
   | 'companies'
@@ -200,6 +201,14 @@ function PolygonMapResizeInvalidator() {
   return null;
 }
 
+const mapSearchPinIcon = divIcon({
+  className: 'work-location-search-pin',
+  html: '<div style="width:28px;height:28px;background:#dc2626;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,.45)"><div style="width:8px;height:8px;margin:7px;background:#fff;border-radius:50%"></div></div>',
+  iconSize: [28, 38],
+  iconAnchor: [14, 38],
+  tooltipAnchor: [0, -34],
+});
+
 function PolygonEditorField({
   value,
   onChange,
@@ -222,6 +231,11 @@ function PolygonEditorField({
   const [mapSearchResults, setMapSearchResults] = useState<
     Array<{ display_name: string; lat: string; lon: string }>
   >([]);
+  const [mapSearchPin, setMapSearchPin] = useState<{
+    lat: number;
+    lng: number;
+    label: string;
+  } | null>(null);
   const [showMapSearchResults, setShowMapSearchResults] = useState(false);
   const lastAutoCenterQueryRef = useRef('');
 
@@ -249,6 +263,7 @@ function PolygonEditorField({
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
     setCenter([lat, lng]);
     setZoom(nextZoom);
+    setMapSearchPin({ lat, lng, label: row.display_name });
     return true;
   };
 
@@ -279,6 +294,7 @@ function PolygonEditorField({
     const query = mapSearchTerm.trim();
     if (!query) {
       setMapSearchResults([]);
+      setMapSearchPin(null);
       setMapSearchError('');
       return;
     }
@@ -292,9 +308,12 @@ function PolygonEditorField({
 
       if (rows.length > 0) {
         centerFromSearchResult(rows[0], 18);
+      } else {
+        setMapSearchPin(null);
       }
     } catch (error: any) {
       setMapSearchResults([]);
+      setMapSearchPin(null);
       setMapSearchError(error?.message || 'No se pudo consultar el mapa');
     } finally {
       setMapSearchLoading(false);
@@ -321,10 +340,12 @@ function PolygonEditorField({
       setMapSearchResults(rows);
       setShowMapSearchResults(rows.length > 1);
       if (rows.length === 0 || !centerFromSearchResult(rows[0], 18)) {
+        setMapSearchPin(null);
         setMapSearchError('No se encontró una ubicación cercana con esos datos');
       }
     } catch (error: any) {
       setMapSearchResults([]);
+      setMapSearchPin(null);
       setMapSearchError(error?.message || 'No se pudo consultar el mapa');
     } finally {
       setMapSearchLoading(false);
@@ -429,7 +450,8 @@ function PolygonEditorField({
       </div>
 
       <div className="text-xs text-gray-600">
-        Clic sobre el mapa OpenStreetMap para agregar vertices. Vertices: {points.length}
+        El pin rojo indica el lugar encontrado. Clic sobre el mapa OpenStreetMap para agregar vertices. Vertices:{' '}
+        {points.length}
       </div>
 
       <div className={large ? 'space-y-3' : 'grid grid-cols-1 lg:grid-cols-3 gap-3'}>
@@ -441,16 +463,16 @@ function PolygonEditorField({
             maxZoom={22}
             minZoom={3}
           >
-            <TileLayer
-              attribution="&copy; OpenStreetMap contributors"
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              maxNativeZoom={19}
-              maxZoom={22}
-            />
+            <MapBaseLayers maxZoom={22} />
             <PolygonMapResizeInvalidator />
             <PolygonMapViewController center={center} zoom={zoom} />
             <PolygonMapClickCapture onAddPoint={(point) => commitPoints([...points, point])} />
             <PolygonMapAutoFit points={points} />
+            {mapSearchPin ? (
+              <Marker position={[mapSearchPin.lat, mapSearchPin.lng]} icon={mapSearchPinIcon}>
+                <Tooltip direction="top">{mapSearchPin.label}</Tooltip>
+              </Marker>
+            ) : null}
             {polygonPositions.length >= 2 && (
               <Polygon
                 positions={polygonPositions}
@@ -544,7 +566,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
-      { key: 'time_zone', label: 'Zona horaria', type: 'select', optionsKey: 'attendance_timezones' },
+      { key: 'time_zone', label: 'Zona horaria', type: 'select', required: true, optionsKey: 'attendance_timezones' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
       { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
     ],
@@ -1526,6 +1548,7 @@ export function OrgMaintenance({
     });
 
     setFormData(initial);
+    setError(null);
     setEditingId(null);
     setShowForm(true);
     setSelectedPhotoFile(null);
@@ -1555,6 +1578,7 @@ export function OrgMaintenance({
     });
 
     setFormData(initial);
+    setError(null);
     setEditingId(item.id);
     setShowForm(true);
     setSelectedPhotoFile(null);
@@ -1785,10 +1809,13 @@ export function OrgMaintenance({
     US: ['USA', 'UNITED_STATES', 'ESTADOS_UNIDOS'],
   };
 
-  const getFilteredTimezoneOptions = (baseOptions: any[]) => {
+  const getFilteredTimezoneOptions = (
+    baseOptions: any[],
+    countryId = String(formData.country_id || '')
+  ) => {
     if (entity !== 'work-locations') return baseOptions;
 
-    const selectedCountryId = String(formData.country_id || '');
+    const selectedCountryId = String(countryId || '');
     if (!selectedCountryId) return [];
 
     const selectedCountry = (catalogs.countries || []).find(
@@ -2134,7 +2161,7 @@ export function OrgMaintenance({
         </div>
       )}
 
-      {error && (
+      {error && !showForm && (
         <div className="rounded-md border border-red-300 bg-red-50 text-red-700 text-sm px-3 py-2">
           {error}
         </div>
@@ -2169,6 +2196,11 @@ export function OrgMaintenance({
                 <X className="size-4" />
               </button>
             </div>
+            {error ? (
+              <div className="mx-4 mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {error}
+              </div>
+            ) : null}
             <div className={getFormBodyClassName()}>
               <div className={getFormGridClassName()}>
               {config.fields.filter((field) => !field.hidden).map((field) => (
@@ -2283,12 +2315,26 @@ export function OrgMaintenance({
                           return;
                         }
                         if (field.key === 'country_id') {
+                          const timezoneOptions = getFilteredTimezoneOptions(
+                            catalogs.attendance_timezones || [],
+                            value
+                          );
+                          const automaticTimezone =
+                            timezoneOptions.length === 1
+                              ? String(
+                                  timezoneOptions[0].lookup_short_label ||
+                                    timezoneOptions[0].lookup_key ||
+                                    timezoneOptions[0].value ||
+                                    timezoneOptions[0].id ||
+                                    ''
+                                )
+                              : '';
                           setFormData((prev) => ({
                             ...prev,
                             country_id: value,
                             state_id: '',
                             city_id: '',
-                            time_zone: '',
+                            time_zone: automaticTimezone,
                           }));
                           return;
                         }

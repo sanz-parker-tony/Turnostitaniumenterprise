@@ -1,6 +1,5 @@
 ﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
-import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 import { resolveEffectiveNumberSetting } from '../lib/effective-settings.js';
 import { promises as fs } from 'fs';
 import path from 'path';
@@ -11,6 +10,9 @@ const router = Router();
 const PUNCH_KEY_GROUP_ID = 'a349d449-b3c1-475a-91bd-c687b49e97cc';
 const PUNCH_SOURCE_GROUP_ID = 'd0c3806b-de4b-a91d-13d6-bc565264c183';
 const TIME_PUNCH_STATUS_GROUP_ID = '0949d7d5-c2b1-56e9-6010-5909cc7af8b7';
+const PUNCH_KEY_GROUP_KEY = 'PUNCH_KEY';
+const PUNCH_SOURCE_GROUP_KEY = 'PUNCH_SOURCE';
+const TIME_PUNCH_STATUS_GROUP_KEY = 'TIME_PUNCH_STATUS';
 const REQUEST_STATUS_GROUP_ID = '9f904369-9998-83ab-6996-635363513a9f';
 const ABSENCE_DISCOUNT_METHOD_GROUP_ID = '1d3d598e-5003-4a36-a93d-306e0cbb3c7b';
 const EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID = 'd41aff61-6de9-200e-922e-3c651cc5446c';
@@ -19,6 +21,7 @@ const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
 const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
 const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
+const FIXED_PUNCH_SOURCE_KEY = 'WEB';
 const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
 const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
 const DEFAULT_REQUEST_SUPPORT_DOCS_PATH = path.join('storage', 'request-support-docs');
@@ -832,15 +835,17 @@ async function normalizeTimePunchRequestedValues(params: {
   if (punchKeyLookupId) {
     const punchKeyLookupResult = await pool.query(
       `
-        SELECT sort_order
-        FROM public.lookup_values
-        WHERE id = $1::uuid
-          AND lookup_group_id = $2::uuid
-          AND is_active = true
-          AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+        SELECT lv.sort_order
+        FROM public.lookup_values lv
+        INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+        WHERE lv.id = $1::uuid
+          AND lg.lookup_group_key = $2
+          AND lg.is_active = true
+          AND lv.is_active = true
+          AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
         LIMIT 1
       `,
-      [punchKeyLookupId, PUNCH_KEY_GROUP_ID, params.tenantId]
+      [punchKeyLookupId, PUNCH_KEY_GROUP_KEY, params.tenantId]
     );
     const row = punchKeyLookupResult.rows[0];
     if (!row || !Number.isFinite(Number(row.sort_order))) {
@@ -860,15 +865,17 @@ async function normalizeTimePunchRequestedValues(params: {
     if (nextStatusId) {
       const statusResult = await pool.query(
         `
-          SELECT id
-          FROM public.lookup_values
-          WHERE id = $1::uuid
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          SELECT lv.id
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lv.id = $1::uuid
+            AND lg.lookup_group_key = $2
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [nextStatusId, TIME_PUNCH_STATUS_GROUP_ID, params.tenantId]
+        [nextStatusId, TIME_PUNCH_STATUS_GROUP_KEY, params.tenantId]
       );
       if (!statusResult.rows[0]) {
         throw new Error('requested_values.time_punch_status_id no es valido');
@@ -884,15 +891,17 @@ async function normalizeTimePunchRequestedValues(params: {
     if (nextSourceId) {
       const sourceResult = await pool.query(
         `
-          SELECT id
-          FROM public.lookup_values
-          WHERE id = $1::uuid
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          SELECT lv.id
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lv.id = $1::uuid
+            AND lg.lookup_group_key = $2
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [nextSourceId, PUNCH_SOURCE_GROUP_ID, params.tenantId]
+        [nextSourceId, PUNCH_SOURCE_GROUP_KEY, params.tenantId]
       );
       if (!sourceResult.rows[0]) {
         throw new Error('requested_values.punch_source_id no es valido');
@@ -1366,17 +1375,19 @@ router.get('/mark/context', async (req: Request, res: Response) => {
             lv.lookup_short_label,
             lv.sort_order,
             lv.lookup_group_id,
+            lg.lookup_group_key,
             lv.sort_order AS punch_key_value
           FROM public.lookup_values lv
-          WHERE lv.lookup_group_id IN ($1::uuid, $2::uuid, $3::uuid)
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+           AND lg.is_active = true
+          WHERE lg.lookup_group_key = ANY($1::text[])
             AND lv.is_active = true
-            AND (lv.tenant_id IS NULL OR lv.tenant_id = $4::uuid)
-          ORDER BY lv.lookup_group_id ASC, lv.sort_order ASC, lv.lookup_label ASC
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lg.lookup_group_key ASC, lv.sort_order ASC, lv.lookup_label ASC
         `,
         [
-          PUNCH_KEY_GROUP_ID,
-          PUNCH_SOURCE_GROUP_ID,
-          TIME_PUNCH_STATUS_GROUP_ID,
+          [PUNCH_KEY_GROUP_KEY, PUNCH_SOURCE_GROUP_KEY, TIME_PUNCH_STATUS_GROUP_KEY],
           context.tenant_id,
         ]
       ),
@@ -1398,9 +1409,9 @@ router.get('/mark/context', async (req: Request, res: Response) => {
       },
       companies: companiesResult,
       devices: devicesResult.rows,
-      punch_keys: rows.filter((r) => r.lookup_group_id === PUNCH_KEY_GROUP_ID),
-      punch_sources: rows.filter((r) => r.lookup_group_id === PUNCH_SOURCE_GROUP_ID),
-      punch_statuses: rows.filter((r) => r.lookup_group_id === TIME_PUNCH_STATUS_GROUP_ID),
+      punch_keys: rows.filter((r) => r.lookup_group_key === PUNCH_KEY_GROUP_KEY),
+      punch_sources: rows.filter((r) => r.lookup_group_key === PUNCH_SOURCE_GROUP_KEY),
+      punch_statuses: rows.filter((r) => r.lookup_group_key === TIME_PUNCH_STATUS_GROUP_KEY),
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -1581,17 +1592,19 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     const punchKeyLookupResult = await pool.query(
       `
         SELECT
-          id,
-          lookup_label,
-          sort_order AS punch_key_value
-        FROM public.lookup_values
-        WHERE id = $1
-          AND lookup_group_id = $2::uuid
-          AND is_active = true
-          AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          lv.id,
+          lv.lookup_label,
+          lv.sort_order AS punch_key_value
+        FROM public.lookup_values lv
+        INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+        WHERE lv.id = $1
+          AND lg.lookup_group_key = $2
+          AND lg.is_active = true
+          AND lv.is_active = true
+          AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
         LIMIT 1
       `,
-      [punchKeyLookupId, PUNCH_KEY_GROUP_ID, context.tenant_id]
+      [punchKeyLookupId, PUNCH_KEY_GROUP_KEY, context.tenant_id]
     );
     const punchKeyRow = punchKeyLookupResult.rows[0];
     if (!punchKeyRow || !Number.isFinite(Number(punchKeyRow.punch_key_value))) {
@@ -1601,36 +1614,30 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     }
     const punchKey = Math.trunc(Number(punchKeyRow.punch_key_value));
 
-    const sourceResult = await pool.query(
-      `
-        SELECT id
-        FROM public.lookup_values
-        WHERE id = $1
-          AND lookup_group_id = $2::uuid
-          AND is_active = true
-          AND (tenant_id IS NULL OR tenant_id = $3::uuid)
-        LIMIT 1
-      `,
-      [FIXED_PUNCH_SOURCE_ID, PUNCH_SOURCE_GROUP_ID, context.tenant_id]
+    const normalizedSourceId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      PUNCH_SOURCE_GROUP_KEY,
+      [FIXED_PUNCH_SOURCE_KEY]
     );
-    if (!sourceResult.rows[0]) {
+    if (!normalizedSourceId) {
       return res.status(400).json({ error: 'No existe la fuente fija Aplicacion Web configurada' });
     }
-    const normalizedSourceId = sourceResult.rows[0].id as string;
 
     let requestedStatusId: string | null = null;
     if (timePunchStatusId) {
       const statusResult = await pool.query(
         `
-          SELECT id
-          FROM public.lookup_values
-          WHERE id = $1
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          SELECT lv.id
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lv.id = $1
+            AND lg.lookup_group_key = $2
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [timePunchStatusId, TIME_PUNCH_STATUS_GROUP_ID, context.tenant_id]
+        [timePunchStatusId, TIME_PUNCH_STATUS_GROUP_KEY, context.tenant_id]
       );
       if (!statusResult.rows[0]) return res.status(400).json({ error: 'time_punch_status_id no valido' });
       requestedStatusId = statusResult.rows[0].id;
@@ -1757,6 +1764,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       tenantId: context.tenant_id,
       companyId,
       employeeProfileId,
+      employeeId: context.employee_id,
       settingKey: MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY,
       fallback: DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES,
       min: 0,
@@ -1846,8 +1854,6 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         punchId: punch.id,
         punchDateTime: punch.punch_datetime,
       });
-
-      publishTenantDashboardEvent(context.tenant_id, 'time_punch_created', context.employee_id);
       return res.status(201).json({
         success: true,
         punch,
@@ -2066,8 +2072,6 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       `,
       params
     );
-
-    publishTenantDashboardEvent(context.tenant_id, 'time_punch_updated', context.employee_id);
     return res.status(200).json({ success: true, punch: result.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -2097,7 +2101,6 @@ router.delete('/mark/history/:id', async (req: Request, res: Response) => {
       [punchId, context.tenant_id, context.employee_id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Marcacion no encontrada' });
-    publishTenantDashboardEvent(context.tenant_id, 'time_punch_deleted', context.employee_id);
     return res.status(200).json({ success: true, deleted_id: result.rows[0].id });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -4537,25 +4540,29 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
       ),
       pool.query(
         `
-          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
-          FROM public.lookup_values
-          WHERE lookup_group_id = $1::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-          ORDER BY sort_order ASC, lookup_label ASC
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [PUNCH_KEY_GROUP_ID, context.tenant_id]
+        [PUNCH_KEY_GROUP_KEY, context.tenant_id]
       ),
       pool.query(
         `
-          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
-          FROM public.lookup_values
-          WHERE lookup_group_id = $1::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-          ORDER BY sort_order ASC, lookup_label ASC
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [TIME_PUNCH_STATUS_GROUP_ID, context.tenant_id]
+        [TIME_PUNCH_STATUS_GROUP_KEY, context.tenant_id]
       ),
       pool.query(
         `
@@ -4583,7 +4590,9 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
           LEFT JOIN LATERAL (
             SELECT lv.lookup_label
             FROM public.lookup_values lv
-            WHERE lv.lookup_group_id = $3::uuid
+            INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+            WHERE lg.lookup_group_key = $3
+              AND lg.is_active = true
               AND lv.is_active = true
               AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
               AND lv.sort_order = p.punch_key
@@ -4595,7 +4604,7 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
           ORDER BY p.punch_datetime DESC
           LIMIT 180
         `,
-        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID]
+        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_KEY]
       ),
     ]);
 
@@ -5244,25 +5253,29 @@ router.get('/time-punch-requests/approvals/catalogs', async (req: Request, res: 
       ),
       pool.query(
         `
-          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
-          FROM public.lookup_values
-          WHERE lookup_group_id = $1::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-          ORDER BY sort_order ASC, lookup_label ASC
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id]
+        [PUNCH_KEY_GROUP_KEY, approver.userContext.tenant_id]
       ),
       pool.query(
         `
-          SELECT id, lookup_key, lookup_label, lookup_short_label, sort_order
-          FROM public.lookup_values
-          WHERE lookup_group_id = $1::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-          ORDER BY sort_order ASC, lookup_label ASC
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lg.is_active = true
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [TIME_PUNCH_STATUS_GROUP_ID, approver.userContext.tenant_id]
+        [TIME_PUNCH_STATUS_GROUP_KEY, approver.userContext.tenant_id]
       ),
     ]);
 
@@ -5574,6 +5587,16 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
         if (!requestedValues.punch_datetime || !Number.isFinite(Number(requestedValues.punch_key))) {
           return res.status(400).json({ error: 'requested_values incompleto para crear marcacion' });
         }
+        const approvedPunchSourceId =
+          normalizeNullableText(requestedValues.punch_source_id) ||
+          (await resolveLookupValueIdByGroupKeyAndKeys(
+            approver.userContext.tenant_id,
+            PUNCH_SOURCE_GROUP_KEY,
+            [FIXED_PUNCH_SOURCE_KEY]
+          ));
+        if (!approvedPunchSourceId) {
+          return res.status(400).json({ error: 'No existe la fuente Aplicacion Web configurada' });
+        }
         await pool.query(
           `
             INSERT INTO public.employee_time_punches (
@@ -5606,14 +5629,13 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             requestedValues.punch_datetime,
             requestedValues.punch_time_zone || 'America/Guayaquil',
             Math.trunc(Number(requestedValues.punch_key)),
-            requestedValues.punch_source_id || FIXED_PUNCH_SOURCE_ID,
+            approvedPunchSourceId,
             requestedValues.time_punch_status_id || null,
             normalizeNullableText(requestedValues.notes) || 'Marcacion creada por aprobacion',
             requestedValues.is_active === false ? false : true,
             getActor(req),
           ]
         );
-        publishTenantDashboardEvent(current.tenant_id, 'time_punch_created', current.employee_id);
       } else if (current.request_type_key === 'UPDATE_PUNCH' || current.request_type_key === 'TOGGLE_ACTIVE') {
         if (!current.target_punch_id) {
           return res.status(400).json({ error: 'No existe target_punch_id para aplicar la aprobacion' });
@@ -5685,7 +5707,6 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             `,
             params
           );
-          publishTenantDashboardEvent(current.tenant_id, 'time_punch_updated', current.employee_id);
         }
       }
     }

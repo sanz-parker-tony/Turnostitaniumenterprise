@@ -9,8 +9,9 @@
  * dinámicas (/:id) para evitar que Express capture "catalogs" como un UUID.
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
@@ -20,6 +21,36 @@ function getPostgres() {
     process.env.Postgres_SERVICE_ROLE_KEY || ''
   );
 }
+
+async function ensureSystemAdmin(req: Request, res: Response, next: NextFunction) {
+  try {
+    const authUserId = String((req as any)?.user?.id || '').trim();
+    if (!authUserId) return res.status(401).json({ error: 'No autenticado' });
+
+    const result = await pool.query(
+      `
+        SELECT 1
+        FROM users u
+        JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id AND ur.is_active = true
+        JOIN roles r ON r.id = ur.role_id AND r.is_active = true
+        WHERE u.auth_user_id = $1
+          AND u.is_active = true
+          AND r.role_key = 'SYSTEM_ADMIN'
+        LIMIT 1
+      `,
+      [authUserId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({ error: 'Solo SYSTEM_ADMIN puede administrar el catálogo de roles' });
+    }
+    return next();
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Error validando administración de roles', details: error.message });
+  }
+}
+
+router.use(ensureSystemAdmin);
 
 // ============================================================================
 // CATÁLOGOS — deben ir ANTES de /:id para que Express no los capture como UUID
@@ -158,11 +189,14 @@ router.post('/', async (req: Request, res: Response) => {
       role_scope = 'TENANT',
       base_role_id,
       data_scope = 'ALL',
+      user_manager_role_id,
+      is_org_scope_target = false,
+      is_employee_access_target = false,
       is_active = true,
     } = body;
 
-    if (!tenant_id || !role_key || !role_name) {
-      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_key, role_name' });
+    if (!tenant_id || !role_key || !role_name || !user_manager_role_id) {
+      return res.status(400).json({ error: 'Campos obligatorios: tenant_id, role_key, role_name, user_manager_role_id' });
     }
 
     if (!/^[A-Z0-9_]+$/.test(role_key) || role_key.length < 2) {
@@ -194,6 +228,17 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'Ya existe un rol con esa clave en este tenant' });
     }
 
+    const { data: managerRole } = await Postgres
+      .from('roles')
+      .select('id')
+      .eq('id', user_manager_role_id)
+      .eq('tenant_id', tenant_id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (!managerRole) {
+      return res.status(400).json({ error: 'El rol administrador no pertenece al tenant o no está activo' });
+    }
+
     const { data: newRole, error } = await Postgres
       .from('roles')
       .insert({
@@ -203,6 +248,9 @@ router.post('/', async (req: Request, res: Response) => {
         role_scope,
         base_role_id: base_role_id || null,
         data_scope,
+        user_manager_role_id,
+        is_org_scope_target: Boolean(is_org_scope_target),
+        is_employee_access_target: Boolean(is_employee_access_target),
         is_active,
         is_system_role: false,
         is_locked: false,
@@ -232,13 +280,16 @@ router.put('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
     const body = req.body;
-    const { role_key, role_name, role_scope, base_role_id, data_scope, is_active } = body;
+    const {
+      role_key, role_name, role_scope, base_role_id, data_scope,
+      user_manager_role_id, is_org_scope_target, is_employee_access_target, is_active,
+    } = body;
 
     const Postgres = getPostgres();
 
     const { data: existing } = await Postgres
       .from('roles')
-      .select('role_key, tenant_id, is_system_role, is_locked')
+      .select('role_key, tenant_id, is_system_role, is_locked, user_manager_role_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -290,6 +341,19 @@ router.put('/:id', async (req: Request, res: Response) => {
       }
     }
 
+    if (user_manager_role_id !== undefined) {
+      const { data: managerRole } = await Postgres
+        .from('roles')
+        .select('id')
+        .eq('id', user_manager_role_id)
+        .eq('tenant_id', existing.tenant_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!managerRole) {
+        return res.status(400).json({ error: 'El rol administrador no pertenece al tenant o no está activo' });
+      }
+    }
+
     const updateData: any = {
       updated_by: 'system',
       updated_at: new Date().toISOString(),
@@ -300,6 +364,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (role_scope !== undefined) updateData.role_scope = role_scope;
     if (base_role_id !== undefined) updateData.base_role_id = base_role_id || null;
     if (data_scope !== undefined) updateData.data_scope = data_scope;
+    if (user_manager_role_id !== undefined) updateData.user_manager_role_id = user_manager_role_id;
+    if (is_org_scope_target !== undefined) updateData.is_org_scope_target = Boolean(is_org_scope_target);
+    if (is_employee_access_target !== undefined) updateData.is_employee_access_target = Boolean(is_employee_access_target);
     if (is_active !== undefined) updateData.is_active = is_active;
 
     const { data: updatedRole, error } = await Postgres

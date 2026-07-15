@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 // Importar rotas principales
 import mainRouter from './index.js';
 import { setupSwagger } from './swagger.js';
+import { startDashboardDbListener, stopDashboardDbListener } from './lib/dashboard-db-listener.js';
 
 // Cargar variables de entorno desde packages/backend/.env.local
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +80,7 @@ app.use((req, res) => {
 // ============================================================================
 
 app.listen(PORT, () => {
+  startDashboardDbListener();
   console.log(`
 ╔════════════════════════════════════════════════════╗
 ║  🚀 Backend Local - Turnos Titanium Enterprise   ║
@@ -101,5 +103,18 @@ app.listen(PORT, () => {
 ║
 ╚════════════════════════════════════════════════════╝
   `);
+});
+
+const shutdown = async () => {
+  await stopDashboardDbListener();
+  process.exit(0);
+};
+
+process.once('SIGINT', () => {
+  void shutdown();
+});
+
+process.once('SIGTERM', () => {
+  void shutdown();
 });
 

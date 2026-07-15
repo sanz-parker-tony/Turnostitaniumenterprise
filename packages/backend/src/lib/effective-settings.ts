@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-type SourceLevel = 'PROFILE' | 'COMPANY' | 'TENANT' | 'SYSTEM';
+type SourceLevel = 'EMPLOYEE' | 'PROFILE' | 'COMPANY' | 'TENANT' | 'SYSTEM';
 
 export type EffectiveSetting = {
   system_setting_id: string;
@@ -23,6 +23,7 @@ export async function resolveEffectiveSettingByKey(
     settingKey: string;
     companyId?: string | null;
     employeeProfileId?: string | null;
+    employeeId?: string | null;
   }
 ): Promise<EffectiveSetting | null> {
   const settingResult = await pool.query(
@@ -95,6 +96,25 @@ export async function resolveEffectiveSettingByKey(
     }
   }
 
+  if (opts.employeeId) {
+    const employeeResult = await pool.query(
+      `
+        SELECT setting_value
+        FROM public.employee_settings
+        WHERE tenant_id = $1::uuid
+          AND employee_id = $2::uuid
+          AND system_setting_id = $3::uuid
+          AND is_active = true
+        LIMIT 1
+      `,
+      [opts.tenantId, opts.employeeId, setting.id]
+    );
+    if (employeeResult.rows[0]) {
+      effectiveValue = toNullableString(employeeResult.rows[0].setting_value) ?? effectiveValue;
+      sourceLevel = 'EMPLOYEE';
+    }
+  }
+
   return {
     system_setting_id: setting.id,
     setting_key: setting.setting_key,
@@ -112,6 +132,7 @@ export async function resolveEffectiveNumberSetting(
     fallback: number;
     companyId?: string | null;
     employeeProfileId?: string | null;
+    employeeId?: string | null;
     min?: number;
     max?: number;
   }

@@ -1,195 +1,300 @@
 /**
  * ChangePasswordModal.tsx
- * Modal bloqueante para cambio obligatorio de contraseña
+ * Cambio de contraseña con verificación de la contraseña actual.
  */
 
+import { useEffect, useState } from 'react';
+import { AlertCircle, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, Lock, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { ApiClient } from '../lib/api-client';
 import { buildApiUrl } from '../utils/api-config';
-import { useState } from 'react';
-import { Lock, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { projectId } from '../utils/backend/info';
 
 interface ChangePasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPasswordChanged: () => void;
+  onPasswordChanged?: () => void;
+  mode?: 'authenticated' | 'login';
+  initialLoginId?: string;
 }
 
-export default function ChangePasswordModal({ isOpen, onClose, onPasswordChanged }: ChangePasswordModalProps) {
+type PasswordFieldProps = {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  visible: boolean;
+  onToggleVisibility: () => void;
+  autoComplete: string;
+  placeholder: string;
+  disabled: boolean;
+};
+
+function PasswordField({
+  id,
+  label,
+  value,
+  onChange,
+  visible,
+  onToggleVisibility,
+  autoComplete,
+  placeholder,
+  disabled,
+}: PasswordFieldProps) {
+  return (
+    <div>
+      <label htmlFor={id} className="block text-sm font-medium text-gray-700 mb-2">
+        {label}
+      </label>
+      <div className="relative">
+        <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+        <input
+          id={id}
+          type={visible ? 'text' : 'password'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          required
+          disabled={disabled}
+          autoComplete={autoComplete}
+          className="block w-full rounded-lg border border-gray-300 py-2.5 pl-10 pr-10 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+          placeholder={placeholder}
+        />
+        <button
+          type="button"
+          onClick={onToggleVisibility}
+          disabled={disabled}
+          className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed"
+          aria-label={visible ? `Ocultar ${label.toLowerCase()}` : `Mostrar ${label.toLowerCase()}`}
+        >
+          {visible ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default function ChangePasswordModal({
+  isOpen,
+  onClose,
+  onPasswordChanged,
+  mode = 'authenticated',
+  initialLoginId = '',
+}: ChangePasswordModalProps) {
+  const [loginId, setLoginId] = useState(initialLoginId);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setLoginId(initialLoginId.trim());
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setShowCurrentPassword(false);
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
+    setIsLoading(false);
+    setError('');
+  }, [initialLoginId, isOpen]);
+
   if (!isOpen) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setError('');
 
-    // Validaciones
-    if (newPassword.length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres');
+    const normalizedLoginId = loginId.trim();
+    if (mode === 'login' && !normalizedLoginId) {
+      setError('Ingrese su usuario o correo.');
       return;
     }
-
+    if (!currentPassword) {
+      setError('Ingrese su contraseña actual.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError('La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
     if (newPassword !== confirmPassword) {
-      setError('Las contraseñas no coinciden');
+      setError('La nueva contraseña y su confirmación no coinciden.');
+      return;
+    }
+    if (currentPassword === newPassword) {
+      setError('La nueva contraseña debe ser diferente de la actual.');
       return;
     }
 
     setIsLoading(true);
-
     try {
-      const token = localStorage.getItem('ApiClient.auth.token');
-      if (!token) {
-        throw new Error('No hay sesión activa');
+      const endpoint = mode === 'login' ? '/auth/change-password' : '/users/change-password';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (mode === 'authenticated') {
+        const { data: sessionData } = await ApiClient.auth.getSession();
+        const token = sessionData?.session?.access_token;
+        if (!token) throw new Error('No hay una sesión activa. Inicie sesión nuevamente.');
+        headers.Authorization = `Bearer ${token}`;
       }
 
-      // Actualizar contraseña en ApiClient Auth
-      const response = await fetch(
-        buildApiUrl(`/users/change-password`),
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            newPassword
-          })
-        }
-      );
+      const response = await fetch(buildApiUrl(endpoint), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          ...(mode === 'login' ? { loginId: normalizedLoginId } : {}),
+          currentPassword,
+          newPassword,
+          confirmPassword,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Error al cambiar contraseña');
+        throw new Error(payload?.error || 'No se pudo cambiar la contraseña.');
       }
 
-      // Éxito
-      onPasswordChanged();
+      toast.success('Contraseña actualizada correctamente.');
+      onPasswordChanged?.();
+      onClose();
     } catch (err: any) {
-      console.error('Error cambiando contraseña:', err);
-      setError(err.message || 'Error al cambiar contraseña');
+      setError(err?.message || 'No se pudo cambiar la contraseña.');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-8">
-        {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Lock className="w-8 h-8 text-yellow-600" />
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="change-password-title"
+    >
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-100">
+              <KeyRound className="h-5 w-5 text-blue-700" />
+            </div>
+            <div>
+              <h2 id="change-password-title" className="text-xl font-semibold text-gray-900">
+                Cambiar contraseña
+              </h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Confirme su contraseña actual antes de definir una nueva.
+              </p>
+            </div>
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">Cambio de contraseña requerido</h2>
-          <p className="text-gray-600 mt-2">
-            Por seguridad, debes cambiar tu contraseña antes de continuar
-          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isLoading}
+            className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed"
+            aria-label="Cerrar cambio de contraseña"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
-        {/* Error message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="mb-5 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Nueva contraseña */}
-          <div>
-            <label htmlFor="newPassword" className="block text-sm font-medium text-gray-700 mb-2">
-              Nueva contraseña
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Lock className="h-5 w-5 text-gray-400" />
-              </div>
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {mode === 'login' && (
+            <div>
+              <label htmlFor="change-password-login-id" className="block text-sm font-medium text-gray-700 mb-2">
+                Usuario o correo
+              </label>
               <input
-                id="newPassword"
-                type={showNewPassword ? 'text' : 'password'}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
+                id="change-password-login-id"
+                type="text"
+                value={loginId}
+                onChange={(event) => setLoginId(event.target.value)}
                 required
-                className="block w-full pl-10 pr-10 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                placeholder="Mínimo 8 caracteres"
+                disabled={isLoading}
+                autoComplete="username"
+                className="block w-full rounded-lg border border-gray-300 px-3 py-2.5 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                placeholder="usuario@empresa.com o usuario.apellido"
               />
-              <button
-                type="button"
-                onClick={() => setShowNewPassword(!showNewPassword)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-              >
-                {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
             </div>
-          </div>
+          )}
 
-          {/* Confirmar contraseña */}
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
-              Confirmar contraseña
-            </label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Lock className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                id="confirmPassword"
-                type={showConfirmPassword ? 'text' : 'password'}
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                className="block w-full pl-10 pr-10 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                placeholder="Repite la contraseña"
-              />
-              <button
-                type="button"
-                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
-              >
-                {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Password requirements */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-sm font-medium text-blue-900 mb-2">Requisitos de la contraseña:</p>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className={`w-4 h-4 ${newPassword.length >= 8 ? 'text-green-600' : 'text-gray-400'}`} />
-                Mínimo 8 caracteres
-              </li>
-              <li className="flex items-center gap-2">
-                <CheckCircle2 className={`w-4 h-4 ${newPassword === confirmPassword && newPassword ? 'text-green-600' : 'text-gray-400'}`} />
-                Las contraseñas coinciden
-              </li>
-            </ul>
-          </div>
-
-          {/* Submit button */}
-          <button
-            type="submit"
+          <PasswordField
+            id="change-password-current"
+            label="Contraseña actual"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+            visible={showCurrentPassword}
+            onToggleVisibility={() => setShowCurrentPassword((value) => !value)}
+            autoComplete="current-password"
+            placeholder="Ingrese su contraseña actual"
             disabled={isLoading}
-            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                <span>Cambiando contraseña...</span>
-              </>
-            ) : (
-              <span>Cambiar contraseña</span>
-            )}
-          </button>
+          />
+          <PasswordField
+            id="change-password-new"
+            label="Nueva contraseña"
+            value={newPassword}
+            onChange={setNewPassword}
+            visible={showNewPassword}
+            onToggleVisibility={() => setShowNewPassword((value) => !value)}
+            autoComplete="new-password"
+            placeholder="Mínimo 8 caracteres"
+            disabled={isLoading}
+          />
+          <PasswordField
+            id="change-password-confirm"
+            label="Confirmar nueva contraseña"
+            value={confirmPassword}
+            onChange={setConfirmPassword}
+            visible={showConfirmPassword}
+            onToggleVisibility={() => setShowConfirmPassword((value) => !value)}
+            autoComplete="new-password"
+            placeholder="Repita la nueva contraseña"
+            disabled={isLoading}
+          />
+
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className={`h-4 w-4 ${newPassword.length >= 8 ? 'text-green-600' : 'text-blue-400'}`} />
+              Mínimo 8 caracteres
+            </div>
+            <div className="mt-1 flex items-center gap-2">
+              <CheckCircle2 className={`h-4 w-4 ${newPassword && newPassword === confirmPassword ? 'text-green-600' : 'text-blue-400'}`} />
+              La nueva contraseña y su confirmación coinciden
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isLoading}
+              className="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              {isLoading ? 'Actualizando...' : 'Cambiar contraseña'}
+            </button>
+          </div>
         </form>
       </div>
     </div>
   );
 }
-

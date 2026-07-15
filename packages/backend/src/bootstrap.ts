@@ -410,19 +410,10 @@ export async function bootstrapStep1Tenant(req: Request, res: Response) {
       });
     }
 
-    const PostgresUrl = process.env.Postgres_URL;
-    const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
-
-    if (!PostgresUrl || !PostgresServiceKey) {
-      console.error('❌ [STEP1] Variables de entorno faltantes');
-      return res.status(500).json({
-        success: false,
-        error: 'Error de configuración del servidor',
-        details: 'Variables de entorno Postgres_URL o Postgres_SERVICE_ROLE_KEY no configuradas',
-      });
-    }
-
-    const Postgres = createDbClient(PostgresUrl, PostgresServiceKey);
+    // El backend local usa DATABASE_URL mediante el pool compartido.
+    // Postgres_URL y Postgres_SERVICE_ROLE_KEY pertenecían a la integración
+    // anterior y no son requeridas por createDbClient en la implementación actual.
+    const Postgres = createDbClient();
 
     console.log('📝 [STEP1] Guardando tenant:', tenant_key);
 

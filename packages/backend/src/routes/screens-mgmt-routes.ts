@@ -7,6 +7,7 @@
 
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
+import { pool } from '../lib/db.js';
 
 const router = Router();
 
@@ -15,6 +16,17 @@ function getPostgres() {
     process.env.Postgres_URL || '',
     process.env.Postgres_SERVICE_ROLE_KEY || ''
   );
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function parseOrderedIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const ids = value.map((id) => String(id || '').trim());
+  if (ids.some((id) => !isUuid(id)) || new Set(ids).size !== ids.length) return null;
+  return ids;
 }
 
 // ── Catálogos ────────────────────────────────────────────────────────────────
@@ -77,6 +89,59 @@ router.get('/', async (req: Request, res: Response) => {
     return res.status(200).json({ success: true, screens, count: screens.length });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// Reordena todas las pantallas de un grupo, incluidas las inactivas, en una sola transaccion.
+router.patch('/reorder', async (req: Request, res: Response) => {
+  const menuGroupId = String(req.body?.menu_group_id || '').trim();
+  const orderedIds = parseOrderedIds(req.body?.ordered_ids);
+  if (!isUuid(menuGroupId) || !orderedIds) {
+    return res.status(400).json({ error: 'menu_group_id y ordered_ids validos son obligatorios' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: screenRows } = await client.query(
+      `SELECT id
+         FROM public.screens
+        WHERE menu_group_id = $1::uuid
+        ORDER BY sort_order, screen_name
+        FOR UPDATE`,
+      [menuGroupId]
+    );
+    const screenIds = screenRows.map((row: { id: string }) => row.id);
+    if (screenIds.length !== orderedIds.length || screenIds.some((id: string) => !orderedIds.includes(id))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'ordered_ids debe incluir todas las pantallas activas e inactivas del grupo' });
+    }
+
+    const { rows } = await client.query(
+      `WITH desired AS (
+         SELECT id, (ordinality * 10)::integer AS sort_order
+           FROM unnest($1::uuid[]) WITH ORDINALITY AS item(id, ordinality)
+       )
+       UPDATE public.screens AS screen
+          SET sort_order = desired.sort_order,
+              updated_by = 'SYSTEM_ADMIN',
+              updated_at = now()
+         FROM desired
+        WHERE screen.id = desired.id
+          AND screen.menu_group_id = $2::uuid
+       RETURNING screen.*`,
+      [orderedIds, menuGroupId]
+    );
+
+    await client.query('COMMIT');
+    rows.sort((a: any, b: any) => a.sort_order - b.sort_order);
+    return res.status(200).json({ success: true, screens: rows, message: 'Orden de pantallas actualizado' });
+  } catch (err: any) {
+    await client.query('ROLLBACK');
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

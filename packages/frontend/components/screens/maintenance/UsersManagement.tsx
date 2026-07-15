@@ -18,7 +18,7 @@ import {
   AlertCircle, Plus, Edit2, Power, PowerOff, Search, X,
   Users, User, Shield,
   Key, Clock, ChevronRight, Trash2,
-  Mail, Phone, Globe, Building,
+  Mail, Phone, Globe, Building, Eye, EyeOff,
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
@@ -67,6 +67,8 @@ interface UserRole {
   role_name?: string | null;
   role_scope?: string | null;
   data_scope?: string | null;
+  is_org_scope_target?: boolean;
+  is_employee_access_target?: boolean;
   company_name?: string | null;
 }
 
@@ -97,7 +99,17 @@ interface UserRoleSummary {
 }
 
 interface Tenant { id: string; tenant_key: string; tenant_name: string; }
-interface Role { id: string; role_key: string; role_name: string; role_scope: string; tenant_id: string; }
+interface Role {
+  id: string;
+  role_key: string;
+  role_name: string;
+  role_scope: string;
+  tenant_id: string;
+  is_active?: boolean;
+  user_manager_role_id?: string | null;
+  is_org_scope_target?: boolean;
+  is_employee_access_target?: boolean;
+}
 interface ScopeType { id: string; scope_type_key: string; scope_type_name: string; }
 interface Company { id: string; company_name: string; tenant_id: string; }
 interface Language { code: string; language_name: string; }
@@ -180,6 +192,7 @@ export function UsersManagement() {
   const [mainTab, setMainTab] = useState<MainTab>('users');
   const [userDetailTab, setUserDetailTab] = useState<UserDetailTab>('info');
   const [loading, setLoading] = useState(true);
+  const [canCreateUsers, setCanCreateUsers] = useState(false);
   const [userRolesLoading, setUserRolesLoading] = useState(false);
   const [scopeLoadingByRoleId, setScopeLoadingByRoleId] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
@@ -197,10 +210,12 @@ export function UsersManagement() {
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
   const [userForm, setUserForm] = useState({
     tenant_id: '', username: '', display_name: '', email: '',
-    phone: '', preferred_language_code: '', password: '', confirm_password: '', is_active: true,
+    phone: '', preferred_language_code: '', role_id: '', password: '', confirm_password: '', is_active: true,
   });
   const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
   const [userSaving, setUserSaving] = useState(false);
+  const [showUserPassword, setShowUserPassword] = useState(false);
+  const [showUserConfirmPassword, setShowUserConfirmPassword] = useState(false);
 
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [editingUserRole, setEditingUserRole] = useState<UserRole | null>(null);
@@ -225,6 +240,8 @@ export function UsersManagement() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false);
 
   const tenantsById = new Map(tenants.map((t) => [t.id, t.tenant_name]));
   const companiesById = new Map(companies.map((c) => [c.id, c.company_name]));
@@ -281,11 +298,6 @@ export function UsersManagement() {
     return summary.role_count > 1 ? `${roleName} +${summary.role_count - 1}` : roleName;
   };
 
-  const isEmployeeUser = (userId: string): boolean => {
-    const summary = userRoleSummaries[userId];
-    return (summary?.role_keys || []).some((roleKey) => String(roleKey || '').toUpperCase() === 'EMPLOYEE');
-  };
-
   // ============================================================================
   // CARGA INICIAL
   // ============================================================================
@@ -308,7 +320,7 @@ export function UsersManagement() {
     try {
       await Promise.all([
         loadTenants(), loadRoles(),
-        loadScopeTypes(), loadCompanies(), loadLanguages(),
+        loadScopeTypes(), loadCompanies(), loadLanguages(), loadCapabilities(),
       ]);
       const summaries = await loadUserRoleSummaries();
       await loadUsers(summaries);
@@ -319,18 +331,26 @@ export function UsersManagement() {
     }
   };
 
-  const loadUsers = async (summariesOverride?: Record<string, UserRoleSummary>) => {
+  const loadUsers = async (_summariesOverride?: Record<string, UserRoleSummary>) => {
     const res = await fetch(API_BASE, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
     if (!res.ok) throw new Error(`Error ${res.status} cargando usuarios`);
     const data = await res.json();
     if (!data.success) throw new Error(data.error || 'Error cargando usuarios');
-    const summaries = summariesOverride || userRoleSummaries;
-    setUsers((data.users || []).filter((user: AppUser) => {
-      const summary = summaries[user.id];
-      return !(summary?.role_keys || []).some((roleKey) => String(roleKey || '').toUpperCase() === 'EMPLOYEE');
-    }));
+    setUsers(data.users || []);
+  };
+
+  const loadCapabilities = async () => {
+    const res = await fetch(`${API_BASE}/capabilities`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) {
+      setCanCreateUsers(false);
+      return;
+    }
+    const data = await res.json();
+    setCanCreateUsers(Boolean(data.can_create_users));
   };
 
   const loadTenants = async () => {
@@ -412,7 +432,7 @@ export function UsersManagement() {
       setUserRoles(rolesData);
       setRoleScopesByUserRoleId({});
       setInactiveScopeCountByUserRoleId({});
-      await Promise.all(rolesData.map((role) => loadRoleScopes(role.id)));
+      await Promise.all(rolesData.filter((role) => role.is_org_scope_target).map((role) => loadRoleScopes(role.id)));
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -452,14 +472,14 @@ export function UsersManagement() {
   const selectUserRole = async (ur: UserRole) => {
     setSelectedUserRole(ur);
     setUserDetailTab('roles');
-    await loadRoleScopes(ur.id);
+    if (ur.is_org_scope_target) await loadRoleScopes(ur.id);
   };
 
   // ============================================================================
   // FILTRADO USUARIOS
   // ============================================================================
 
-  const manageableUsers = users.filter((user) => !isEmployeeUser(user.id));
+  const manageableUsers = users;
 
   const filteredUsers = manageableUsers
     .filter(u => {
@@ -483,7 +503,7 @@ export function UsersManagement() {
     });
 
   const totalRoleScopes = Object.values(roleScopesByUserRoleId).reduce((acc, scopes) => acc + scopes.length, 0);
-  const administrativeRoles = roles.filter((role) => String(role.role_key || '').toUpperCase() !== 'EMPLOYEE');
+  const administrativeRoles = roles;
   const roleFilterOptions = [...administrativeRoles].sort((a, b) => {
     const aPriority = IMPORTANT_ROLE_ORDER.indexOf(String(a.role_key || '').toUpperCase());
     const bPriority = IMPORTANT_ROLE_ORDER.indexOf(String(b.role_key || '').toUpperCase());
@@ -515,12 +535,15 @@ export function UsersManagement() {
   // ============================================================================
 
   const openCreateUser = () => {
+    if (!canCreateUsers) return;
     setEditingUser(null);
     setUserForm({
       tenant_id: tenants[0]?.id || '', username: '', display_name: '', email: '',
-      phone: '', preferred_language_code: '', password: '', confirm_password: '', is_active: true,
+      phone: '', preferred_language_code: '', role_id: '', password: '', confirm_password: '', is_active: true,
     });
     setUserFormErrors({});
+    setShowUserPassword(false);
+    setShowUserConfirmPassword(false);
     setIsUserModalOpen(true);
   };
 
@@ -530,9 +553,11 @@ export function UsersManagement() {
       tenant_id: user.tenant_id, username: user.username, display_name: user.display_name || '',
       email: user.email || '', phone: user.phone || '',
       preferred_language_code: user.preferred_language_code || '',
-      password: '', confirm_password: '', is_active: user.is_active,
+      role_id: '', password: '', confirm_password: '', is_active: user.is_active,
     });
     setUserFormErrors({});
+    setShowUserPassword(false);
+    setShowUserConfirmPassword(false);
     setIsUserModalOpen(true);
   };
 
@@ -540,6 +565,7 @@ export function UsersManagement() {
     const errors: Record<string, string> = {};
     if (!userForm.tenant_id) errors.tenant_id = 'El tenant es obligatorio';
     if (!userForm.username.trim()) errors.username = 'El nombre de usuario es obligatorio';
+    if (!editingUser && !userForm.role_id) errors.role_id = 'El rol inicial es obligatorio';
     if (!userForm.email.trim()) {
       errors.email = 'El email es obligatorio';
     } else if (!/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(userForm.email)) {
@@ -568,6 +594,7 @@ export function UsersManagement() {
         is_active: userForm.is_active,
       };
       if (!editingUser || userForm.password) body.password = userForm.password;
+      if (!editingUser) body.role_id = userForm.role_id;
 
       const res = await fetch(url, {
         method,
@@ -845,6 +872,8 @@ export function UsersManagement() {
     setNewPassword('');
     setConfirmPassword('');
     setPasswordError('');
+    setShowResetPassword(false);
+    setShowResetConfirmPassword(false);
     setIsPasswordModalOpen(true);
   };
 
@@ -882,13 +911,15 @@ export function UsersManagement() {
         rightSlot={
           <div className="flex gap-2">
             <HeaderRefreshButton onClick={loadAll} />
-            <button
-              onClick={openCreateUser}
-              className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
-            >
-              <Plus className="w-4 h-4" />
-              Nuevo Usuario
-            </button>
+            {canCreateUsers && (
+              <button
+                onClick={openCreateUser}
+                className="flex items-center gap-2 px-4 py-2 bg-[#0074D9] text-white rounded-lg text-sm font-medium hover:bg-[#005bb5]"
+              >
+                <Plus className="w-4 h-4" />
+                Nuevo Usuario
+              </button>
+            )}
           </div>
         }
       />
@@ -932,7 +963,7 @@ export function UsersManagement() {
               </select>
             </div>
             <p className="mt-3 text-sm text-gray-600">
-              Mostrando {filteredUsers.length} de {manageableUsers.length} usuarios administrativos
+              Mostrando {filteredUsers.length} de {manageableUsers.length} usuarios bajo su responsabilidad
             </p>
           </div>
         </div>
@@ -1190,16 +1221,18 @@ export function UsersManagement() {
                               >
                                 {ur.is_active ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}
                               </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openCreateScope(ur);
-                                }}
-                                className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
-                                title="Agregar alcance"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
+                              {ur.is_org_scope_target && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openCreateScope(ur);
+                                  }}
+                                  className="p-1 rounded text-gray-400 hover:text-green-600 hover:bg-green-50"
+                                  title="Agregar alcance"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDeleteUserRole(ur); }}
                                 disabled={togglingId === ur.id}
@@ -1211,6 +1244,7 @@ export function UsersManagement() {
                             </div>
                           </div>
 
+                          {ur.is_org_scope_target && (
                           <div className="mt-3 pt-3 border-t border-gray-100">
                             <div className="flex items-center justify-between gap-2 mb-2">
                               <p className="text-xs font-medium text-gray-600">Autorizaciones activas del rol</p>
@@ -1283,6 +1317,7 @@ export function UsersManagement() {
                               </div>
                             )}
                           </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1327,6 +1362,27 @@ export function UsersManagement() {
                   </select>
                   {userFormErrors.tenant_id && <p className="text-xs text-red-500 mt-1">{userFormErrors.tenant_id}</p>}
                 </div>
+                {!editingUser && (
+                  <div className="col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Rol inicial <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={userForm.role_id}
+                      onChange={e => setUserForm(f => ({ ...f, role_id: e.target.value }))}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.role_id ? 'border-red-400' : 'border-gray-300'}`}
+                    >
+                      <option value="">Seleccionar rol...</option>
+                      {roles
+                        .filter(role => role.tenant_id === userForm.tenant_id && role.is_active !== false)
+                        .map(role => (
+                          <option key={role.id} value={role.id}>{role.role_name} ({role.role_key})</option>
+                        ))}
+                    </select>
+                    {userFormErrors.role_id && <p className="text-xs text-red-500 mt-1">{userFormErrors.role_id}</p>}
+                    <p className="text-xs text-gray-400 mt-1">Solo se muestran roles cuya administración corresponde a su responsabilidad.</p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Usuario <span className="text-red-500">*</span></label>
                   <input type="text" value={userForm.username} onChange={e => setUserForm(f => ({ ...f, username: e.target.value }))}
@@ -1362,16 +1418,34 @@ export function UsersManagement() {
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Contraseña {!editingUser && <span className="text-red-500">*</span>}
                     </label>
-                    <input type="password" value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
-                      placeholder={editingUser ? 'Dejar vacío para no cambiar' : 'Mínimo 8 caracteres'} className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
+                    <div className="relative">
+                      <input type={showUserPassword ? 'text' : 'password'} value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
+                        placeholder={editingUser ? 'Dejar vacío para no cambiar' : 'Mínimo 8 caracteres'} className={`w-full px-3 py-2 pr-10 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
+                      <button type="button" onClick={() => setShowUserPassword(value => !value)}
+                        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
+                        aria-label={showUserPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        title={showUserPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        aria-pressed={showUserPassword}>
+                        {showUserPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                     {userFormErrors.password && <p className="text-xs text-red-500 mt-1">{userFormErrors.password}</p>}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Confirmar Contraseña {!editingUser && <span className="text-red-500">*</span>}
                     </label>
-                    <input type="password" value={userForm.confirm_password} onChange={e => setUserForm(f => ({ ...f, confirm_password: e.target.value }))}
-                      placeholder="Repetir contraseña" className={`w-full px-3 py-2 border rounded-lg text-sm ${userFormErrors.confirm_password ? 'border-red-400' : 'border-gray-300'}`} />
+                    <div className="relative">
+                      <input type={showUserConfirmPassword ? 'text' : 'password'} value={userForm.confirm_password} onChange={e => setUserForm(f => ({ ...f, confirm_password: e.target.value }))}
+                        placeholder="Repetir contraseña" className={`w-full px-3 py-2 pr-10 border rounded-lg text-sm ${userFormErrors.confirm_password ? 'border-red-400' : 'border-gray-300'}`} />
+                      <button type="button" onClick={() => setShowUserConfirmPassword(value => !value)}
+                        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
+                        aria-label={showUserConfirmPassword ? 'Ocultar confirmación de contraseña' : 'Mostrar confirmación de contraseña'}
+                        title={showUserConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                        aria-pressed={showUserConfirmPassword}>
+                        {showUserConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
                     {userFormErrors.confirm_password && <p className="text-xs text-red-500 mt-1">{userFormErrors.confirm_password}</p>}
                   </div>
                 </>
@@ -1569,13 +1643,31 @@ export function UsersManagement() {
               )}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nueva Contraseña</label>
-                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                  placeholder="Mínimo 8 caracteres" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <div className="relative">
+                  <input type={showResetPassword ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)}
+                    placeholder="Mínimo 8 caracteres" className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm" />
+                  <button type="button" onClick={() => setShowResetPassword(value => !value)}
+                    className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
+                    aria-label={showResetPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    title={showResetPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    aria-pressed={showResetPassword}>
+                    {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Confirmar Contraseña</label>
-                <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-                  placeholder="Repetir contraseña" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
+                <div className="relative">
+                  <input type={showResetConfirmPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+                    placeholder="Repetir contraseña" className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm" />
+                  <button type="button" onClick={() => setShowResetConfirmPassword(value => !value)}
+                    className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
+                    aria-label={showResetConfirmPassword ? 'Ocultar confirmación de contraseña' : 'Mostrar confirmación de contraseña'}
+                    title={showResetConfirmPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                    aria-pressed={showResetConfirmPassword}>
+                    {showResetConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
             </div>
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">

@@ -3,13 +3,14 @@
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { Edit, Plus, Power, PowerOff, Save, Search, Tablet, Trash2, X } from 'lucide-react';
-import { MapContainer, TileLayer, Polygon, CircleMarker, useMapEvents, useMap } from 'react-leaflet';
+import { MapContainer, Polygon, CircleMarker, useMapEvents, useMap } from 'react-leaflet';
 import type { LatLngExpression } from 'leaflet';
 import { publicApiToken } from '../../../utils/backend/info';
 import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
 import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
 import HeaderInfoTips from '../../shared/HeaderInfoTips';
 import GridActionIconButton from '../../shared/GridActionIconButton';
+import MapBaseLayers from '../../shared/MapBaseLayers';
 
 interface CompanyRow {
   id: string;
@@ -223,11 +224,8 @@ function DeviceMapPicker({
       </div>
 
       <div className="rounded-md border bg-white overflow-hidden">
-        <MapContainer center={center} zoom={zoom} className="h-[300px] w-full">
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors"
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+        <MapContainer center={center} zoom={zoom} maxZoom={22} className="h-[300px] w-full">
+          <MapBaseLayers maxZoom={22} />
           <DeviceMapClickCapture onPick={onPick} />
           <DeviceMapAutoFit polygonPoints={polygonPoints} marker={marker} />
           {polygonPositions.length >= 2 && (

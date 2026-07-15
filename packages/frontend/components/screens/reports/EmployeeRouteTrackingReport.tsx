@@ -2,12 +2,13 @@
 
 import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Polyline, Marker, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, Polyline, Marker, Tooltip, useMap } from 'react-leaflet';
 import type { LatLngBoundsExpression, LatLngExpression } from 'leaflet';
 import { divIcon } from 'leaflet';
 import { MapPinned, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
+import MapBaseLayers from '../../shared/MapBaseLayers';
 import {
   defaultSystemReportConfig,
   fetchSystemReportConfig,
@@ -427,11 +428,7 @@ export default function EmployeeRouteTrackingReport() {
             </div>
           ) : (
             <MapContainer center={positions[0]} zoom={14} maxZoom={19} className="h-full w-full">
-              <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maxZoom={19}
-              />
+              <MapBaseLayers maxZoom={19} />
               <MapBounds positions={positions} />
               <MapFocusController target={mapFocusTarget} />
               {routeLinePositions.length > 1 ? <Polyline positions={routeLinePositions} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.75 }} /> : null}
