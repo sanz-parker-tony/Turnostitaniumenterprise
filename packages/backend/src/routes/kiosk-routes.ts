@@ -214,6 +214,12 @@ function parseNullableCoordinate(value: any): number | null {
   return Number.isFinite(next) ? next : Number.NaN;
 }
 
+function standardizeCoordinate(value: number): number {
+  // Seis decimales preservan la posición informada con resolución submétrica
+  // y evitan almacenar cantidades variables de decimales entre dispositivos.
+  return Number(value.toFixed(6));
+}
+
 type GeoPoint = { lng: number; lat: number };
 const EARTH_RADIUS_METERS = 6371000;
 const DEFAULT_GEOFENCE_TOLERANCE_METERS = 25;
@@ -1566,6 +1572,8 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     if (locationAccuracyMeters !== null && (!Number.isFinite(locationAccuracyMeters) || locationAccuracyMeters < 0)) {
       return res.status(400).json({ error: 'location_accuracy_meters debe ser numerico mayor o igual a 0' });
     }
+    const storedLatitude = standardizeCoordinate(latitud);
+    const storedLongitude = standardizeCoordinate(longitud);
 
     const employeeCompanies = await getEmployeeCompanies(context.tenant_id, context.employee_id);
     const defaultCompanyId = context.company_id || employeeCompanies[0]?.company_id || null;
@@ -1678,8 +1686,8 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         companyId,
         trackingDateTime: punchDateTime,
         clientTimeZone,
-        latitud,
-        longitud,
+        latitud: storedLatitude,
+        longitud: storedLongitude,
         locationAccuracyMeters,
         snapshotBase64,
         actor,
@@ -1808,6 +1816,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           notes,
           latitud,
           longitud,
+          location_accuracy_meters,
           client_ip,
           client_user_agent,
           client_device_type,
@@ -1819,7 +1828,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,true,$19
+          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,true,$20
         )
         RETURNING *
       `,
@@ -1834,8 +1843,9 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         normalizedSourceId,
         normalizedStatusId,
         notes,
-        latitud,
-        longitud,
+        storedLatitude,
+        storedLongitude,
+        locationAccuracyMeters,
         clientInfo.clientIp,
         clientInfo.clientUserAgent,
         clientInfo.clientDeviceType,

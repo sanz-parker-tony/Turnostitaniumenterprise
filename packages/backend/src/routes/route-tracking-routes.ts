@@ -202,7 +202,7 @@ router.get('/employee-route', async (req: Request, res: Response) => {
             p.punch_time_zone AS event_time_zone,
             p.latitud,
             p.longitud,
-            NULL::double precision AS location_accuracy_meters,
+            p.location_accuracy_meters,
             mv.lookup_label AS event_label,
             st.lookup_label AS status_label,
             COALESCE(dwl.work_location_name, wl.work_location_name) AS location_label,
