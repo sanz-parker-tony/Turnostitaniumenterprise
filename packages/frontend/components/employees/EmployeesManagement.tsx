@@ -54,7 +54,7 @@ export default function EmployeesManagement() {
             <tr>
               <th className="text-left p-3">Código</th>
               <th className="text-left p-3">Nombre</th>
-              <th className="text-left p-3">Email</th>
+              <th className="text-left p-3">Correo electrónico</th>
               <th className="text-left p-3">Estado</th>
               <th className="text-left p-3">Acciones</th>
             </tr>

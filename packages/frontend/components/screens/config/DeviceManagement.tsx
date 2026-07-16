@@ -594,10 +594,10 @@ export function DeviceManagement() {
             <thead>
               <tr className="border-b">
                 <th className="py-2 pr-3 text-left">Nombre</th>
-                <th className="py-2 pr-3 text-left">Serial</th>
+                <th className="py-2 pr-3 text-left">Número de serie</th>
                 <th className="py-2 pr-3 text-left">Empresa</th>
                 <th className="py-2 pr-3 text-left">Tipo</th>
-                <th className="py-2 pr-3 text-left">IP / Host</th>
+                <th className="py-2 pr-3 text-left">IP / Servidor</th>
                 <th className="py-2 pr-3 text-left">Ubicación</th>
                 <th className="py-2 pr-3 text-left">Localidad</th>
                 <th className="py-2 pr-3 text-left">Lat / Lng</th>

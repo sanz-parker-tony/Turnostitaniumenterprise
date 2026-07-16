@@ -520,7 +520,7 @@ export default function SystemLookupValuesAdmin() {
                   <TableHead>
                     <div className="flex items-center gap-2">
                       <Lock className="size-4 text-gray-400" />
-                      Key
+                      Clave
                     </div>
                   </TableHead>
                   <TableHead>Etiqueta</TableHead>

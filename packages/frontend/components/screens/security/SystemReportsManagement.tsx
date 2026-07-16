@@ -616,7 +616,7 @@ export default function SystemReportsManagement() {
                   </th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Modulo</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Tipo ejecucion</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-600">Handler</th>
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Ejecutor</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Estado</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Acciones</th>
                 </tr>

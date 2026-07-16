@@ -458,11 +458,11 @@ export default function SystemLookupGroupsAdmin() {
                   <TableHead>
                     <div className="flex items-center gap-2">
                       <Lock className="size-4 text-gray-400" />
-                      Key
+                      Clave
                     </div>
                   </TableHead>
                   <TableHead>Etiqueta</TableHead>
-                  <TableHead>Permite Items Tenant</TableHead>
+                  <TableHead>Permite elementos de la organización</TableHead>
                   <TableHead>Traducciones</TableHead>
                   <TableHead>Estado</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>

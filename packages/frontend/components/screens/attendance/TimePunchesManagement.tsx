@@ -381,8 +381,8 @@ export function TimePunchesManagement() {
                 <th className="py-2 pr-3 text-left">Localidad</th>
                 <th className="py-2 pr-3 text-left">Rol de pago</th>
                 <th className="py-2 pr-3 text-left">Movimiento</th>
-                <th className="py-2 pr-3 text-left">Key detectada</th>
-                <th className="py-2 pr-3 text-left">Key faltante</th>
+                <th className="py-2 pr-3 text-left">Clave detectada</th>
+                <th className="py-2 pr-3 text-left">Clave faltante</th>
                 <th className="py-2 pr-3 text-left">Tipo</th>
               </tr>
             </thead>

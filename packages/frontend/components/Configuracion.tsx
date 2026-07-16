@@ -685,7 +685,7 @@ export default function Configuracion({ activeTab: initialTab = 'dispositivos', 
                     <TableHead>Nombre</TableHead>
                     <TableHead>Código</TableHead>
                     <TableHead>Horas Totales</TableHead>
-                    <TableHead>Horas Lunch</TableHead>
+                    <TableHead>Horas de almuerzo</TableHead>
                     <TableHead>Estado</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>

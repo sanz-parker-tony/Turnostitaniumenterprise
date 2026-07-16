@@ -550,7 +550,7 @@ export function RolesManagement() {
                   { key: 'role_name', label: 'Nombre' },
                   { key: 'role_scope', label: 'Alcance' },
                   { key: 'data_scope', label: 'Datos' },
-                  { key: 'tenant_name', label: 'Tenant' },
+                  { key: 'tenant_name', label: 'Organización' },
                 ].map(col => (
                   <th
                     key={col.key}
@@ -567,7 +567,7 @@ export function RolesManagement() {
                     </div>
                   </th>
                 ))}
-                <th className="px-4 py-3 text-center font-semibold text-gray-600">Flags</th>
+                <th className="px-4 py-3 text-center font-semibold text-gray-600">Indicadores</th>
                 <th className="px-4 py-3 text-center font-semibold text-gray-600">Estado</th>
                 <th className="px-4 py-3 text-center font-semibold text-gray-600">Acciones</th>
               </tr>

@@ -1009,7 +1009,7 @@ export function ShiftConstructorManagement() {
                 <th className="text-center py-2 px-2">Ícono</th>
                 <th className="text-center py-2 px-2">Color fondo</th>
                 <th className="text-center py-2 px-2">Horas Totales</th>
-                <th className="text-center py-2 px-2">Horas Lunch</th>
+                <th className="text-center py-2 px-2">Horas de almuerzo</th>
                 <th className="text-center py-2 px-2">Estado</th>
                 <th className="text-center py-2 px-2">Acciones</th>
               </tr>
@@ -1417,7 +1417,7 @@ export function ShiftConstructorManagement() {
                           <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Fin</th>
                           <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Duración (min)</th>
                           <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Recargo %</th>
-                          <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Track</th>
+                          <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Categoría</th>
                           <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Orden</th>
                           <th className="text-left px-3 py-2 border-b font-semibold text-gray-700">Acciones</th>
                         </tr>
