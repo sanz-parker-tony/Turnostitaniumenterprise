@@ -49,7 +49,6 @@ interface NumberedRoutePoint {
   point: RoutePoint;
   sequence: number;
   position: [number, number];
-  duplicateCount: number;
 }
 
 interface MapFocusTarget {
@@ -85,36 +84,6 @@ function pointColor(pointType: RoutePoint['point_type']): string {
 
 function pointLabel(point: RoutePoint): string {
   return point.point_type === 'ROUTE_TRACKING' ? 'Recorrido' : (point.event_label || 'Asistencia');
-}
-
-function coordinateKey(point: RoutePoint): string {
-  return `${Number(point.latitud).toFixed(6)},${Number(point.longitud).toFixed(6)}`;
-}
-
-function duplicateMarkerOffset(duplicateIndex: number, duplicateCount: number): { x: number; y: number } {
-  if (duplicateCount <= 1) return { x: 0, y: 0 };
-  const angle = ((Math.PI * 2) / duplicateCount) * duplicateIndex - Math.PI / 2;
-  const radius = duplicateCount <= 4 ? 36 : 48;
-  return {
-    x: Math.round(Math.cos(angle) * radius),
-    y: Math.round(Math.sin(angle) * radius),
-  };
-}
-
-function visualDuplicatePosition(point: RoutePoint, duplicateIndex: number, duplicateCount: number): [number, number] {
-  const latitud = Number(point.latitud);
-  const longitud = Number(point.longitud);
-  if (duplicateCount <= 1) return [latitud, longitud];
-
-  const offset = duplicateMarkerOffset(duplicateIndex, duplicateCount);
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng = metersPerDegreeLat * Math.cos((latitud * Math.PI) / 180);
-  const metersPerPixel = 6;
-
-  return [
-    latitud - (offset.y * metersPerPixel) / metersPerDegreeLat,
-    longitud + (offset.x * metersPerPixel) / metersPerDegreeLng,
-  ];
 }
 
 function numberedPointIcon(point: RoutePoint, sequence: number) {
@@ -191,6 +160,9 @@ function PointDetails({ point, sequence }: { point: RoutePoint; sequence: number
       <p>{contextLabel}</p>
       {statusLabel ? <p>Estado: {statusLabel}</p> : null}
       <p>{Number(point.latitud).toFixed(6)}, {Number(point.longitud).toFixed(6)}</p>
+      {point.location_accuracy_meters !== null ? (
+        <p>Precisión reportada: ±{Math.round(Number(point.location_accuracy_meters))} m</p>
+      ) : null}
       {notesLabel ? <p>Notas: {notesLabel}</p> : null}
     </div>
   );
@@ -290,24 +262,11 @@ export default function EmployeeRouteTrackingReport() {
   }, [selectedEmployeeId]);
 
   const numberedPoints = useMemo<NumberedRoutePoint[]>(() => {
-    const totals = new Map<string, number>();
-    const occurrences = new Map<string, number>();
-
-    points.forEach((point) => {
-      const key = coordinateKey(point);
-      totals.set(key, (totals.get(key) || 0) + 1);
-    });
-
     return points.map((point, index) => {
-      const key = coordinateKey(point);
-      const duplicateIndex = occurrences.get(key) || 0;
-      occurrences.set(key, duplicateIndex + 1);
-
       return {
         point,
         sequence: index + 1,
-        position: visualDuplicatePosition(point, duplicateIndex, totals.get(key) || 1),
-        duplicateCount: totals.get(key) || 1,
+        position: [Number(point.latitud), Number(point.longitud)],
       };
     });
   }, [points]);
@@ -432,7 +391,7 @@ export default function EmployeeRouteTrackingReport() {
               <MapBounds positions={positions} />
               <MapFocusController target={mapFocusTarget} />
               {routeLinePositions.length > 1 ? <Polyline positions={routeLinePositions} pathOptions={{ color: '#2563eb', weight: 4, opacity: 0.75 }} /> : null}
-              {numberedPoints.map(({ point, sequence, position, duplicateCount }) => (
+              {numberedPoints.map(({ point, sequence, position }) => (
                 <Marker
                   key={`${point.point_type}-${point.id}`}
                   position={position}
@@ -453,7 +412,7 @@ export default function EmployeeRouteTrackingReport() {
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {points.length === 0 ? (
               <p className="rounded-lg border bg-slate-50 px-3 py-2 text-sm text-slate-500">Sin puntos para mostrar.</p>
-            ) : numberedPoints.map(({ point, sequence, position, duplicateCount }) => (
+            ) : numberedPoints.map(({ point, sequence, position }) => (
               <div
                 key={`${point.point_type}-list-${point.id}`}
                 role="button"

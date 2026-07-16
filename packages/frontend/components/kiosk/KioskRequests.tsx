@@ -63,6 +63,13 @@ interface EmployeeContext {
   employee_lastname?: string | null;
 }
 
+interface DiscountMethodRule {
+  justification_type_id: string | null;
+  attendance_event_id: string | null;
+  justify_method_id: string;
+  sort_order: number;
+}
+
 type PopupForm = {
   id: string | null;
   justification_type_id: string;
@@ -173,6 +180,7 @@ export default function KioskRequests() {
   const [justifications, setJustifications] = useState<CatalogItem[]>([]);
   const [events, setEvents] = useState<CatalogItem[]>([]);
   const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
+  const [discountMethodRules, setDiscountMethodRules] = useState<DiscountMethodRule[]>([]);
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [employee, setEmployee] = useState<EmployeeContext | null>(null);
 
@@ -278,6 +286,7 @@ export default function KioskRequests() {
     setJustifications(nextJustifications);
     setEvents(nextEvents);
     setDiscountMethods(nextDiscountMethods);
+    setDiscountMethodRules((payload?.discount_method_rules || []) as DiscountMethodRule[]);
     setEmployee((payload?.employee || null) as EmployeeContext | null);
   };
 
@@ -323,6 +332,34 @@ export default function KioskRequests() {
     });
     return map;
   }, [discountMethods]);
+
+  const allowedDiscountMethods = useMemo(() => {
+    const justificationRules = discountMethodRules.filter(
+      (rule) => rule.justification_type_id === popupForm.justification_type_id
+    );
+    const eventRules = discountMethodRules.filter(
+      (rule) => rule.attendance_event_id === popupForm.attendance_event_id
+    );
+    const applicableRules = justificationRules.length > 0 ? justificationRules : eventRules;
+    if (applicableRules.length === 0) return discountMethods;
+
+    const allowedIds = new Set(applicableRules.map((rule) => rule.justify_method_id));
+    return discountMethods.filter((method) => allowedIds.has(method.id));
+  }, [
+    discountMethods,
+    discountMethodRules,
+    popupForm.justification_type_id,
+    popupForm.attendance_event_id,
+  ]);
+
+  useEffect(() => {
+    if (popupMode === 'view' || allowedDiscountMethods.length === 0) return;
+    if (allowedDiscountMethods.some((method) => method.id === popupForm.justify_method_id)) return;
+    setPopupForm((prev) => ({
+      ...prev,
+      justify_method_id: allowedDiscountMethods[0]?.id || '',
+    }));
+  }, [allowedDiscountMethods, popupForm.justify_method_id, popupMode]);
 
   const openCreatePopup = () => {
     const firstJustification = justifications[0]?.id || '';
@@ -706,7 +743,7 @@ export default function KioskRequests() {
                 disabled={saving || popupMode === 'view'}
               >
                 <option value="">Seleccionar...</option>
-                {discountMethods.map((item) => (
+                {allowedDiscountMethods.map((item) => (
                   <option key={item.id} value={item.id}>{item.lookup_label || item.lookup_key || item.id}</option>
                 ))}
               </select>

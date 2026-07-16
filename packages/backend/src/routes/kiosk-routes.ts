@@ -13,9 +13,9 @@ const TIME_PUNCH_STATUS_GROUP_ID = '0949d7d5-c2b1-56e9-6010-5909cc7af8b7';
 const PUNCH_KEY_GROUP_KEY = 'PUNCH_KEY';
 const PUNCH_SOURCE_GROUP_KEY = 'PUNCH_SOURCE';
 const TIME_PUNCH_STATUS_GROUP_KEY = 'TIME_PUNCH_STATUS';
-const REQUEST_STATUS_GROUP_ID = '9f904369-9998-83ab-6996-635363513a9f';
-const ABSENCE_DISCOUNT_METHOD_GROUP_ID = '1d3d598e-5003-4a36-a93d-306e0cbb3c7b';
-const EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID = 'd41aff61-6de9-200e-922e-3c651cc5446c';
+const REQUEST_STATUS_GROUP_KEY = 'REQUEST_STATUS';
+const ABSENCE_DISCOUNT_METHOD_GROUP_KEY = 'JUSTIFY_METHOD';
+const EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY = 'DEC';
 const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
@@ -618,24 +618,84 @@ async function saveRouteTrackingSnapshot(params: {
   };
 }
 
-async function isLookupValueInGroupById(
+async function isLookupValueInGroupByKey(
   lookupValueId: string,
-  lookupGroupId: string,
+  lookupGroupKey: string,
   tenantId: string
 ): Promise<boolean> {
   const result = await pool.query(
     `
       SELECT lv.id
       FROM public.lookup_values lv
+      INNER JOIN public.lookup_groups lg
+        ON lg.id = lv.lookup_group_id
       WHERE lv.id = $1::uuid
-        AND lv.lookup_group_id = $2::uuid
+        AND lg.lookup_group_key = $2
         AND lv.is_active = true
         AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
       LIMIT 1
     `,
-    [lookupValueId, lookupGroupId, tenantId]
+    [lookupValueId, lookupGroupKey, tenantId]
   );
   return Boolean(result.rows[0]);
+}
+
+async function isJustifyMethodAllowed(params: {
+  tenantId: string;
+  justificationTypeId: string;
+  attendanceEventId: string;
+  justifyMethodId: string;
+}): Promise<boolean> {
+  const isCatalogMethod = await isLookupValueInGroupByKey(
+    params.justifyMethodId,
+    ABSENCE_DISCOUNT_METHOD_GROUP_KEY,
+    params.tenantId
+  );
+  if (!isCatalogMethod) return false;
+
+  const result = await pool.query(
+    `
+      WITH active_rules AS (
+        SELECT
+          justification_type_id,
+          attendance_event_id,
+          justify_method_id
+        FROM public.absence_justify_method_rules
+        WHERE tenant_id = $1::uuid
+          AND is_active = true
+      ),
+      justification_rules AS (
+        SELECT justify_method_id
+        FROM active_rules
+        WHERE justification_type_id = $2::uuid
+      ),
+      event_rules AS (
+        SELECT justify_method_id
+        FROM active_rules
+        WHERE attendance_event_id = $3::uuid
+      )
+      SELECT CASE
+        WHEN EXISTS (SELECT 1 FROM justification_rules)
+          THEN EXISTS (
+            SELECT 1 FROM justification_rules
+            WHERE justify_method_id = $4::uuid
+          )
+        WHEN EXISTS (SELECT 1 FROM event_rules)
+          THEN EXISTS (
+            SELECT 1 FROM event_rules
+            WHERE justify_method_id = $4::uuid
+          )
+        ELSE true
+      END AS allowed
+    `,
+    [
+      params.tenantId,
+      params.justificationTypeId,
+      params.attendanceEventId,
+      params.justifyMethodId,
+    ]
+  );
+  return result.rows[0]?.allowed === true;
 }
 
 async function resolveRequestStatusIdByKeys(
@@ -648,21 +708,23 @@ async function resolveRequestStatusIdByKeys(
 
   const result = await pool.query(
     `
-      SELECT id
-      FROM public.lookup_values
-      WHERE lookup_group_id = $1::uuid
-        AND is_active = true
-        AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-        AND UPPER(lookup_key) = ANY ($3::text[])
+      SELECT lv.id
+      FROM public.lookup_values lv
+      INNER JOIN public.lookup_groups lg
+        ON lg.id = lv.lookup_group_id
+      WHERE lg.lookup_group_key = $1
+        AND lv.is_active = true
+        AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+        AND UPPER(lv.lookup_key) = ANY ($3::text[])
       ORDER BY
         CASE
-          WHEN UPPER(lookup_key) = $4 THEN 0
+          WHEN UPPER(lv.lookup_key) = $4 THEN 0
           ELSE 1
         END,
-        sort_order ASC
+        lv.sort_order ASC
       LIMIT 1
     `,
-    [REQUEST_STATUS_GROUP_ID, tenantId, normalized, normalized[0]]
+    [REQUEST_STATUS_GROUP_KEY, tenantId, normalized, normalized[0]]
   );
   return result.rows[0]?.id || null;
 }
@@ -681,15 +743,17 @@ async function resolveDefaultRequestStatusId(tenantId: string): Promise<string |
 
   const fallback = await pool.query(
     `
-      SELECT id
-      FROM public.lookup_values
-      WHERE lookup_group_id = $1::uuid
-        AND is_active = true
-        AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-      ORDER BY sort_order ASC, lookup_label ASC
+      SELECT lv.id
+      FROM public.lookup_values lv
+      INNER JOIN public.lookup_groups lg
+        ON lg.id = lv.lookup_group_id
+      WHERE lg.lookup_group_key = $1
+        AND lv.is_active = true
+        AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+      ORDER BY lv.sort_order ASC, lv.lookup_label ASC
       LIMIT 1
     `,
-    [REQUEST_STATUS_GROUP_ID, tenantId]
+    [REQUEST_STATUS_GROUP_KEY, tenantId]
   );
   return fallback.rows[0]?.id || null;
 }
@@ -2180,7 +2244,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
     }
 
-    const [justificationsResult, attendanceEventsResult, statusesResult, discountMethodsResult] = await Promise.all([
+    const [justificationsResult, attendanceEventsResult, statusesResult, discountMethodsResult, discountMethodRulesResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -2193,44 +2257,58 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
           FROM public.justification_types jt
           LEFT JOIN public.attendance_events ae
             ON ae.id = jt.attendance_event_id
+          LEFT JOIN public.lookup_values event_direction
+            ON event_direction.id = ae.transaction_direction_id
+          LEFT JOIN public.lookup_groups event_direction_group
+            ON event_direction_group.id = event_direction.lookup_group_id
           WHERE jt.tenant_id = $1
             AND jt.is_active = true
             AND (
               jt.attendance_event_id IS NULL
-              OR ae.transaction_direction_id = $2::uuid
+              OR (
+                event_direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
+                AND UPPER(event_direction.lookup_key) = $2
+              )
             )
           ORDER BY jt.justification_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
       ),
       pool.query(
         `
           SELECT
-            id,
-            event_name,
-            event_short_name
-          FROM public.attendance_events
-          WHERE tenant_id = $1
-            AND is_active = true
-            AND transaction_direction_id = $2::uuid
-          ORDER BY event_name ASC
+            ae.id,
+            ae.event_name,
+            ae.event_short_name
+          FROM public.attendance_events ae
+          INNER JOIN public.lookup_values direction
+            ON direction.id = ae.transaction_direction_id
+          INNER JOIN public.lookup_groups direction_group
+            ON direction_group.id = direction.lookup_group_id
+          WHERE ae.tenant_id = $1
+            AND ae.is_active = true
+            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
+            AND UPPER(direction.lookup_key) = $2
+          ORDER BY ae.event_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_ID]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
       ),
       pool.query(
         `
           SELECT
-            id,
-            lookup_key,
-            lookup_label,
-            sort_order
-          FROM public.lookup_values
-          WHERE lookup_group_id = $1::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-          ORDER BY sort_order ASC, lookup_label ASC
+            lv.id,
+            lv.lookup_key,
+            lv.lookup_label,
+            lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
+            AND lv.is_active = true
+            AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+          ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [REQUEST_STATUS_GROUP_ID, context.tenant_id]
+        [REQUEST_STATUS_GROUP_KEY, context.tenant_id]
       ),
       pool.query(
         `
@@ -2241,12 +2319,28 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
             lv.lookup_short_label,
             lv.sort_order
           FROM public.lookup_values lv
-          WHERE lv.lookup_group_id = $1::uuid
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+          WHERE lg.lookup_group_key = $1
             AND lv.is_active = true
             AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
-        [ABSENCE_DISCOUNT_METHOD_GROUP_ID, context.tenant_id]
+        [ABSENCE_DISCOUNT_METHOD_GROUP_KEY, context.tenant_id]
+      ),
+      pool.query(
+        `
+          SELECT
+            justification_type_id,
+            attendance_event_id,
+            justify_method_id,
+            sort_order
+          FROM public.absence_justify_method_rules
+          WHERE tenant_id = $1::uuid
+            AND is_active = true
+          ORDER BY sort_order ASC, created_at ASC
+        `,
+        [context.tenant_id]
       ),
     ]);
 
@@ -2265,6 +2359,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       request_statuses: statusesResult.rows,
       discount_methods: discountMethodsResult.rows,
       transaction_types: discountMethodsResult.rows,
+      discount_method_rules: discountMethodRulesResult.rows,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -2515,14 +2610,20 @@ router.post('/requests', async (req: Request, res: Response) => {
       ),
       pool.query(
         `
-          SELECT id
-          FROM public.attendance_events
-          WHERE id = $1
-            AND tenant_id = $2
-            AND is_active = true
+          SELECT ae.id
+          FROM public.attendance_events ae
+          INNER JOIN public.lookup_values direction
+            ON direction.id = ae.transaction_direction_id
+          INNER JOIN public.lookup_groups direction_group
+            ON direction_group.id = direction.lookup_group_id
+          WHERE ae.id = $1
+            AND ae.tenant_id = $2
+            AND ae.is_active = true
+            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
+            AND UPPER(direction.lookup_key) = $3
           LIMIT 1
         `,
-        [attendanceEventId, context.tenant_id]
+        [attendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
       ),
     ]);
 
@@ -2536,11 +2637,12 @@ router.post('/requests', async (req: Request, res: Response) => {
       });
     }
 
-    const isValidTransactionType = await isLookupValueInGroupById(
+    const isValidTransactionType = await isJustifyMethodAllowed({
+      tenantId: context.tenant_id,
+      justificationTypeId,
+      attendanceEventId,
       justifyMethodId,
-      ABSENCE_DISCOUNT_METHOD_GROUP_ID,
-      context.tenant_id
-    );
+    });
     if (!isValidTransactionType) {
       return res.status(400).json({ error: 'justify_method_id no valido' });
     }
@@ -2706,14 +2808,20 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     if (effectiveAttendanceEventId) {
       const validation = await pool.query(
         `
-          SELECT id
-          FROM public.attendance_events
-          WHERE id = $1
-            AND tenant_id = $2
-            AND is_active = true
+          SELECT ae.id
+          FROM public.attendance_events ae
+          INNER JOIN public.lookup_values direction
+            ON direction.id = ae.transaction_direction_id
+          INNER JOIN public.lookup_groups direction_group
+            ON direction_group.id = direction.lookup_group_id
+          WHERE ae.id = $1
+            AND ae.tenant_id = $2
+            AND ae.is_active = true
+            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
+            AND UPPER(direction.lookup_key) = $3
           LIMIT 1
         `,
-        [effectiveAttendanceEventId, context.tenant_id]
+        [effectiveAttendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
       );
       if (!validation.rows[0]) return res.status(400).json({ error: 'attendance_event_id no valido' });
     }
@@ -2742,11 +2850,12 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
 
     const effectiveJustifyMethodId = justifyMethodId ?? current.justify_method_id;
     if (effectiveJustifyMethodId) {
-      const isValidTransactionType = await isLookupValueInGroupById(
-        effectiveJustifyMethodId,
-        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
-        context.tenant_id
-      );
+      const isValidTransactionType = await isJustifyMethodAllowed({
+        tenantId: context.tenant_id,
+        justificationTypeId: effectiveJustificationTypeId,
+        attendanceEventId: effectiveAttendanceEventId,
+        justifyMethodId: effectiveJustifyMethodId,
+      });
       if (!isValidTransactionType) {
         return res.status(400).json({ error: 'justify_method_id no valido' });
       }
@@ -3089,18 +3198,20 @@ router.get('/requests/approvals/catalogs', async (req: Request, res: Response) =
     const methods = await pool.query(
       `
         SELECT
-          id,
-          lookup_key,
-          lookup_label,
-          lookup_short_label,
-          sort_order
-        FROM public.lookup_values
-        WHERE lookup_group_id = $1::uuid
-          AND is_active = true
-          AND (tenant_id IS NULL OR tenant_id = $2::uuid)
-        ORDER BY sort_order ASC, lookup_label ASC
+          lv.id,
+          lv.lookup_key,
+          lv.lookup_label,
+          lv.lookup_short_label,
+          lv.sort_order
+        FROM public.lookup_values lv
+        INNER JOIN public.lookup_groups lg
+          ON lg.id = lv.lookup_group_id
+        WHERE lg.lookup_group_key = $1
+          AND lv.is_active = true
+          AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+        ORDER BY lv.sort_order ASC, lv.lookup_label ASC
       `,
-      [ABSENCE_DISCOUNT_METHOD_GROUP_ID, userContext.tenant_id]
+      [ABSENCE_DISCOUNT_METHOD_GROUP_KEY, userContext.tenant_id]
     );
 
     return res.status(200).json({ success: true, discount_methods: methods.rows });
@@ -3169,9 +3280,9 @@ router.patch('/requests/:id/review-fields', async (req: Request, res: Response) 
     }
 
     if (justifyMethodId) {
-      const isValid = await isLookupValueInGroupById(
+      const isValid = await isLookupValueInGroupByKey(
         justifyMethodId,
-        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
+        ABSENCE_DISCOUNT_METHOD_GROUP_KEY,
         userContext.tenant_id
       );
       if (!isValid) return res.status(400).json({ error: 'justify_method_id no valido' });
@@ -3276,9 +3387,9 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     }
 
     if (justifyMethodId) {
-      const isValid = await isLookupValueInGroupById(
+      const isValid = await isLookupValueInGroupByKey(
         justifyMethodId,
-        ABSENCE_DISCOUNT_METHOD_GROUP_ID,
+        ABSENCE_DISCOUNT_METHOD_GROUP_KEY,
         userContext.tenant_id
       );
       if (!isValid) return res.status(400).json({ error: 'justify_method_id no valido' });
