@@ -480,7 +480,7 @@ export default function SystemLookupValuesAdmin() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
               <Input
-                placeholder="Buscar por key, etiqueta o grupo..."
+                placeholder="Buscar por clave, etiqueta o grupo..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -651,7 +651,7 @@ export default function SystemLookupValuesAdmin() {
             </div>
 
             <div className="space-y-2">
-              <Label>Lookup Key *</Label>
+              <Label>Clave de catálogo *</Label>
               <Input
                 value={formData.lookup_key}
                 onChange={(e) => setFormData({ ...formData, lookup_key: e.target.value.toUpperCase() })}
@@ -757,7 +757,7 @@ export default function SystemLookupValuesAdmin() {
             <div className="bg-gray-50 border rounded-lg p-4 space-y-2">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <Label className="text-gray-600">Key Técnico</Label>
+                  <Label className="text-gray-600">Clave técnica</Label>
                   <div className="font-mono text-sm mt-1 flex items-center gap-2">
                     <Lock className="size-3 text-gray-400" />
                     {editDialog.item?.lookup_key}

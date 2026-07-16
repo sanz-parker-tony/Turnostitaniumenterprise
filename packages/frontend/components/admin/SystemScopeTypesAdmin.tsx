@@ -249,7 +249,7 @@ export default function SystemScopeTypesAdmin() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
               <Input
-                placeholder="Buscar por key o nombre..."
+                placeholder="Buscar por clave o nombre..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -268,7 +268,7 @@ export default function SystemScopeTypesAdmin() {
                   <TableHead>
                     <div className="flex items-center gap-2">
                       <Lock className="size-4 text-gray-400" />
-                      Scope Type Key
+                      Clave del tipo de alcance
                     </div>
                   </TableHead>
                   <TableHead>Nombre del Tipo</TableHead>
@@ -345,7 +345,7 @@ export default function SystemScopeTypesAdmin() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Scope Type Key *</Label>
+              <Label>Clave del tipo de alcance *</Label>
               <Input
                 value={formData.scope_type_key}
                 onChange={(e) => setFormData({ ...formData, scope_type_key: e.target.value.toUpperCase() })}

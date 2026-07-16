@@ -287,7 +287,7 @@ export default function SubscriptionPlansManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip comercial',
+                  title: 'Consejo comercial',
                   text: 'Configura límites, precios y beneficios de cada plan para controlar la oferta del sistema.',
                   variant: 'tip',
                 },

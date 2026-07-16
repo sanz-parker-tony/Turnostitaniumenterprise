@@ -346,7 +346,7 @@ export default function SecurityRolePermissionsManagement() {
                 variant: 'info',
               },
               {
-                title: 'Tip',
+                title: 'Consejo',
                 text: 'Al pasar una pantalla a autorizadas se habilitan todas sus acciones; luego puedes ajustar acciones individuales.',
                 variant: 'tip',
               },

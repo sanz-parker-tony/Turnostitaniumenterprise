@@ -331,7 +331,7 @@ export default function SystemScreensAdmin() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-gray-400" />
               <Input
-                placeholder="Buscar por nombre, key o etiqueta..."
+                placeholder="Buscar por nombre, clave o etiqueta..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -351,7 +351,7 @@ export default function SystemScreensAdmin() {
                   <TableHead>
                     <div className="flex items-center gap-2">
                       <Lock className="size-4 text-gray-400" />
-                      Key Técnico
+                      Clave técnica
                     </div>
                   </TableHead>
                   <TableHead>Nombre</TableHead>
@@ -446,7 +446,7 @@ export default function SystemScreensAdmin() {
             <div className="bg-gray-50 border rounded-lg p-4 space-y-2">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <Label className="text-gray-600">Key Técnico</Label>
+                  <Label className="text-gray-600">Clave técnica</Label>
                   <div className="font-mono text-sm mt-1 flex items-center gap-2">
                     <Lock className="size-3 text-gray-400" />
                     {editDialog.item?.screen_key}

@@ -207,7 +207,7 @@ export function ScreenActionsManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip funcional',
+                  title: 'Consejo funcional',
                   text: 'Cada relación define qué acción puede ejecutarse dentro de una pantalla específica.',
                   variant: 'tip',
                 },

@@ -135,7 +135,7 @@ export default function OrganizationMassiveStructureStep({ onComplete }: Organiz
       <div className="rounded-xl border border-slate-200 bg-white p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Paso 1 · Estructura y Employee Companies</h3>
+            <h3 className="text-lg font-semibold text-slate-900">Paso 1 · Estructura y empleados por empresa</h3>
             <p className="text-sm text-slate-600 mt-1">
               Cargue el archivo organizacional para crear/actualizar catálogos maestros y preparar asignaciones employee-company.
             </p>

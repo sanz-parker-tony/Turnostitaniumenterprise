@@ -72,7 +72,7 @@ export default function UserWizard({ onClose, onComplete }: UserWizardProps) {
               <div className="text-center py-12">
                 <User className="w-16 h-16 mx-auto text-blue-600 mb-4" />
                 <h3 className="text-lg font-semibold mb-2">Paso 1: Datos del Usuario</h3>
-                <p className="text-gray-600">Username, email, nombre, password, rol base</p>
+                <p className="text-gray-600">Usuario, correo electrónico, nombre, contraseña y rol base</p>
               </div>
             )}
             {currentStep === 2 && (

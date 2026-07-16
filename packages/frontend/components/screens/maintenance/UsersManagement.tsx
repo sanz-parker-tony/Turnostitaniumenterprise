@@ -1014,7 +1014,7 @@ export function UsersManagement() {
                       <p className="text-xs text-gray-500 truncate">Rol: {getUserRoleLabel(user.id)}</p>
                       {user.email && (
                         <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
-                          <Mail className="w-3 h-3" />Email: {user.email}
+                          <Mail className="w-3 h-3" />Correo: {user.email}
                         </p>
                       )}
                     </div>
@@ -1117,7 +1117,7 @@ export function UsersManagement() {
                 <div className="grid grid-cols-2 gap-3">
                   <InfoField icon={User} label="Usuario" value={selectedUser.username} mono />
                   <InfoField icon={User} label="Nombre" value={selectedUser.display_name || '-'} />
-                  <InfoField icon={Mail} label="Email" value={selectedUser.email || '-'} />
+                    <InfoField icon={Mail} label="Correo electrónico" value={selectedUser.email || '-'} />
                   <InfoField icon={Phone} label="Teléfono" value={selectedUser.phone || '-'} />
                   <InfoField icon={Globe} label="Idioma" value={selectedUser.language_name || selectedUser.preferred_language_code || '-'} />
                   <InfoField icon={Building} label="Tenant" value={selectedUser.tenant_name || '-'} />

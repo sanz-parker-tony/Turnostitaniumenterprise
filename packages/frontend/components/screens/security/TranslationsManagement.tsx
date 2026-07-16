@@ -405,7 +405,7 @@ export default function TranslationsManagement() {
           <div className="w-full max-w-3xl max-h-[90vh] bg-white rounded-xl border border-gray-200 shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b bg-gray-50">
               <div>
-                <h2 className="font-semibold text-gray-900">Editar Traduccion</h2>
+                <h2 className="font-semibold text-gray-900">Editar traducción</h2>
                 <p className="text-xs text-gray-500 mt-1">{editingRow.key} · {ENTITY_LABELS[entityType]} · {languageCode}</p>
               </div>
               <button onClick={() => setEditOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded">

@@ -1217,7 +1217,7 @@ export default function SecurityAuthorizationCatalog() {
                     variant: 'security',
                   },
                   {
-                    title: 'Tip de uso',
+                    title: 'Consejo de uso',
                     text: 'Guarda permisos después de ajustar tenant, rol y acciones para evitar perder cambios.',
                     variant: 'tip',
                   },

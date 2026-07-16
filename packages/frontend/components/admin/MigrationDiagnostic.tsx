@@ -132,7 +132,7 @@ export function MigrationDiagnostic() {
                         </p>
                         <ol className="text-xs text-red-800 space-y-2 list-decimal list-inside">
                           <li>Ve a tu <strong>ApiClient Dashboard</strong></li>
-                          <li>Navega a <strong>SQL Editor</strong> → <strong>New Query</strong></li>
+                          <li>Navega a <strong>Editor SQL</strong> → <strong>Nueva consulta</strong></li>
                           <li>Copia <strong>TODO</strong> el contenido del archivo:<br/>
                             <code className="bg-red-100 px-1.5 py-0.5 rounded block mt-1 text-xs">
                             ../api-client/migrations/003_SETTINGS_REFACTOR.sql

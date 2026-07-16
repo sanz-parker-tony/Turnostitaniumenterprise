@@ -40,7 +40,7 @@ export function UnderConstructionFallback({
             <div className="p-4 bg-muted rounded-lg">
               <p className="text-sm text-muted-foreground mb-1">Información técnica:</p>
               <p className="text-sm font-mono">
-                <span className="font-semibold">Screen Key:</span> {screenKey}
+                <span className="font-semibold">Clave de pantalla:</span> {screenKey}
               </p>
               <p className="text-sm font-mono">
                 <span className="font-semibold">Ruta:</span> {pathname}

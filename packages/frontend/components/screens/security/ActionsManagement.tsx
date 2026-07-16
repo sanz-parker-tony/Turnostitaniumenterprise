@@ -190,7 +190,7 @@ export default function ActionsManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip de seguridad',
+                  title: 'Consejo de seguridad',
                   text: 'Define aquí acciones reutilizables para asignarlas por rol en las pantallas.',
                   variant: 'security',
                 },

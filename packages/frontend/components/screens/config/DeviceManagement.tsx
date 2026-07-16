@@ -513,7 +513,7 @@ export function DeviceManagement() {
                   variant: 'info',
                 },
                 {
-                  title: 'Warning',
+                  title: 'Advertencia',
                   text: 'Antes de eliminar un dispositivo, verifica que no esté siendo usado en operación activa.',
                   variant: 'warning',
                 },

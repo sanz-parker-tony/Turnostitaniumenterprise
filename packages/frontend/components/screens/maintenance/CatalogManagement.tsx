@@ -680,7 +680,7 @@ export function CatalogManagement() {
                 variant: 'security',
               },
               {
-                title: 'Tip',
+                title: 'Consejo',
                 text: 'Solo grupos con "Permite items de tenant" aceptan nuevos valores desde TENANT_ADMIN.',
                 variant: 'tip',
               },
@@ -1159,7 +1159,7 @@ export function CatalogManagement() {
                           updated[idx].label = e.target.value;
                           setValueTranslations(updated);
                         }}
-                        placeholder="Example Value"
+                        placeholder="Valor de ejemplo"
                         className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mt-2"
                       />
                     </div>
@@ -1173,7 +1173,7 @@ export function CatalogManagement() {
                           updated[idx].short_label = e.target.value;
                           setValueTranslations(updated);
                         }}
-                        placeholder="Value"
+                        placeholder="Valor"
                         className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mt-2"
                       />
                     </div>

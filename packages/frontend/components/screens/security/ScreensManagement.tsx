@@ -248,7 +248,7 @@ export function ScreensManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip de diseño',
+                  title: 'Consejo de diseño',
                   text: 'Define la pantalla, su grupo de menú y su ruta. Luego podrás configurar traducciones y acciones.',
                   variant: 'tip',
                 },
@@ -534,7 +534,7 @@ export function ScreensManagement() {
                               .map(a => <option key={a.id} value={a.id}>{a.action_name} ({a.action_key})</option>)}
                           </select>
                           <input value={newUiKey} onChange={e => setNewUiKey(e.target.value)}
-                            placeholder="UI key (opc.)"
+                            placeholder="Clave de interfaz (opc.)"
                             className="w-28 px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
                           <button onClick={addScreenAction} disabled={!newActionId || addingAction}
                             className="px-3 py-2 bg-[#0074D9] text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1">

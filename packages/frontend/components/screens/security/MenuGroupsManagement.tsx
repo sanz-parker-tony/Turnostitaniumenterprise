@@ -268,7 +268,7 @@ export function MenuGroupsManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip de navegación',
+                  title: 'Consejo de navegación',
                   text: 'Los grupos de menú organizan pantallas y determinan su visibilidad por contexto de seguridad.',
                   variant: 'tip',
                 },

@@ -83,11 +83,11 @@ interface GeoPoint {
 type ApiErrorWithMeta = Error & { code?: string; details?: string };
 
 const SHIFT_ICON_OPTIONS = [
-  { id: 'Sun', label: 'Sol (Manana)' },
+  { id: 'Sun', label: 'Sol (Mañana)' },
   { id: 'Sunset', label: 'Atardecer' },
   { id: 'Moon', label: 'Cuarto de luna' },
   { id: 'Coffee', label: 'Taza caliente' },
-  { id: 'Briefcase', label: 'Maletin / Oficina' },
+  { id: 'Briefcase', label: 'Maletín / Oficina' },
 ];
 
 const STATIC_CATALOGS: Record<string, any[]> = {
@@ -209,6 +209,14 @@ const mapSearchPinIcon = divIcon({
   tooltipAnchor: [0, -34],
 });
 
+const currentLocationPinIcon = divIcon({
+  className: 'work-location-current-position-pin',
+  html: '<div style="width:28px;height:28px;background:#2563eb;border:3px solid #fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 2px 6px rgba(0,0,0,.45)"><div style="width:8px;height:8px;margin:7px;background:#fff;border-radius:50%"></div></div>',
+  iconSize: [28, 38],
+  iconAnchor: [14, 38],
+  tooltipAnchor: [0, -34],
+});
+
 function PolygonEditorField({
   value,
   onChange,
@@ -228,6 +236,8 @@ function PolygonEditorField({
   const [mapSearchTerm, setMapSearchTerm] = useState('');
   const [mapSearchLoading, setMapSearchLoading] = useState(false);
   const [mapSearchError, setMapSearchError] = useState('');
+  const [currentLocationMessage, setCurrentLocationMessage] = useState('');
+  const [currentLocationLoading, setCurrentLocationLoading] = useState(false);
   const [mapSearchResults, setMapSearchResults] = useState<
     Array<{ display_name: string; lat: string; lon: string }>
   >([]);
@@ -235,9 +245,13 @@ function PolygonEditorField({
     lat: number;
     lng: number;
     label: string;
+    source: 'current' | 'search';
   } | null>(null);
   const [showMapSearchResults, setShowMapSearchResults] = useState(false);
   const lastAutoCenterQueryRef = useRef('');
+  const attemptedCurrentLocationRef = useRef(false);
+  const geolocationRequestIdRef = useRef(0);
+  const geolocationMountedRef = useRef(true);
 
   useEffect(() => {
     const nextPoints = parseGeofencePoints(value);
@@ -263,9 +277,78 @@ function PolygonEditorField({
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
     setCenter([lat, lng]);
     setZoom(nextZoom);
-    setMapSearchPin({ lat, lng, label: row.display_name });
+    setMapSearchPin({ lat, lng, label: row.display_name, source: 'search' });
+    setCurrentLocationMessage('');
     return true;
   };
+
+  const centerOnCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setCurrentLocationMessage('Este navegador no permite obtener la ubicación actual.');
+      return;
+    }
+
+    const requestId = geolocationRequestIdRef.current + 1;
+    geolocationRequestIdRef.current = requestId;
+    setCurrentLocationLoading(true);
+    setCurrentLocationMessage('Obteniendo la ubicación actual...');
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (!geolocationMountedRef.current || geolocationRequestIdRef.current !== requestId) return;
+
+        const lat = Number(position.coords.latitude.toFixed(6));
+        const lng = Number(position.coords.longitude.toFixed(6));
+        const accuracy = Math.max(0, Math.round(position.coords.accuracy || 0));
+        const nextZoom = accuracy <= 25 ? 20 : accuracy <= 100 ? 18 : 16;
+        const accuracyLabel = accuracy > 0 ? ` (precisión aproximada: ${accuracy} m)` : '';
+
+        setCenter([lat, lng]);
+        setZoom(nextZoom);
+        setMapSearchPin({
+          lat,
+          lng,
+          label: `Ubicación actual${accuracyLabel}`,
+          source: 'current',
+        });
+        setMapSearchError('');
+        setMapSearchResults([]);
+        setShowMapSearchResults(false);
+        setCurrentLocationMessage(`Mapa centrado en su ubicación actual${accuracyLabel}.`);
+        setCurrentLocationLoading(false);
+      },
+      (error) => {
+        if (!geolocationMountedRef.current || geolocationRequestIdRef.current !== requestId) return;
+
+        const message =
+          error.code === error.PERMISSION_DENIED
+            ? 'No se concedió permiso para usar la ubicación actual.'
+            : error.code === error.TIMEOUT
+              ? 'No se pudo obtener la ubicación actual dentro del tiempo esperado.'
+              : 'No se pudo determinar la ubicación actual.';
+        setCurrentLocationMessage(message);
+        setCurrentLocationLoading(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 30000,
+      }
+    );
+  };
+
+  useEffect(() => {
+    geolocationMountedRef.current = true;
+
+    if (points.length === 0 && !attemptedCurrentLocationRef.current) {
+      attemptedCurrentLocationRef.current = true;
+      centerOnCurrentLocation();
+    }
+
+    return () => {
+      geolocationMountedRef.current = false;
+    };
+  }, []);
 
   const searchMapLocation = async (query: string, limit = 8) => {
     const params = new URLSearchParams({
@@ -354,7 +437,7 @@ function PolygonEditorField({
 
   useEffect(() => {
     const query = locationSearchQuery.trim();
-    if (!query || points.length > 0 || lastAutoCenterQueryRef.current === query) return;
+    if (!query || points.length > 0 || mapSearchPin || lastAutoCenterQueryRef.current === query) return;
 
     const timer = window.setTimeout(() => {
       lastAutoCenterQueryRef.current = query;
@@ -362,7 +445,7 @@ function PolygonEditorField({
     }, 700);
 
     return () => window.clearTimeout(timer);
-  }, [locationSearchQuery, points.length]);
+  }, [locationSearchQuery, points.length, mapSearchPin]);
 
   const polygonPositions = points.map((point) => [point.lat, point.lng] as [number, number]);
 
@@ -396,6 +479,12 @@ function PolygonEditorField({
         <div className="text-xs text-red-600">{mapSearchError}</div>
       ) : null}
 
+      {currentLocationMessage ? (
+        <div className={`text-xs ${mapSearchPin?.source === 'current' ? 'text-blue-700' : 'text-gray-600'}`}>
+          {currentLocationMessage}
+        </div>
+      ) : null}
+
       {mapSearchResults.length > 0 ? (
         <div className="rounded border bg-white">
           <button
@@ -422,7 +511,7 @@ function PolygonEditorField({
         </div>
       ) : null}
 
-      <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div className="w-full grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
         <button
           type="button"
           className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
@@ -442,15 +531,24 @@ function PolygonEditorField({
         <button
           type="button"
           className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
+          onClick={centerOnCurrentLocation}
+          disabled={currentLocationLoading}
+        >
+          {currentLocationLoading ? 'Ubicando...' : 'Usar mi ubicación'}
+        </button>
+        <button
+          type="button"
+          className="w-full px-2 py-2 text-sm border rounded bg-white hover:bg-gray-50"
           onClick={() => void centerOnLocationContext()}
           disabled={mapSearchLoading || !locationSearchQuery.trim()}
         >
-          Centrar en direccion
+          Centrar en dirección
         </button>
       </div>
 
       <div className="text-xs text-gray-600">
-        El pin rojo indica el lugar encontrado. Clic sobre el mapa OpenStreetMap para agregar vertices. Vertices:{' '}
+        El pin azul indica su ubicación actual y el rojo un lugar encontrado. Haga clic sobre el mapa para agregar
+        vértices. Vértices:{' '}
         {points.length}
       </div>
 
@@ -469,7 +567,10 @@ function PolygonEditorField({
             <PolygonMapClickCapture onAddPoint={(point) => commitPoints([...points, point])} />
             <PolygonMapAutoFit points={points} />
             {mapSearchPin ? (
-              <Marker position={[mapSearchPin.lat, mapSearchPin.lng]} icon={mapSearchPinIcon}>
+              <Marker
+                position={[mapSearchPin.lat, mapSearchPin.lng]}
+                icon={mapSearchPin.source === 'current' ? currentLocationPinIcon : mapSearchPinIcon}
+              >
                 <Tooltip direction="top">{mapSearchPin.label}</Tooltip>
               </Marker>
             ) : null}
@@ -493,13 +594,13 @@ function PolygonEditorField({
         {large ? (
           <details className="rounded-md border bg-white">
             <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-              Ver GeoJSON del poligono
+              Ver GeoJSON del polígono
             </summary>
             <textarea
               value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
               readOnly
               className="h-[140px] w-full border-0 border-t px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
-              placeholder="GeoJSON del poligono"
+              placeholder="GeoJSON del polígono"
             />
           </details>
         ) : (
@@ -507,7 +608,7 @@ function PolygonEditorField({
             value={JSON.stringify(toGeofenceGeoJson(points), null, 2) || 'null'}
             readOnly
             className="h-[320px] w-full border rounded px-2 py-1.5 text-xs bg-gray-50 font-mono resize-none"
-            placeholder="GeoJSON del poligono"
+            placeholder="GeoJSON del polígono"
           />
         )}
       </div>
@@ -539,7 +640,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'company_name', label: 'Nombre', type: 'text', required: true },
       { key: 'company_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'company_address_line1', label: 'Dirección 1', type: 'text' },
       { key: 'company_address_line2', label: 'Dirección 2', type: 'text' },
       { key: 'company_country_id', label: 'País', type: 'select', optionsKey: 'countries' },
@@ -555,43 +656,43 @@ const ENTITY_CONFIGS: EntityConfig[] = [
   },
   {
     key: 'work-locations',
-    title: 'Work Locations',
+    title: 'Localizaciones',
     description: 'Gestión de localizaciones de trabajo',
     fields: [
       { key: 'company_id', label: 'Empresa', type: 'select', required: true, optionsKey: 'companies' },
       { key: 'work_location_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_location_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'country_id', label: 'País', type: 'select', optionsKey: 'countries' },
       { key: 'state_id', label: 'Provincia/Estado', type: 'select', optionsKey: 'states' },
       { key: 'city_id', label: 'Ciudad', type: 'select', optionsKey: 'cities' },
       { key: 'address_line1', label: 'Dirección', type: 'text' },
       { key: 'time_zone', label: 'Zona horaria', type: 'select', required: true, optionsKey: 'attendance_timezones' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
-      { key: 'geofence_polygon', label: 'Poligono (GeoJSON)', type: 'text' },
+      { key: 'geofence_polygon', label: 'Polígono (GeoJSON)', type: 'text' },
     ],
     tableColumns: ['legacy_id', 'work_location_name', 'company_id', 'country_id', 'state_id', 'city_id', 'time_zone', 'geofence_polygon', 'is_active'],
   },
   {
     key: 'departments',
-    title: 'Departments',
+    title: 'Departamentos',
     description: 'Primer nivel de jerarquía',
     fields: [
       { key: 'department_name', label: 'Nombre', type: 'text', required: true },
       { key: 'department_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
     tableColumns: ['legacy_id', 'department_name', 'department_short_name', 'is_active'],
   },
   {
     key: 'areas',
-    title: 'Areas',
+    title: 'Áreas',
     description: 'Segundo nivel de jerarquía',
     fields: [
       { key: 'area_name', label: 'Nombre', type: 'text', required: true },
       { key: 'area_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'payroll_group_id', label: 'Grupo de nómina', type: 'select', optionsKey: 'payroll_groups' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
@@ -604,7 +705,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'cost_center_name', label: 'Nombre', type: 'text', required: true },
       { key: 'cost_center_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'homologation_code', label: 'Código homologación', type: 'text' },
       { key: 'gl_account_code', label: 'Cuenta GL', type: 'text' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
@@ -618,7 +719,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'payroll_group_name', label: 'Nombre', type: 'text', required: true },
       { key: 'payroll_group_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
     tableColumns: ['legacy_id', 'payroll_group_name', 'payroll_group_short_name', 'is_active'],
@@ -648,7 +749,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'profile_name', label: 'Nombre', type: 'text', required: true },
       { key: 'profile_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
     tableColumns: ['legacy_id', 'profile_name', 'profile_short_name', 'is_active'],
@@ -660,7 +761,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'job_title_name', label: 'Nombre', type: 'text', required: true },
       { key: 'job_title_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
     tableColumns: ['legacy_id', 'job_title_name', 'job_title_short_name', 'is_active'],
@@ -672,7 +773,7 @@ const ENTITY_CONFIGS: EntityConfig[] = [
     fields: [
       { key: 'work_group_name', label: 'Nombre', type: 'text', required: true },
       { key: 'work_group_short_name', label: 'Nombre corto', type: 'text', required: true },
-      { key: 'legacy_id', label: 'Legacy ID', type: 'text', required: true },
+      { key: 'legacy_id', label: 'ID heredado', type: 'text', required: true },
       { key: 'payroll_group_id', label: 'Grupo de nómina', type: 'select', optionsKey: 'payroll_groups' },
       { key: 'is_active', label: 'Activo', type: 'boolean' },
     ],
@@ -1513,6 +1614,7 @@ export function OrgMaintenance({
       'employee-profiles': 'Nuevo Perfil de Empleado',
       employees: 'Nuevo Empleado',
       'employee-companies': 'Nuevo Empleado por Empresa',
+      shifts: 'Nuevo Horario',
     };
     return labelsByEntity[entity] || 'Nuevo';
   };
@@ -2026,6 +2128,9 @@ export function OrgMaintenance({
     if (entity === 'companies') {
       return editingId ? 'Editar Empresa' : 'Nueva Empresa';
     }
+    if (entity === 'work-locations') {
+      return editingId ? 'Editar Localización' : 'Nueva Localización';
+    }
     if (entity === 'departments') {
       return editingId ? 'Editar Departamento' : 'Nuevo Departamento';
     }
@@ -2052,6 +2157,9 @@ export function OrgMaintenance({
     }
     if (entity === 'employee-companies') {
       return editingId ? 'Editar Empleado por Empresa' : 'Nuevo Empleado por Empresa';
+    }
+    if (entity === 'shifts') {
+      return editingId ? 'Editar Horario' : 'Nuevo Horario';
     }
     return editingId ? `Editar ${config.title}` : `Nuevo ${config.title}`;
   };
@@ -2119,12 +2227,12 @@ export function OrgMaintenance({
                     variant: 'info',
                   },
                   {
-                    title: 'Warning',
+                    title: 'Advertencia',
                     text: 'Antes de desactivar o eliminar, valida impactos en localizaciones y empleados relacionados.',
                     variant: 'warning',
                   },
                   {
-                    title: 'Tip',
+                    title: 'Consejo',
                     text: 'Usa búsqueda y estado para filtrar rápidamente registros de empresa.',
                     variant: 'tip',
                   },
@@ -2267,7 +2375,7 @@ export function OrgMaintenance({
                       {photoPreviewUrl && (
                         <img
                           src={photoPreviewUrl}
-                          alt="Preview"
+                          alt="Vista previa"
                           className="h-20 w-20 object-cover rounded border"
                         />
                       )}
@@ -2404,7 +2512,7 @@ export function OrgMaintenance({
                     <div key={assetType} className="space-y-2 rounded-md border bg-white p-3">
                       <div className="flex items-center justify-between gap-2">
                         <label className="text-xs font-medium text-gray-700">
-                          {assetType === 'logo' ? 'Logo' : 'Banner'}
+                          {assetType === 'logo' ? 'Logo' : 'Imagen de encabezado'}
                         </label>
                         {formData[assetType] ? (
                           <button
@@ -2438,7 +2546,7 @@ export function OrgMaintenance({
                       {companyAssetPreviewUrls[assetType] ? (
                         <img
                           src={companyAssetPreviewUrls[assetType]}
-                          alt={assetType === 'logo' ? 'Logo de empresa' : 'Banner de empresa'}
+                          alt={assetType === 'logo' ? 'Logo de empresa' : 'Imagen de encabezado de empresa'}
                           className={assetType === 'logo' ? 'h-20 w-20 rounded border object-contain' : 'h-20 w-full rounded border object-contain'}
                         />
                       ) : null}

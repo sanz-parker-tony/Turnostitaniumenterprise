@@ -443,7 +443,7 @@ export default function ConfigurationWizard({ onComplete }: ConfigurationWizardP
                     </code>
                   </div>
                   <div className="flex items-center gap-2 text-sm">
-                    <span className="font-medium text-gray-700 w-24">Email:</span>
+                    <span className="font-medium text-gray-700 w-24">Correo:</span>
                     <code className="bg-white px-3 py-1 rounded border border-green-300 text-gray-900 font-mono">
                       {adminCredentials.email}
                     </code>

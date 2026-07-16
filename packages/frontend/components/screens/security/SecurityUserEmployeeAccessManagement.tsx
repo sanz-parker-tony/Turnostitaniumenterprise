@@ -370,7 +370,7 @@ export default function SecurityUserEmployeeAccessManagement() {
                 variant: 'info',
               },
               {
-                title: 'Tip',
+                title: 'Consejo',
                 text: 'Los filtros muestran únicamente valores disponibles en los alcances guardados del usuario seleccionado.',
                 variant: 'tip',
               },

@@ -929,7 +929,7 @@ export function ShiftConstructorManagement() {
                   variant: 'security',
                 },
                 {
-                  title: 'Tip de configuración',
+                  title: 'Consejo de configuración',
                   text: 'Define turnos por bloques horarios y luego asigna esos turnos a patrones y calendarios.',
                   variant: 'tip',
                 },

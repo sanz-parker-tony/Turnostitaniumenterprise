@@ -426,7 +426,7 @@ export function WorkPatternsManagement() {
                   variant: 'security',
                 },
                 {
-                  title: 'Tip',
+                  title: 'Consejo',
                   text: 'Define patrones consistentes para facilitar asignaciones, calendarios y cálculo de jornadas.',
                   variant: 'tip',
                 },

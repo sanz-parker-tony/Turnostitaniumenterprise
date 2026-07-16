@@ -579,7 +579,7 @@ export function CalendarManagement() {
                 },
                 {
                   variant: 'tip',
-                  title: 'Tip de uso',
+                  title: 'Consejo de uso',
                   text: 'Haz clic en un día vacío para crear un calendario y sobre un registro existente para editarlo.',
                 },
               ]}
@@ -1033,8 +1033,8 @@ export function CalendarManagement() {
                     }
                     className="w-full border rounded px-2 py-1.5 text-sm"
                   >
-                    <option value="false">false</option>
-                    <option value="true">true</option>
+                    <option value="false">No</option>
+                    <option value="true">Sí</option>
                   </select>
                 </div>
 
@@ -1047,8 +1047,8 @@ export function CalendarManagement() {
                     }
                     className="w-full border rounded px-2 py-1.5 text-sm"
                   >
-                    <option value="true">true</option>
-                    <option value="false">false</option>
+                    <option value="true">Sí</option>
+                    <option value="false">No</option>
                   </select>
                 </div>
 
@@ -1064,8 +1064,8 @@ export function CalendarManagement() {
                     }
                     className="w-full border rounded px-2 py-1.5 text-sm"
                   >
-                    <option value="false">false</option>
-                    <option value="true">true</option>
+                    <option value="false">No</option>
+                    <option value="true">Sí</option>
                   </select>
                 </div>
 
@@ -1078,8 +1078,8 @@ export function CalendarManagement() {
                     }
                     className="w-full border rounded px-2 py-1.5 text-sm"
                   >
-                    <option value="true">true</option>
-                    <option value="false">false</option>
+                    <option value="true">Sí</option>
+                    <option value="false">No</option>
                   </select>
                 </div>
               </div>

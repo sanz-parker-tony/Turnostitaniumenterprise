@@ -206,7 +206,7 @@ export function AuthDiagnostics() {
                     ✓ System Admin Encontrado
                   </h3>
                   <div className="text-sm text-blue-700 space-y-1">
-                    <p>Email: {diagnostics.systemAdmin.email}</p>
+                    <p>Correo electrónico: {diagnostics.systemAdmin.email}</p>
                     <p>ID: {diagnostics.systemAdmin.id}</p>
                     <p>Confirmado: {diagnostics.systemAdmin.confirmed ? 'Sí' : 'No'}</p>
                     <p>Creado: {new Date(diagnostics.systemAdmin.created_at).toLocaleString()}</p>
@@ -255,8 +255,8 @@ export function AuthDiagnostics() {
               <ol className="list-decimal list-inside space-y-1 ml-2">
                 <li>Ve a <strong>ApiClient Dashboard → Authentication → Users</strong></li>
                 <li>Click <strong>"Add user" → "Create new user"</strong></li>
-                <li>Email: <code className="bg-gray-100 px-1 rounded">system.admin@titanium-labs.com</code></li>
-                <li>Password: <code className="bg-gray-100 px-1 rounded">(tu contraseña)</code></li>
+                <li>Correo electrónico: <code className="bg-gray-100 px-1 rounded">system.admin@titanium-labs.com</code></li>
+                <li>Contraseña: <code className="bg-gray-100 px-1 rounded">(tu contraseña)</code></li>
                 <li>Activa <strong>"Auto Confirm User"</strong> ✓</li>
                 <li>Click "Create user"</li>
                 <li>Refresca esta página</li>

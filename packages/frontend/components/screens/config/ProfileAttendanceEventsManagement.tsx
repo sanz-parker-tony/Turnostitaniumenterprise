@@ -212,7 +212,7 @@ export function ProfileAttendanceEventsManagement() {
             <HeaderInfoTips
               items={[
                 {
-                  title: 'Tip',
+                  title: 'Consejo',
                   text: 'Agregue la novedad al perfil y marque en la grilla si requiere aprobación o exportación a nómina.',
                   variant: 'tip',
                 },
