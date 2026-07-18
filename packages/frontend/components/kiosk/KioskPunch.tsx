@@ -637,7 +637,7 @@ export default function KioskPunch() {
         </CardHeader>
         <CardContent className="space-y-2 p-2 sm:space-y-5 sm:p-6">
           <div className="rounded-xl border bg-slate-50 p-2 sm:p-4 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
-            <div className="flex items-center gap-3">
+            <div className="hidden min-w-0 items-center gap-3 sm:flex">
               <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
                 {employeePhoto && !photoFailed ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -651,13 +651,13 @@ export default function KioskPunch() {
                   <User className="w-6 h-6 sm:w-7 sm:h-7" />
                 )}
               </div>
-              <div>
-                <p className="font-semibold text-slate-900">{employeeName}</p>
+              <div className="min-w-0">
+                <p className="break-words font-semibold text-slate-900">{employeeName}</p>
                 <p className="text-xs text-slate-600 sm:text-sm">Codigo: {context.employee.employee_code || '-'}</p>
               </div>
             </div>
-            <div className="flex w-full items-center justify-between gap-3 text-xs text-slate-700 sm:w-auto sm:text-sm">
-              <div className="min-w-0 space-y-1">
+            <div className="flex w-full items-center justify-end gap-3 text-xs text-slate-700 sm:w-auto sm:justify-between sm:text-sm">
+              <div className="hidden min-w-0 space-y-1 sm:block">
                 <p className="flex items-center gap-1"><Building2 className="w-4 h-4" /> Empresa: {currentCompanyName}</p>
                 <p className="hidden items-center gap-1 sm:flex"><MonitorSmartphone className="w-4 h-4" /> Dispositivo: {activeDeviceLabel}</p>
               </div>
@@ -685,7 +685,7 @@ export default function KioskPunch() {
           </div>
 
           <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-[220px_440px_220px] items-start">
-            <div className="order-2 hidden space-y-3 sm:block lg:order-1">
+            <div className="order-2 hidden space-y-3 lg:order-1 lg:block">
               {renderKeyButton(1)}
               {renderKeyButton(2)}
               {renderKeyButton(3)}
@@ -710,7 +710,7 @@ export default function KioskPunch() {
                 </div>
                 <p className="text-2xl sm:text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
               </div>
-              <div className="grid grid-cols-6 gap-1.5 sm:hidden">
+              <div className="grid grid-cols-6 gap-1.5 lg:hidden">
                 {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber, true))}
               </div>
               {lastMarkAt && (
@@ -730,7 +730,7 @@ export default function KioskPunch() {
               </p>
             </div>
 
-            <div className="order-3 hidden space-y-3 sm:block lg:order-3">
+            <div className="order-3 hidden space-y-3 lg:order-3 lg:block">
               {renderKeyButton(5)}
               {renderKeyButton(6)}
               <div className="hidden h-[216px] lg:block" />

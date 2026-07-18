@@ -51,6 +51,7 @@ import KioskPunchHistory from './kiosk/KioskPunchHistory';
 import KioskRequests from './kiosk/KioskRequests';
 import KioskShiftChange from './kiosk/KioskShiftChange';
 import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
+import EmployeeProfileDetails from './kiosk/EmployeeProfileDetails';
 import RequestsApprovalsManagement from './screens/attendance/RequestsApprovalsManagement';
 import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchChangeApprovalsManagement';
 import EmployeeRouteTrackingReport from './screens/reports/EmployeeRouteTrackingReport';
@@ -205,6 +206,7 @@ export function Router() {
     '/dashboard/kiosk/requests': <KioskRequests />,
     '/dashboard/kiosk/shift-change': <KioskShiftChange />,
     '/dashboard/kiosk/time-punch-requests': <KioskTimePunchRequests />,
+    '/dashboard/profile': <EmployeeProfileDetails />,
     '/kiosk/punch': <KioskPunch />,
     '/kiosk/timeclock': <KioskPunch />,
     '/kiosk/timelclock': <KioskPunch />,
@@ -245,6 +247,7 @@ export function Router() {
   const configuredComponent = menuScreen ? screenComponentMap[menuScreen.screen_key] : null;
   const isShellRoute = currentPath === '/dashboard';
   const isKioskRoute = currentPath === '/kiosk/punch' || currentPath === '/kiosk/timeclock';
+  const isEmployeeSelfServiceRoute = roleKey === 'EMPLOYEE' && currentPath === '/dashboard/profile';
   const isConfiguredRoute = Boolean(menuScreen);
 
   if (configuredComponent) {
@@ -253,7 +256,7 @@ export function Router() {
   }
 
   // Si la ruta existe en el mapa, renderizarla
-  if (routeMap[currentPath] && (isConfiguredRoute || isShellRoute || isKioskRoute)) {
+  if (routeMap[currentPath] && (isConfiguredRoute || isShellRoute || isKioskRoute || isEmployeeSelfServiceRoute)) {
     console.log('✅ Renderizando componente para:', currentPath);
     return routeMap[currentPath];
   }

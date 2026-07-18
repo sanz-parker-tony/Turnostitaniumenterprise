@@ -3735,6 +3735,18 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const monthEndExclusive = new Date(currentYear, currentMonth, 1);
     const monthStartIso = monthStart.toISOString().slice(0, 10);
     const monthEndExclusiveIso = monthEndExclusive.toISOString().slice(0, 10);
+    const todayIso = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Guayaquil',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(now);
+    const upcomingEndExclusive = new Date(`${todayIso}T00:00:00.000Z`);
+    upcomingEndExclusive.setUTCDate(upcomingEndExclusive.getUTCDate() + 8);
+    const upcomingEndExclusiveIso = upcomingEndExclusive.toISOString().slice(0, 10);
+    const shiftQueryEndExclusiveIso = upcomingEndExclusiveIso > monthEndExclusiveIso
+      ? upcomingEndExclusiveIso
+      : monthEndExclusiveIso;
     const employeeHireDateIso = normalizeDateOnly(context.hire_date) || null;
     const employeeTerminationDateIso = normalizeDateOnly(context.termination_date) || null;
 
@@ -3758,7 +3770,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
     const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
 
-    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult] = await Promise.all([
+    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthTimePunchChangeRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -3901,7 +3913,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             AND ($6::date IS NULL OR p.shift_date <= $6::date)
           ORDER BY p.shift_date ASC
         `,
-        [tenantId, context.user_id, monthStartIso, monthEndExclusiveIso, employeeHireDateIso, employeeTerminationDateIso]
+        [tenantId, context.user_id, monthStartIso, shiftQueryEndExclusiveIso, employeeHireDateIso, employeeTerminationDateIso]
       ),
       pool.query(
         `
@@ -3936,6 +3948,38 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             AND r.start_datetime::date < $4::date
             AND COALESCE(r.end_datetime, r.start_datetime)::date >= $3::date
           ORDER BY r.start_datetime ASC, r.created_at ASC
+          LIMIT 300
+        `,
+        [tenantId, employeeId, monthStartIso, monthEndExclusiveIso]
+      ),
+      pool.query(
+        `
+          SELECT
+            r.id,
+            r.target_punch_id,
+            r.reason,
+            r.created_at,
+            COALESCE(p.punch_datetime, r.created_at) AS request_datetime,
+            r.request_type_id,
+            rt.lookup_key AS request_type_key,
+            rt.lookup_label AS request_type_label,
+            r.request_status_id,
+            st.lookup_key AS request_status_key,
+            st.lookup_label AS request_status_label
+          FROM public.employee_time_punch_change_requests r
+          LEFT JOIN public.employee_time_punches p
+            ON p.id = r.target_punch_id
+           AND p.tenant_id = r.tenant_id
+          LEFT JOIN public.lookup_values rt
+            ON rt.id = r.request_type_id
+          LEFT JOIN public.lookup_values st
+            ON st.id = r.request_status_id
+          WHERE r.tenant_id = $1::uuid
+            AND r.employee_id = $2::uuid
+            AND r.is_active = true
+            AND COALESCE(p.punch_datetime, r.created_at) >= $3::date
+            AND COALESCE(p.punch_datetime, r.created_at) < $4::date
+          ORDER BY request_datetime ASC, r.created_at ASC
           LIMIT 300
         `,
         [tenantId, employeeId, monthStartIso, monthEndExclusiveIso]
@@ -4302,6 +4346,24 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       });
     }
 
+    const allShiftsByDate = new Map<string, any>();
+    for (const row of monthShiftsResult.rows || []) {
+      const dateKey = normalizeDateOnly(row?.shift_date);
+      if (dateKey) allShiftsByDate.set(dateKey, row);
+    }
+
+    const upcomingShiftDays: any[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const date = new Date(`${todayIso}T00:00:00.000Z`);
+      date.setUTCDate(date.getUTCDate() + i);
+      const dateIso = date.toISOString().slice(0, 10);
+      upcomingShiftDays.push({
+        date: dateIso,
+        weekday_label: date.toLocaleDateString('es-EC', { weekday: 'short', timeZone: 'UTC' }).replace('.', ''),
+        shift: allShiftsByDate.get(dateIso) || null,
+      });
+    }
+
     const monthlyNovelty = monthlyNoveltyResult.rows?.[0] || {};
     const impactRows = attendanceImpactResult.rows || [];
     const sumImpactMinutes = (matcher: (row: any) => boolean): number =>
@@ -4493,6 +4555,20 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           request_kind: 'SHIFT_CHANGE_REQUEST',
         }];
       }),
+      ...(monthTimePunchChangeRequestsResult.rows || []).flatMap((row: any) => {
+        const dateKey = normalizeDateOnly(row?.request_datetime);
+        if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
+        return [{
+          date: dateKey,
+          icon_key: 'Clock3',
+          title: row?.request_type_label || 'Gestión de marcación',
+          subtitle: row?.request_status_label || '-',
+          bg_color: '#FEE2E2',
+          text_color: '#991B1B',
+          status_key: row?.request_status_key || null,
+          request_kind: 'TIME_PUNCH_CHANGE_REQUEST',
+        }];
+      }),
     ];
 
     const calendarHolidays = holidaysCurrentMonth.map((row: any) => ({
@@ -4526,10 +4602,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
 
     calendarHolidays.sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
 
-    const requestsTimeline = [...(monthAbsenceRequestsResult.rows || []), ...(monthShiftChangeRequestsResult.rows || [])]
+    const requestsTimeline = [
+      ...(monthAbsenceRequestsResult.rows || []),
+      ...(monthShiftChangeRequestsResult.rows || []),
+      ...(monthTimePunchChangeRequestsResult.rows || []),
+    ]
       .sort((a: any, b: any) => {
-        const left = String(b?.start_datetime || b?.shift_date || '');
-        const right = String(a?.start_datetime || a?.shift_date || '');
+        const left = String(b?.start_datetime || b?.shift_date || b?.request_datetime || b?.created_at || '');
+        const right = String(a?.start_datetime || a?.shift_date || a?.request_datetime || a?.created_at || '');
         return left.localeCompare(right);
       })
       .slice(0, 20);
@@ -4614,12 +4694,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         end: weekEndIso,
         days: weekDays,
       },
+      upcoming_shift_days: upcomingShiftDays,
       requests: requestsTimeline,
       holidays: holidaysCurrentMonth,
       month_punches: monthPunchesResult.rows || [],
       month_shifts: monthShiftsResult.rows || [],
       month_absence_requests: monthAbsenceRequestsResult.rows || [],
       month_shift_change_requests: monthShiftChangeRequestsResult.rows || [],
+      month_time_punch_change_requests: monthTimePunchChangeRequestsResult.rows || [],
       calendars: {
         month: {
           year: currentYear,

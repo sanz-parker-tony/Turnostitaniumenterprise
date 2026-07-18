@@ -158,7 +158,23 @@ type EmployeeCalendarEvent = {
   bg_color?: string | null;
   text_color?: string | null;
   sort_datetime?: string | null;
+  status_key?: string | null;
+  request_kind?: string | null;
 };
+
+function requestStatusVisual(statusKey: string | null | undefined) {
+  const key = String(statusKey || '').trim().toUpperCase();
+  if (['APPROVED', 'APROBADO'].includes(key)) {
+    return { bg_color: '#DCFCE7', text_color: '#166534', labelClass: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+  }
+  if (['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO', 'ENVIADA', 'ENVIADO', 'SENT'].includes(key)) {
+    return { bg_color: '#FEE2E2', text_color: '#991B1B', labelClass: 'bg-red-100 text-red-700 border-red-200' };
+  }
+  if (['REJECTED', 'RECHAZADO', 'DENIED', 'DENEGADO'].includes(key)) {
+    return { bg_color: '#FFE4E6', text_color: '#9F1239', labelClass: 'bg-rose-100 text-rose-700 border-rose-200' };
+  }
+  return { bg_color: '#F1F5F9', text_color: '#475569', labelClass: 'bg-slate-100 text-slate-700 border-slate-200' };
+}
 
 const EMPLOYEE_CALENDAR_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   DOOROPEN: DoorOpen,
@@ -317,6 +333,15 @@ function EmployeeHome({ payload }: { payload: any }) {
     { key: 'absence_minutes', label: 'Faltas', total_hours: 0 },
     { key: 'early_departure_minutes', label: 'Salidas anticipadas', total_hours: 0 },
   ];
+  const mobileSurchargeRows = [
+    { key: 'ordinary_minutes', label: 'Jornada ordinaria', valueClass: 'text-emerald-600', bgClass: 'bg-emerald-50/60' },
+    { key: 'night_minutes', label: 'Jornada nocturna', valueClass: 'text-emerald-700', bgClass: 'bg-emerald-50' },
+    { key: 'extra_50_minutes', label: 'Horas Extras 50%', valueClass: 'text-emerald-700', bgClass: 'bg-emerald-100/70' },
+    { key: 'extra_100_minutes', label: 'Horas Extras 100%', valueClass: 'text-emerald-800', bgClass: 'bg-emerald-200/70' },
+  ].map((config) => ({
+    ...config,
+    total_hours: Number(plusDisplayEvents.find((row) => row?.key === config.key)?.total_hours || 0),
+  }));
 
   const maxPlusHours = plusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
   const maxMinusHours = minusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
@@ -380,11 +405,21 @@ function EmployeeHome({ payload }: { payload: any }) {
     });
 
   const module4RequestEvents = module4RequestEventsRaw.length > 0
-    ? module4RequestEventsRaw
+    ? module4RequestEventsRaw.map((row) => ({
+      ...row,
+      ...requestStatusVisual(row.status_key),
+    }))
     : requests.flatMap((row: any) => {
-      const date = toDateKey(row?.start_datetime || row?.shift_date);
+      const date = toDateKey(row?.start_datetime || row?.shift_date || row?.request_datetime || row?.created_at);
       if (!date) return [];
-      return [{ date, icon_key: 'FileCheck', bg_color: '#FEF3C7', text_color: '#92400E', title: row?.justification_name || row?.event_name || 'Solicitud' }];
+      return [{
+        date,
+        icon_key: row?.shift_date ? 'RefreshCw' : row?.target_punch_id || row?.request_datetime ? 'ClipboardCheck' : 'FileCheck',
+        ...requestStatusVisual(row?.request_status_key),
+        title: row?.justification_name || row?.event_name || row?.request_type_label || (row?.shift_date ? 'Cambio de turno' : 'Solicitud'),
+        subtitle: row?.request_status_label || row?.request_status_key || '-',
+        status_key: row?.request_status_key || null,
+      }];
     });
 
   const module5HolidayEvents = module5HolidayEventsRaw.length > 0
@@ -400,86 +435,143 @@ function EmployeeHome({ payload }: { payload: any }) {
         title: row?.holiday_name || 'Feriado',
       }];
     });
-  const resolveProfileIcon = (name: string, fallback: any) => (LucideIcons as Record<string, any>)[name] || fallback;
-
-  const employeeTopItems = [
-    { icon: resolveProfileIcon('IdCard', FileText), value: employee.employee_code || '-', title: 'Codigo', color: 'bg-blue-100 text-blue-700' },
-    { icon: resolveProfileIcon('VenusAndMars', Shield), value: employee.gender_label || '-', title: 'Genero', color: 'bg-violet-100 text-violet-700' },
-    { icon: Cake, value: formatDate(employee.birth_date), title: 'Nacimiento', color: 'bg-pink-100 text-pink-700' },
-    { icon: resolveProfileIcon('FileBadge', Users), value: `${employee.employee_lastname || ''} ${employee.employee_name || ''}`.trim() || '-', title: 'Nombre', color: 'bg-indigo-100 text-indigo-700' },
-    { icon: resolveProfileIcon('Smartphone', ArrowRightCircle), value: employee.phone || '-', title: 'Telefono', color: 'bg-emerald-100 text-emerald-700' },
-    { icon: AtSign, value: employee.user_display_name || employee.user_email || '-', title: 'Usuario', color: 'bg-cyan-100 text-cyan-700' },
-  ];
-
-  const employeeCompanyTopItems = [
-    { icon: Building2, value: employeeCompany.company_name || '-', title: 'Empresa', color: 'bg-slate-100 text-slate-700' },
-    { icon: MapPin, value: employeeCompany.work_location_name || '-', title: 'Localidad', color: 'bg-teal-100 text-teal-700' },
-    { icon: Network, value: employeeCompany.department_name || '-', title: 'Departamento', color: 'bg-lime-100 text-lime-700' },
-    { icon: resolveProfileIcon('LayoutGrid', Network), value: employeeCompany.area_name || '-', title: 'Área', color: 'bg-sky-100 text-sky-700' },
-    { icon: resolveProfileIcon('UserRoundCheck', BarChart3), value: employeeCompany.employee_profile_name || '-', title: 'Perfil', color: 'bg-amber-100 text-amber-700' },
-    { icon: BriefcaseBusiness, value: employeeCompany.job_title_name || '-', title: 'Cargo', color: 'bg-orange-100 text-orange-700' },
-    { icon: CalendarCheck, value: formatDate(employeeCompany.hire_date), title: 'Fecha Ingreso', color: 'bg-fuchsia-100 text-fuchsia-700' },
-    { icon: resolveProfileIcon('Badge', FileText), value: employeeCompany.payroll_employee_code || employeeCompany.device_user_code || '-', title: 'Código nómina/dispositivo', color: 'bg-blue-100 text-blue-700' },
-    { icon: resolveProfileIcon('UsersRound', Users), value: employeeCompany.work_group_name || '-', title: 'Grupo de trabajo', color: 'bg-purple-100 text-purple-700' },
-    { icon: resolveProfileIcon('WalletCards', BriefcaseBusiness), value: employeeCompany.payroll_group_name || '-', title: 'Grupo de nómina', color: 'bg-stone-100 text-stone-700' },
-    { icon: resolveProfileIcon('Landmark', Building2), value: employeeCompany.cost_center_name || '-', title: 'Centro de costo', color: 'bg-zinc-100 text-zinc-700' },
-    { icon: CalendarDays, value: employeeCompany.work_on_holidays ? 'Trabaja feriados: Si' : 'Trabaja feriados: No', title: 'Trabaja Feriados', color: employeeCompany.work_on_holidays ? 'bg-green-100 text-green-700' : 'bg-rose-100 text-rose-700' },
-  ];
+  const todayIso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Guayaquil',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  const mobileRequestRows = requests.slice(0, 6);
+  const upcomingShiftDays = ((payload?.upcoming_shift_days || weekDays) as any[])
+    .filter((day) => String(day?.date || '') >= todayIso)
+    .slice(0, 8);
+  const upcomingRangeLabel = upcomingShiftDays.length > 0
+    ? `${formatDate(upcomingShiftDays[0]?.date)} – ${formatDate(upcomingShiftDays[upcomingShiftDays.length - 1]?.date)}`
+    : 'Desde hoy';
+  const requestTitle = (row: any) => {
+    if (row?.shift_date) return 'Cambio de turno';
+    if (row?.target_punch_id || row?.request_type_label || row?.request_datetime) return 'Gestión de marcación';
+    return row?.justification_name || row?.event_name || 'Justificación o permiso';
+  };
+  const requestDate = (row: any) => row?.start_datetime || row?.shift_date || row?.request_datetime || row?.created_at;
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 2xl:grid-cols-4 gap-4">
-        <Card className="2xl:col-span-2">
-          <CardHeader>
-            <CardTitle>Módulo 1: Datos del empleado</CardTitle>
+      <div className="space-y-3 md:hidden">
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-base">Resumen mensual de asistencia</CardTitle>
+            <CardDescription className="text-xs">Descuentos y distribución de horas del mes actual.</CardDescription>
           </CardHeader>
-          <CardContent className="text-sm">
-            <Tabs defaultValue="personal" className="w-full">
-              <TabsList>
-                <TabsTrigger value="personal">Datos personales</TabsTrigger>
-                <TabsTrigger value="company">Datos de empresa</TabsTrigger>
+          <CardContent className="p-3 pt-0">
+            <Tabs defaultValue="discounts" className="w-full">
+              <TabsList className="grid h-auto w-full grid-cols-2">
+                <TabsTrigger value="discounts" className="text-xs">Descuentos</TabsTrigger>
+                <TabsTrigger value="hours" className="text-xs">Horas trabajadas</TabsTrigger>
               </TabsList>
-              <TabsContent value="personal" className="mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                  {employeeTopItems.map((item, index) => {
-                    const Icon = item.icon;
-                    const tooltip = `${item.title}: ${String(item.value || '-')}`;
-                    return (
-                      <div key={`emp-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={tooltip}>
-                        <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
-                          <Icon className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[11px] text-muted-foreground">{item.title}</p>
-                          <p className="truncate text-sm">{item.value}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+              <TabsContent value="discounts" className="mt-3 space-y-2">
+                {minusDisplayEvents.map((row) => (
+                  <div key={row.key || row.attendance_event_id || row.label} className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-xs">
+                    <span className="font-medium text-slate-800">{row.label || row.event_short_name || row.event_name}</span>
+                    <span className="font-semibold text-rose-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
+                  </div>
+                ))}
               </TabsContent>
-              <TabsContent value="company" className="mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                  {employeeCompanyTopItems.map((item, index) => {
-                    const Icon = item.icon;
-                    const tooltip = `${item.title}: ${String(item.value || '-')}`;
-                    return (
-                      <div key={`empco-top-${index}`} className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-2" title={tooltip}>
-                        <span className={`inline-flex size-7 items-center justify-center rounded-full ${item.color}`}>
-                          <Icon className="size-4" />
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[11px] text-muted-foreground">{item.title}</p>
-                          <p className="truncate text-sm">{item.value}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
+              <TabsContent value="hours" className="mt-3">
+                <div className="grid grid-cols-1 gap-2">
+                  {mobileSurchargeRows.map((row) => (
+                    <div key={row.key} className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-xs ${row.bgClass}`}>
+                      <span className="font-medium text-slate-700">{row.label}</span>
+                      <span className={`font-semibold ${row.valueClass}`}>{row.total_hours.toFixed(2)} h</span>
+                    </div>
+                  ))}
                 </div>
               </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileText className="h-4 w-4 text-blue-700" />
+              Estado de requerimientos
+            </CardTitle>
+            <CardDescription className="text-xs">Cambios de turno, marcaciones, justificaciones y permisos.</CardDescription>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            {mobileRequestRows.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No hay requerimientos recientes.</p>
+            ) : (
+              <div className="divide-y overflow-hidden rounded-lg border">
+                {mobileRequestRows.map((row: any, index: number) => {
+                  const visual = requestStatusVisual(row?.request_status_key);
+                  const RequestIcon = row?.shift_date ? RefreshCw : row?.target_punch_id || row?.request_datetime ? Fingerprint : FileText;
+                  return (
+                    <div key={row?.id || `request-${index}`} className="flex items-center gap-2 bg-white px-2.5 py-2">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md" style={{ backgroundColor: visual.bg_color, color: visual.text_color }}>
+                        <RequestIcon className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-slate-900">{requestTitle(row)}</p>
+                        <p className="text-[10px] text-slate-500">{formatDate(requestDate(row))}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] ${visual.labelClass}`}>
+                        {row?.request_status_label || row?.request_status_key || '-'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Clock3 className="h-4 w-4 text-emerald-700" />
+              Próximos turnos
+            </CardTitle>
+            <CardDescription className="text-xs">{upcomingRangeLabel}</CardDescription>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            {upcomingShiftDays.length === 0 ? (
+              <p className="rounded-lg bg-slate-50 p-3 text-xs text-slate-500">No hay turnos asignados desde hoy.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {upcomingShiftDays.map((day: any) => {
+                  const shift = day?.shift;
+                  const ShiftIcon = iconFromCalendarKey(shift?.effective_shift_icon_key || 'Clock3');
+                  return (
+                    <div key={day.date} className="flex min-w-0 items-center gap-2 rounded-lg border p-2">
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                        style={{
+                          backgroundColor: shift?.effective_shift_bg_color || '#F1F5F9',
+                          color: shift?.effective_shift_text_color || '#475569',
+                        }}
+                      >
+                        <ShiftIcon className="h-3.5 w-3.5" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold capitalize text-slate-500">{day.weekday_label || formatDate(day.date)}</p>
+                        <p className="truncate text-[11px] font-semibold text-slate-900">
+                          {shift?.effective_shift_short_name || shift?.effective_shift_name || 'Sin turno'}
+                        </p>
+                        <p className="text-[9px] text-slate-500">{formatDate(day.date)} · {formatShiftTime(shift?.effective_start_time)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="hidden space-y-6 md:block">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Módulo 6: Novedades que suman</CardTitle>
@@ -589,6 +681,7 @@ function EmployeeHome({ payload }: { payload: any }) {
           </Tabs>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }
@@ -2273,6 +2366,7 @@ export function Dashboard() {
 
   return (
     <div className="p-5 max-w-full space-y-4">
+      <div className={isEmployee ? 'hidden' : ''}>
       <SystemAdminPageHeader
         icon={BarChart3}
         title={isSupervisor ? 'Dashboard de Supervisor' : `Bienvenido, ${profile?.display_name || 'Usuario'}`}
@@ -2331,6 +2425,7 @@ export function Dashboard() {
           </div>
         ) : undefined}
       />
+      </div>
 
       {!isSystemAdmin && !isTenantAdmin && !isSupervisor && String(profile?.role_key || '').toUpperCase() !== 'EMPLOYEE' ? <RoleInfo roleKey={profile?.role_key} /> : null}
 

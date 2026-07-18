@@ -499,7 +499,7 @@ export default function KioskTimePunchRequests() {
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="p-4 pb-3 sm:p-6 sm:pb-3">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
               <Clock3 className="h-5 w-5" />
@@ -512,39 +512,39 @@ export default function KioskTimePunchRequests() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-4 p-4 pt-0 sm:px-6 sm:pb-6">
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="text-sm space-y-1">
+            <div className="flex w-full flex-wrap items-end gap-2 lg:w-auto">
+              <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Desde</span>
                 <input
                   type="date"
                   value={rangeFrom}
                   onChange={(event) => setRangeFrom(event.target.value)}
-                  className="h-10 border rounded-md px-3"
+                  className="h-10 w-full rounded-md border px-3"
                 />
               </label>
-              <label className="text-sm space-y-1">
+              <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Hasta</span>
                 <input
                   type="date"
                   value={rangeTo}
                   onChange={(event) => setRangeTo(event.target.value)}
-                  className="h-10 border rounded-md px-3"
+                  className="h-10 w-full rounded-md border px-3"
                 />
               </label>
-              <Button onClick={() => void refresh()} disabled={refreshing}>
+              <Button className="w-full min-[420px]:w-auto" onClick={() => void refresh()} disabled={refreshing}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
                 Consultar
               </Button>
             </div>
-            <Button onClick={openCreatePopup}>
+            <Button className="w-full sm:w-auto" onClick={openCreatePopup}>
               <Plus className="mr-2 h-4 w-4" /> Nueva solicitud
             </Button>
           </div>
 
           {employee ? (
-            <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm">
+            <div className="hidden rounded-xl border bg-slate-50 px-4 py-3 text-sm sm:block">
               <span className="font-semibold">
                 {(employee.employee_name || '').trim()} {(employee.employee_lastname || '').trim()}
               </span>
@@ -778,6 +778,7 @@ export default function KioskTimePunchRequests() {
               <input
                 type="file"
                 accept="application/pdf"
+                className="block w-full max-w-full text-xs sm:text-sm"
                 onChange={(e) => {
                   const file = e.target.files?.[0] || null;
                   setSupportFile(file);
@@ -800,10 +801,10 @@ export default function KioskTimePunchRequests() {
             {selectedTargetPunch ? (
               <div className="md:col-span-2 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
                 <div className="mb-1 font-semibold text-slate-900">Marcacion actual seleccionada</div>
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-3.5 w-3.5" />
-                  <span>{formatPunchLabel(selectedTargetPunch)}</span>
-                  <ArrowRight className="h-3.5 w-3.5 text-slate-400" />
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Clock3 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0 break-words">{formatPunchLabel(selectedTargetPunch)}</span>
+                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                   <span className="text-slate-500">se aplicara al aprobar</span>
                 </div>
               </div>

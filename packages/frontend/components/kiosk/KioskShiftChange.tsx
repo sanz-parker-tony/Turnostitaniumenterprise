@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { buildApiUrl } from '../../utils/api-config';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeftRight, CircleDot, FileText, Loader2, MessageSquareText, RefreshCw, Trash2 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { toast } from 'sonner';
@@ -231,9 +231,11 @@ export default function KioskShiftChange() {
   const [dialogMode, setDialogMode] = useState<RequestDialogMode>('create');
   const [selectedRequest, setSelectedRequest] = useState<ShiftChangeRow | null>(null);
   const [requestedShiftId, setRequestedShiftId] = useState('');
+  const [draftRequestedShiftByDate, setDraftRequestedShiftByDate] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [supportFile, setSupportFile] = useState<File | null>(null);
   const [clearSupportDocument, setClearSupportDocument] = useState(false);
+  const requestCellClickTimers = useRef<Record<string, number>>({});
 
   const fileToBase64 = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -394,7 +396,9 @@ export default function KioskShiftChange() {
     const validCompanyIds = new Set(
       [selectedPlan.company_id, selectedPlan.original_shift_company_id, selectedPlan.shift_company_id].filter(Boolean)
     );
-    return availableShifts.filter((row) => validCompanyIds.has(row.company_id));
+    return availableShifts.filter(
+      (row) => validCompanyIds.has(row.company_id) && row.id !== selectedPlan.shift_id
+    );
   }, [availableShifts, selectedPlan]);
 
   const shiftChangesById = useMemo(() => {
@@ -436,7 +440,22 @@ export default function KioskShiftChange() {
     return availableShiftById.get(requestedShiftId) || null;
   }, [availableShiftById, requestedShiftId]);
 
-  const beginRequest = (plan: ShiftPlanRow) => {
+  useEffect(() => {
+    return () => {
+      Object.values(requestCellClickTimers.current).forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, []);
+
+  const getSelectableShiftsForPlan = (plan: ShiftPlanRow) => {
+    const validCompanyIds = new Set(
+      [plan.company_id, plan.original_shift_company_id, plan.shift_company_id].filter(Boolean)
+    );
+    return availableShifts.filter(
+      (row) => validCompanyIds.has(row.company_id) && row.id !== plan.shift_id
+    );
+  };
+
+  const beginRequest = (plan: ShiftPlanRow, initialRequestedShiftId = '') => {
     const existing =
       openShiftChangesByDate.get(plan.shift_date) ||
       (plan.open_request_id ? shiftChangesById.get(plan.open_request_id) || null : null);
@@ -471,8 +490,62 @@ export default function KioskShiftChange() {
     }
 
     setDialogMode('create');
-    setRequestedShiftId('');
+    setRequestedShiftId(initialRequestedShiftId);
     setReason('');
+  };
+
+  const cycleDraftRequestedShift = (plan: ShiftPlanRow) => {
+    const options = getSelectableShiftsForPlan(plan);
+    if (options.length === 0) {
+      toast.error('No hay turnos disponibles para solicitar en esta fecha');
+      return;
+    }
+
+    setDraftRequestedShiftByDate((current) => {
+      const currentIndex = options.findIndex((shift) => shift.id === current[plan.shift_date]);
+      const nextShift = options[(currentIndex + 1) % options.length];
+      return { ...current, [plan.shift_date]: nextShift.id };
+    });
+  };
+
+  const clearDraftRequestedShift = (shiftDate: string) => {
+    const existingTimer = requestCellClickTimers.current[shiftDate];
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      delete requestCellClickTimers.current[shiftDate];
+    }
+
+    setDraftRequestedShiftByDate((current) => {
+      if (!current[shiftDate]) return current;
+      const next = { ...current };
+      delete next[shiftDate];
+      return next;
+    });
+  };
+
+  const scheduleDraftShiftCycle = (plan: ShiftPlanRow) => {
+    const existingTimer = requestCellClickTimers.current[plan.shift_date];
+    if (existingTimer) window.clearTimeout(existingTimer);
+
+    requestCellClickTimers.current[plan.shift_date] = window.setTimeout(() => {
+      cycleDraftRequestedShift(plan);
+      delete requestCellClickTimers.current[plan.shift_date];
+    }, 220);
+  };
+
+  const openDraftRequest = (plan: ShiftPlanRow) => {
+    const existingTimer = requestCellClickTimers.current[plan.shift_date];
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+      delete requestCellClickTimers.current[plan.shift_date];
+    }
+
+    const options = getSelectableShiftsForPlan(plan);
+    const selectedDraftShiftId = draftRequestedShiftByDate[plan.shift_date];
+    const initialRequestedShiftId = options.some((shift) => shift.id === selectedDraftShiftId)
+      ? selectedDraftShiftId
+      : options[0]?.id || '';
+    beginRequest(plan, initialRequestedShiftId);
   };
 
   const closeDialog = () => {
@@ -646,7 +719,7 @@ export default function KioskShiftChange() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4 sm:p-6">
           <div className="flex items-start gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
               <ArrowLeftRight className="h-5 w-5" />
@@ -654,14 +727,14 @@ export default function KioskShiftChange() {
             <div>
               <CardTitle>Turnos y Solicitud de Cambio</CardTitle>
               <CardDescription>
-                Visualiza tus turnos por fecha y haz clic en una celda para solicitar cambio (incluye turno Libre).
+                Visualiza tus turnos por fecha. En la fila inferior, haz clic para alternar el turno y doble clic para solicitar el cambio.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="text-sm space-y-1">
+        <CardContent className="space-y-4 p-4 pt-0 sm:px-6 sm:pb-6">
+          <div className="flex w-full flex-wrap items-end gap-2">
+            <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
               <span className="block text-slate-700">Desde</span>
               <input
                 type="date"
@@ -679,10 +752,10 @@ export default function KioskShiftChange() {
                     setRangeTo(maxTo);
                   }
                 }}
-                className="h-10 border rounded-md px-3"
+                className="h-10 w-full rounded-md border px-3"
               />
             </label>
-            <label className="text-sm space-y-1">
+            <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
               <span className="block text-slate-700">Hasta</span>
               <input
                 type="date"
@@ -702,17 +775,21 @@ export default function KioskShiftChange() {
                     setRangeTo(nextTo);
                   }
                 }}
-                className="h-10 border rounded-md px-3"
+                className="h-10 w-full rounded-md border px-3"
               />
             </label>
-            <Button onClick={() => void refresh()} disabled={loading || refreshing || saving}>
+            <Button
+              className="w-full min-[420px]:w-auto"
+              onClick={() => void refresh()}
+              disabled={loading || refreshing || saving}
+            >
               {refreshing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
               Consultar
             </Button>
           </div>
 
           {employee ? (
-            <div className="rounded-xl border bg-slate-50 px-4 py-3 text-sm">
+            <div className="hidden rounded-xl border bg-slate-50 px-4 py-3 text-sm sm:block">
               <span className="font-semibold">
                 {(employee.employee_name || '').trim()} {(employee.employee_lastname || '').trim()}
               </span>
@@ -726,7 +803,7 @@ export default function KioskShiftChange() {
               <Loader2 className="w-7 h-7 animate-spin text-blue-600" />
             </div>
           ) : (
-            <div className="rounded-xl border overflow-x-auto">
+            <div className="rounded-xl border overflow-x-auto overscroll-x-contain">
               {dateColumns.length === 0 ? (
                 <div className="py-10 text-center text-slate-600">No hay turnos en el rango seleccionado.</div>
               ) : (
@@ -790,19 +867,19 @@ export default function KioskShiftChange() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="p-4 sm:p-6">
           <CardTitle>Solicitudes abiertas de cambio</CardTitle>
           <CardDescription>
-            Fila de solicitudes por fecha. Bloques grises = sin solicitud abierta.
+            Clic: alternar turno. Doble clic: abrir la solicitud. Supr: deshacer. En celular, usa los botones.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 pt-0 sm:px-6 sm:pb-6">
           {dateColumns.length === 0 ? (
             <div className="border rounded-lg py-8 text-center text-slate-600">
               No hay fechas de turnos en el rango seleccionado.
             </div>
           ) : (
-            <div className="rounded-xl border overflow-x-auto">
+            <div className="rounded-xl border overflow-x-auto overscroll-x-contain">
               <table className="min-w-max w-full">
                 <thead>
                   <tr className="bg-slate-100 border-b">
@@ -818,9 +895,103 @@ export default function KioskShiftChange() {
                     {dateColumns.map((dateIso) => {
                       const row = openShiftChangesByDate.get(dateIso);
                       if (!row) {
+                        const plan = shiftsByDate.get(dateIso);
+                        const draftShiftId = draftRequestedShiftByDate[dateIso];
+                        const draftShift = draftShiftId ? availableShiftById.get(draftShiftId) || null : null;
+                        const visual = draftShift
+                          ? getShiftVisual(
+                              draftShift.shift_icon_key,
+                              draftShift.shift_bg_color,
+                              draftShift.shift_text_color
+                            )
+                          : null;
+                        const DraftIcon = visual?.Icon || ArrowLeftRight;
+
                         return (
                           <td key={`req-empty-${dateIso}`} className="p-2 align-top">
-                            <div className="h-[98px] rounded-xl border border-slate-200 bg-slate-100/90" />
+                            {plan ? (
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                onClick={(event) => {
+                                  event.currentTarget.focus();
+                                  if (event.detail === 1) scheduleDraftShiftCycle(plan);
+                                }}
+                                onDoubleClick={() => openDraftRequest(plan)}
+                                onKeyDown={(event) => {
+                                  if (event.key === ' ') {
+                                    event.preventDefault();
+                                    cycleDraftRequestedShift(plan);
+                                  }
+                                  if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    openDraftRequest(plan);
+                                  }
+                                  if (event.key === 'Delete' || event.key === 'Backspace') {
+                                    event.preventDefault();
+                                    clearDraftRequestedShift(dateIso);
+                                  }
+                                }}
+                                className="group relative h-[98px] w-full cursor-pointer rounded-xl border border-slate-200 p-2 text-center transition hover:border-blue-300 hover:ring-2 hover:ring-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+                                style={
+                                  visual
+                                    ? { backgroundColor: visual.bgColor, color: visual.textColor }
+                                    : { backgroundColor: '#F1F5F9', color: '#475569' }
+                                }
+                                title="Clic para alternar; doble clic para solicitar; Supr para deshacer"
+                                aria-label={`${formatDateLong(dateIso)}. ${
+                                  draftShift ? `Turno solicitado: ${formatShiftLabel(draftShift)}.` : 'Sin turno seleccionado.'
+                                } Clic para alternar; doble clic para solicitar; Supr para deshacer.`}
+                              >
+                                <div className="flex h-full flex-col items-center justify-center gap-1">
+                                  <div className="inline-flex items-center justify-center gap-1.5">
+                                    <DraftIcon
+                                      className="h-4 w-4"
+                                      style={visual ? { color: visual.iconColor } : undefined}
+                                    />
+                                    <span className="text-xs font-semibold">
+                                      {draftShift?.shift_short_name || draftShift?.shift_name || 'Elegir turno'}
+                                    </span>
+                                  </div>
+                                  <span className="max-w-[112px] truncate text-[10px] opacity-80">
+                                    {draftShift ? draftShift.shift_name : 'Clic para alternar'}
+                                  </span>
+                                  {draftShift ? (
+                                    <div className="mt-0.5 flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          openDraftRequest(plan);
+                                        }}
+                                        onDoubleClick={(event) => event.stopPropagation()}
+                                        className="rounded-md border border-current/30 bg-white/70 px-2 py-0.5 text-[10px] font-semibold hover:bg-white"
+                                      >
+                                        Solicitar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          clearDraftRequestedShift(dateIso);
+                                        }}
+                                        onDoubleClick={(event) => event.stopPropagation()}
+                                        className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50"
+                                        title="Deshacer selección"
+                                        aria-label={`Deshacer turno solicitado para ${formatDateLong(dateIso)}`}
+                                      >
+                                        <Trash2 className="h-3 w-3" />
+                                        Deshacer
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] font-medium text-blue-700">Doble clic para solicitar</span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="h-[98px] rounded-xl border border-dashed border-slate-200 bg-slate-100/90" />
+                            )}
                           </td>
                         );
                       }
@@ -919,7 +1090,7 @@ export default function KioskShiftChange() {
       </Card>
 
       <Dialog open={Boolean(selectedPlan)} onOpenChange={(open) => (!open ? closeDialog() : null)}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {dialogMode === 'create'
@@ -1017,7 +1188,7 @@ export default function KioskShiftChange() {
                 type="file"
                 accept="application/pdf"
                 onChange={(event) => setSupportFile(event.target.files?.[0] || null)}
-                className="h-10 border rounded-md px-3 py-1 w-full"
+                className="block min-h-10 w-full max-w-full rounded-md border px-3 py-1 text-xs sm:text-sm"
                 disabled={dialogMode === 'view' || saving}
               />
               <span className="text-xs text-slate-500">

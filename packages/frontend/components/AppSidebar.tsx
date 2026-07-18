@@ -29,6 +29,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  useSidebar,
 } from './ui/sidebar';
 import {
   Accordion,
@@ -55,6 +56,7 @@ const getDynamicIcon = (iconName: string) => {
 export function AppSidebar() {
   const { profile } = useAuth();
   const { menuScreens, isLoading } = usePermissions();
+  const { isMobile, setOpenMobile } = useSidebar();
   const [currentPath, setCurrentPath] = useState('');
   const [openGroup, setOpenGroup] = useState<string>('');
 
@@ -124,6 +126,10 @@ export function AppSidebar() {
       // Disparar evento personalizado para que el Router lo detecte
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
+
+    if (isMobile) {
+      setOpenMobile(false);
+    }
   };
 
   // Log para debugging
@@ -158,7 +164,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       {/* Content - Sin scroll interno */}
-      <SidebarContent className="overflow-visible">
+      <SidebarContent className="overflow-y-auto md:overflow-visible">
         {isLoading ? (
           <div className="flex flex-col items-center justify-center p-8 gap-3">
             <div className="size-8 border-4 border-[#0074D9] border-t-transparent rounded-full animate-spin"></div>

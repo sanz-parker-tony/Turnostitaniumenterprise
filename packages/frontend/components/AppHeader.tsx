@@ -8,7 +8,7 @@ import { API_BASE_URL } from '../utils/api-config';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { useState, useEffect, useRef } from 'react';
-import { Bell, ChevronRight, Home, KeyRound, LogOut, User } from 'lucide-react';
+import { BarChart3, Bell, ChevronRight, Home, Info, KeyRound, LogOut, User } from 'lucide-react';
 import { SidebarTrigger } from './ui/sidebar';
 import { Separator } from './ui/separator';
 import {
@@ -29,8 +29,8 @@ import {
 } from './ui/dropdown-menu';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { DevicePermissionToolbar } from './shared/DevicePermissionToolbar';
 import ChangePasswordModal from './ChangePasswordModal';
+import titaniumLogo from '../assets/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
 
 type UserNotification = {
   id: string;
@@ -39,6 +39,12 @@ type UserNotification = {
   icon_key: string | null;
   is_read: boolean;
   created_at: string;
+};
+
+type EmployeeHeaderIdentity = {
+  fullName: string;
+  code: string;
+  company: string;
 };
 
 
@@ -64,6 +70,12 @@ export function AppHeader() {
   const [loadingNotifications, setLoadingNotifications] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [employeeOrganizationRoute, setEmployeeOrganizationRoute] = useState('');
+  const [employeeHeaderIdentity, setEmployeeHeaderIdentity] = useState<EmployeeHeaderIdentity>({
+    fullName: '',
+    code: '',
+    company: '',
+  });
   const headerRef = useRef<HTMLElement | null>(null);
 
   // Detectar ruta actual
@@ -106,12 +118,55 @@ export function AppHeader() {
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const showDevicePermissionToolbar = roleKey === 'EMPLOYEE';
-  const isKioskPunchRoute = [
-    '/dashboard/kiosk/timeclock',
-    '/kiosk/punch',
-    '/kiosk/timeclock',
-  ].includes(currentPath);
+  const compactUserName = String(profile?.display_name || profile?.email || 'Usuario').trim();
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadEmployeeHeader = async () => {
+      if (roleKey !== 'EMPLOYEE' || !session?.access_token) {
+        if (mounted) {
+          setEmployeeOrganizationRoute('');
+          setEmployeeHeaderIdentity({ fullName: '', code: '', company: '' });
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/dashboard/employee-summary`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !mounted) return;
+        const employee = payload?.employee || {};
+        const company = payload?.employee_company || {};
+        const organizationRoute = String(
+          company.organization_route || [
+            company.work_location_name,
+            company.department_name,
+            company.area_name,
+            company.job_title_name,
+          ].filter(Boolean).join(' / ')
+        ).trim();
+        setEmployeeOrganizationRoute(organizationRoute);
+        setEmployeeHeaderIdentity({
+          fullName: `${employee.employee_name || ''} ${employee.employee_lastname || ''}`.trim(),
+          code: String(employee.employee_code || '').trim(),
+          company: String(company.company_name || '').trim(),
+        });
+      } catch {
+        if (mounted) {
+          setEmployeeOrganizationRoute('');
+          setEmployeeHeaderIdentity({ fullName: '', code: '', company: '' });
+        }
+      }
+    };
+
+    void loadEmployeeHeader();
+    return () => {
+      mounted = false;
+    };
+  }, [roleKey, session?.access_token]);
 
   const handleLogout = async () => {
     await signOut();
@@ -121,6 +176,13 @@ export function AppHeader() {
   const handleNavigateHome = () => {
     if (typeof window !== 'undefined') {
       window.history.pushState({}, '', '/dashboard');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  };
+
+  const handleNavigateProfile = () => {
+    if (typeof window !== 'undefined') {
+      window.history.pushState({}, '', '/dashboard/profile');
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
   };
@@ -181,11 +243,22 @@ export function AppHeader() {
     if (!session?.access_token) return;
     void loadNotifications(false);
 
+    const refreshUnreadNotifications = () => {
+      if (document.visibilityState === 'visible') {
+        void loadNotifications(false);
+      }
+    };
     const timer = window.setInterval(() => {
-      void loadNotifications(false);
-    }, 30000);
+      refreshUnreadNotifications();
+    }, 15000);
+    window.addEventListener('focus', refreshUnreadNotifications);
+    document.addEventListener('visibilitychange', refreshUnreadNotifications);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refreshUnreadNotifications);
+      document.removeEventListener('visibilitychange', refreshUnreadNotifications);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.access_token]);
 
@@ -200,33 +273,74 @@ export function AppHeader() {
     <>
       <header
         ref={headerRef}
-        className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b px-4 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow ${
+        className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-1 border-b px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow sm:gap-2 sm:px-4 ${roleKey === 'EMPLOYEE' ? 'sm:h-[72px]' : 'sm:h-16'} ${
           isElevated ? 'shadow-sm' : 'shadow-none'
         }`}
       >
-      <div className="flex items-center gap-2 flex-1">
-        <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="h-6" />
+      <div className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-2">
+        <SidebarTrigger className="-ml-1 shrink-0" />
+        <button
+          type="button"
+          onClick={handleNavigateHome}
+          className="flex h-full w-full min-w-0 flex-1 items-center gap-2 overflow-hidden rounded px-1 py-0.5 text-left hover:bg-muted sm:hidden"
+          title={`Turnos Titanium · ${employeeHeaderIdentity.fullName || compactUserName}`}
+          aria-label={`Ir al inicio. Empleado: ${employeeHeaderIdentity.fullName || compactUserName}`}
+        >
+          <img src={titaniumLogo} alt="Turnos Titanium" className="h-9 w-9 shrink-0 rounded-md" />
+          <span className="block min-w-0 flex-1 leading-none">
+            <span className="block truncate text-sm font-bold leading-tight text-slate-900">
+              {roleKey === 'EMPLOYEE' ? employeeHeaderIdentity.fullName || compactUserName : compactUserName}
+            </span>
+            {roleKey === 'EMPLOYEE' ? (
+              <span className="mt-1 block truncate text-[10px] font-normal leading-tight text-slate-500">
+                Código: {employeeHeaderIdentity.code || '-'} · Empresa: {employeeHeaderIdentity.company || '-'}
+              </span>
+            ) : null}
+          </span>
+        </button>
+
+        {roleKey === 'EMPLOYEE' ? (
+          <button
+            type="button"
+            onClick={handleNavigateHome}
+            className="hidden min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-muted sm:flex"
+            title={`Bienvenido, ${employeeHeaderIdentity.fullName || compactUserName}`}
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+              <BarChart3 className="h-4 w-4" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-lg font-bold leading-tight text-slate-900">
+                Bienvenido, {employeeHeaderIdentity.fullName || compactUserName}
+              </span>
+              <span className="block max-w-[58vw] truncate text-[11px] text-slate-500">
+                {employeeOrganizationRoute || 'Ruta organizacional no configurada'}
+              </span>
+            </span>
+          </button>
+        ) : (
+          <Separator orientation="vertical" className="hidden h-6 sm:block" />
+        )}
         
         {/* Breadcrumbs */}
-        <Breadcrumb>
-          <BreadcrumbList>
+        <Breadcrumb className={roleKey === 'EMPLOYEE' ? 'hidden' : 'hidden min-w-0 overflow-hidden sm:block'}>
+          <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden">
             <BreadcrumbItem>
               <BreadcrumbLink 
                 onClick={handleNavigateHome}
                 className="flex items-center gap-1 cursor-pointer"
               >
                 <Home className="h-3.5 w-3.5" />
-                Inicio
+                <span className="hidden sm:inline">Inicio</span>
               </BreadcrumbLink>
             </BreadcrumbItem>
             
             {currentScreen && (
               <>
-                <BreadcrumbSeparator>
+                <BreadcrumbSeparator className="hidden sm:list-item">
                   <ChevronRight className="h-4 w-4" />
                 </BreadcrumbSeparator>
-                <BreadcrumbItem>
+                <BreadcrumbItem className="hidden sm:inline-flex">
                   <BreadcrumbLink className="text-muted-foreground">
                     {currentScreen.menu_group_name}
                   </BreadcrumbLink>
@@ -234,8 +348,8 @@ export function AppHeader() {
                 <BreadcrumbSeparator>
                   <ChevronRight className="h-4 w-4" />
                 </BreadcrumbSeparator>
-                <BreadcrumbItem>
-                  <BreadcrumbPage className="font-medium">
+                <BreadcrumbItem className="min-w-0">
+                  <BreadcrumbPage className="block max-w-[38vw] truncate font-medium sm:max-w-none">
                     {currentScreen.screen_name}
                   </BreadcrumbPage>
                 </BreadcrumbItem>
@@ -246,9 +360,7 @@ export function AppHeader() {
       </div>
 
       {/* Right side - Notifications & User */}
-      <div className="flex items-center gap-2">
-        {showDevicePermissionToolbar && !isKioskPunchRoute ? <DevicePermissionToolbar /> : null}
-
+      <div className="relative z-10 ml-1 flex shrink-0 items-center gap-0.5 bg-background/95 sm:gap-2">
         {/* Notifications */}
         <DropdownMenu onOpenChange={setNotificationsOpen}>
           <DropdownMenuTrigger asChild>
@@ -262,7 +374,7 @@ export function AppHeader() {
               </Badge>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
+          <DropdownMenuContent align="end" className="w-[calc(100vw-1rem)] max-w-80">
             <DropdownMenuLabel>Notificaciones</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {unreadCount > 0 && (
@@ -313,7 +425,7 @@ export function AppHeader() {
                 <User className="h-5 w-5" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuContent align="end" className="w-[calc(100vw-1rem)] max-w-80">
               <DropdownMenuLabel>
                 <div className="flex flex-col space-y-1">
                   <p className="text-sm font-medium leading-none">{profile?.display_name}</p>
@@ -326,11 +438,12 @@ export function AppHeader() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {showDevicePermissionToolbar && !isKioskPunchRoute ? (
+              {roleKey === 'EMPLOYEE' ? (
                 <>
-                  <div className="px-2 py-1.5">
-                    <DevicePermissionToolbar variant="panel" />
-                  </div>
+                  <DropdownMenuItem onClick={handleNavigateProfile} className="cursor-pointer">
+                    <Info className="mr-2 h-4 w-4" />
+                    Más información…
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>
               ) : null}

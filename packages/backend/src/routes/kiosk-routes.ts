@@ -1240,6 +1240,39 @@ async function resolveManagedEmployeeIdsForApprover(
     .filter(Boolean);
 }
 
+async function resolveAssignedApproverUserIds(
+  tenantId: string,
+  employeeId: string
+): Promise<string[]> {
+  const result = await pool.query(
+    `
+      SELECT DISTINCT ur.user_id::text AS user_id
+      FROM public.user_role_employee_assignments ura
+      JOIN public.user_roles ur
+        ON ur.id = ura.user_role_id
+       AND ur.tenant_id = ura.tenant_id
+       AND ur.is_active = true
+       AND (ur.valid_from IS NULL OR ur.valid_from <= now())
+       AND (ur.valid_to IS NULL OR ur.valid_to >= now())
+      JOIN public.roles r
+        ON r.id = ur.role_id
+       AND r.is_active = true
+       AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+      JOIN public.users u
+        ON u.id = ur.user_id
+       AND u.is_active = true
+      WHERE ura.tenant_id = $1::uuid
+        AND ura.employee_id = $2::uuid
+        AND ura.is_active = true
+    `,
+    [tenantId, employeeId]
+  );
+
+  return result.rows
+    .map((row) => String(row.user_id || '').trim())
+    .filter(Boolean);
+}
+
 async function getEmployeeCompanies(tenantId: string, employeeId: string) {
   const result = await pool.query(
     `
@@ -2721,7 +2754,48 @@ router.post('/requests', async (req: Request, res: Response) => {
       ]
     );
 
-    return res.status(201).json({ success: true, request: insertResult.rows[0] });
+    const requestRow = insertResult.rows[0];
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      context.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['ABSENCE_REQUEST_CREATED']
+    );
+    if (notificationTypeId) {
+      const recipientUserIds = await resolveAssignedApproverUserIds(
+        context.tenant_id,
+        context.employee_id
+      );
+      const employeeName = `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim();
+      const title = 'Nueva solicitud de justificación o permiso';
+      const message = `${employeeName || 'Un empleado'} envió una solicitud desde ${String(startDateTime).slice(0, 10)} hasta ${String(endDateTime || startDateTime).slice(0, 10)}.`;
+
+      for (const recipientUserId of recipientUserIds) {
+        if (recipientUserId === context.user_id) continue;
+        await pool.query(
+          `
+            INSERT INTO public.user_notifications (
+              id, tenant_id, user_id, notification_type_id, title, message,
+              icon_key, ref_table, ref_id, is_read, is_active, created_by
+            )
+            VALUES (
+              gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
+              'FileCheck', 'employee_absence_requests', $6::uuid, false, true, $7
+            )
+          `,
+          [
+            context.tenant_id,
+            recipientUserId,
+            notificationTypeId,
+            title,
+            message,
+            requestRow.id,
+            actor,
+          ]
+        );
+      }
+    }
+
+    return res.status(201).json({ success: true, request: requestRow });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
@@ -3368,9 +3442,13 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         SELECT
           r.id,
           r.request_status_id,
-          rs.lookup_key AS request_status_key
+          rs.lookup_key AS request_status_key,
+          e.user_id AS employee_user_id
         FROM public.employee_absence_requests r
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
+        LEFT JOIN public.employees e
+          ON e.id = r.employee_id
+         AND e.tenant_id = r.tenant_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
           AND r.employee_id = ANY($3::uuid[])
@@ -3429,6 +3507,35 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         getActor(req),
       ]
     );
+
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      userContext.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['ABSENCE_REQUEST_DECIDED']
+    );
+    if (notificationTypeId && current.employee_user_id) {
+      await pool.query(
+        `
+          INSERT INTO public.user_notifications (
+            id, tenant_id, user_id, notification_type_id, title, message,
+            icon_key, ref_table, ref_id, is_read, is_active, created_by
+          )
+          VALUES (
+            gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
+            'FileCheck', 'employee_absence_requests', $6::uuid, false, true, $7
+          )
+        `,
+        [
+          userContext.tenant_id,
+          current.employee_user_id,
+          notificationTypeId,
+          decision === 'APPROVE' ? 'Solicitud de permiso o justificación aprobada' : 'Solicitud de permiso o justificación denegada',
+          resolvedApprovalNotes,
+          requestId,
+          getActor(req),
+        ]
+      );
+    }
 
     return res.status(200).json({ success: true, request: updated.rows[0] });
   } catch (err: any) {
@@ -4112,31 +4219,17 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
       ['SHIFT_CHANGE_REQUEST_CREATED']
     );
     if (notificationTypeId) {
-      const recipients = await pool.query(
-        `
-          SELECT DISTINCT ur.user_id
-          FROM public.user_roles ur
-          INNER JOIN public.roles r
-            ON r.id = ur.role_id
-          INNER JOIN public.users u
-            ON u.id = ur.user_id
-          WHERE ur.tenant_id = $1::uuid
-            AND ur.is_active = true
-            AND r.is_active = true
-            AND u.is_active = true
-            AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        `,
-        [context.tenant_id]
+      const recipientUserIds = await resolveAssignedApproverUserIds(
+        context.tenant_id,
+        context.employee_id
       );
 
       const title = 'Nueva solicitud de cambio de turno';
       const message = `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() +
         ` solicita cambio de turno para ${shiftDate}.`;
 
-      for (const recipient of recipients.rows) {
-        if (!recipient.user_id || recipient.user_id === context.user_id) continue;
+      for (const recipientUserId of recipientUserIds) {
+        if (recipientUserId === context.user_id) continue;
         await pool.query(
           `
             INSERT INTO public.user_notifications (
@@ -4161,7 +4254,7 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
           `,
           [
             context.tenant_id,
-            recipient.user_id,
+            recipientUserId,
             notificationTypeId,
             title,
             message,
@@ -4526,10 +4619,14 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
           r.shift_date,
           r.current_shift_id,
           r.requested_shift_id,
-          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key
+          UPPER(COALESCE(st.lookup_key, '')) AS request_status_key,
+          e.user_id AS employee_user_id
         FROM public.employee_shift_change_requests r
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
+        LEFT JOIN public.employees e
+          ON e.id = r.employee_id
+         AND e.tenant_id = r.tenant_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
           AND r.employee_id = ANY($3::uuid[])
@@ -4618,6 +4715,40 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
         getActor(req),
       ]
     );
+
+    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
+      userContext.tenant_id,
+      USER_NOTIFICATION_TYPE_GROUP_KEY,
+      ['SHIFT_CHANGE_REQUEST_DECIDED']
+    );
+    if (notificationTypeId && current.employee_user_id) {
+      const decisionMessage = supervisorNotes || (
+        decision === 'APPROVE'
+          ? `El cambio de turno del ${String(current.shift_date).slice(0, 10)} fue aprobado.`
+          : `El cambio de turno del ${String(current.shift_date).slice(0, 10)} fue denegado.`
+      );
+      await pool.query(
+        `
+          INSERT INTO public.user_notifications (
+            id, tenant_id, user_id, notification_type_id, title, message,
+            icon_key, ref_table, ref_id, is_read, is_active, created_by
+          )
+          VALUES (
+            gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
+            'ArrowLeftRight', 'employee_shift_change_requests', $6::uuid, false, true, $7
+          )
+        `,
+        [
+          userContext.tenant_id,
+          current.employee_user_id,
+          notificationTypeId,
+          decision === 'APPROVE' ? 'Solicitud de cambio de turno aprobada' : 'Solicitud de cambio de turno denegada',
+          decisionMessage,
+          requestId,
+          getActor(req),
+        ]
+      );
+    }
 
     return res.status(200).json({ success: true, request: updated.rows[0] || null });
   } catch (err: any) {
@@ -5039,31 +5170,17 @@ router.post('/time-punch-requests', async (req: Request, res: Response) => {
       ['TIME_PUNCH_CHANGE_REQUEST_CREATED']
     );
     if (notificationTypeId) {
-      const recipients = await pool.query(
-        `
-          SELECT DISTINCT ur.user_id
-          FROM public.user_roles ur
-          INNER JOIN public.roles r
-            ON r.id = ur.role_id
-          INNER JOIN public.users u
-            ON u.id = ur.user_id
-          WHERE ur.tenant_id = $1::uuid
-            AND ur.is_active = true
-            AND r.is_active = true
-            AND u.is_active = true
-            AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-            AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-            AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        `,
-        [context.tenant_id]
+      const recipientUserIds = await resolveAssignedApproverUserIds(
+        context.tenant_id,
+        context.employee_id
       );
 
       const title = 'Nueva solicitud de cambio de marcacion';
       const message = `${context.employee_name || ''} ${context.employee_lastname || ''}`.trim() +
         ' envio una solicitud de cambio de marcacion.';
 
-      for (const recipient of recipients.rows) {
-        if (!recipient.user_id || recipient.user_id === context.user_id) continue;
+      for (const recipientUserId of recipientUserIds) {
+        if (recipientUserId === context.user_id) continue;
         await pool.query(
           `
             INSERT INTO public.user_notifications (
@@ -5088,7 +5205,7 @@ router.post('/time-punch-requests', async (req: Request, res: Response) => {
           `,
           [
             context.tenant_id,
-            recipient.user_id,
+            recipientUserId,
             notificationTypeId,
             title,
             message,
