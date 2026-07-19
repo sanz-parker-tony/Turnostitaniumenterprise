@@ -788,6 +788,24 @@ async function resolveLookupValueIdByGroupKeyAndKeys(
   return result.rows[0]?.id || null;
 }
 
+async function resolveShiftChangeRequestStatusId(
+  tenantId: string,
+  keys: string[]
+): Promise<string | null> {
+  const specializedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    tenantId,
+    SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
+    keys
+  );
+  if (specializedStatusId) return specializedStatusId;
+
+  return resolveLookupValueIdByGroupKeyAndKeys(
+    tenantId,
+    REQUEST_STATUS_GROUP_KEY,
+    keys
+  );
+}
+
 function isPendingRequestStatusKey(statusKey: string | null | undefined): boolean {
   const key = String(statusKey || '').trim().toUpperCase();
   return ['PENDING', 'PENDIENTE', 'ENVIADA', 'ENVIADO', 'SENT', 'REQUESTED', 'SOLICITADO'].includes(key);
@@ -4186,9 +4204,8 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
       });
     }
 
-    const pendingStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    const pendingStatusId = await resolveShiftChangeRequestStatusId(
       context.tenant_id,
-      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
       ['PENDING', 'PENDIENTE']
     );
     if (!pendingStatusId) {
@@ -4568,9 +4585,8 @@ router.delete('/request-shift-change/:id', async (req: Request, res: Response) =
       return res.status(400).json({ error: 'La solicitud ya fue respondida y no puede eliminarse' });
     }
 
-    const cancelledStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    const cancelledStatusId = await resolveShiftChangeRequestStatusId(
       context.tenant_id,
-      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
       ['CANCELLED', 'CANCELED', 'CANCELADO']
     );
 
@@ -4667,14 +4683,12 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
       return res.status(400).json({ error: 'La solicitud ya tiene decisión final' });
     }
 
-    const approvedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    const approvedStatusId = await resolveShiftChangeRequestStatusId(
       userContext.tenant_id,
-      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
       ['APPROVED', 'APROBADO']
     );
-    const rejectedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
+    const rejectedStatusId = await resolveShiftChangeRequestStatusId(
       userContext.tenant_id,
-      SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY,
       ['REJECTED', 'RECHAZADO', 'DENEGADO']
     );
     const decisionStatusId = decision === 'APPROVE' ? approvedStatusId : rejectedStatusId;

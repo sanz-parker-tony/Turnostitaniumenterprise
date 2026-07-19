@@ -41,9 +41,9 @@ const terminalRequestStatusesSql = `
 `;
 
 /**
- * Una notificacion referenciada solo permanece visible mientras el asunto que
- * la origino siga pendiente. Los avisos genericos, sin flujo asociado, se
- * conservan hasta que el usuario los marque como leidos.
+ * Las notificaciones de creación solo permanecen visibles mientras el asunto
+ * siga pendiente. Las notificaciones de decisión y los avisos genéricos se
+ * conservan hasta que el usuario los marque como leídos.
  */
 const currentNotificationSql = `
   (
@@ -56,41 +56,47 @@ const currentNotificationSql = `
     )
     OR (
       n.ref_table = 'employee_absence_requests'
-      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
-      AND EXISTS (
-        SELECT 1
-        FROM public.employee_absence_requests request
-        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
-        WHERE request.id = n.ref_id
-          AND request.tenant_id = n.tenant_id
-          AND request.is_active = true
-          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      AND (
+        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        OR EXISTS (
+          SELECT 1
+          FROM public.employee_absence_requests request
+          LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+          WHERE request.id = n.ref_id
+            AND request.tenant_id = n.tenant_id
+            AND request.is_active = true
+            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+        )
       )
     )
     OR (
       n.ref_table = 'employee_shift_change_requests'
-      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
-      AND EXISTS (
-        SELECT 1
-        FROM public.employee_shift_change_requests request
-        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
-        WHERE request.id = n.ref_id
-          AND request.tenant_id = n.tenant_id
-          AND request.is_active = true
-          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      AND (
+        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        OR EXISTS (
+          SELECT 1
+          FROM public.employee_shift_change_requests request
+          LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+          WHERE request.id = n.ref_id
+            AND request.tenant_id = n.tenant_id
+            AND request.is_active = true
+            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+        )
       )
     )
     OR (
       n.ref_table = 'employee_time_punch_change_requests'
-      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
-      AND EXISTS (
-        SELECT 1
-        FROM public.employee_time_punch_change_requests request
-        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
-        WHERE request.id = n.ref_id
-          AND request.tenant_id = n.tenant_id
-          AND request.is_active = true
-          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      AND (
+        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        OR EXISTS (
+          SELECT 1
+          FROM public.employee_time_punch_change_requests request
+          LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+          WHERE request.id = n.ref_id
+            AND request.tenant_id = n.tenant_id
+            AND request.is_active = true
+            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+        )
       )
     )
     OR (
