@@ -22,6 +22,8 @@ import {
 } from 'lucide-react';
 import { projectId, publicApiToken } from '@/utils/backend/info';
 import { useAuth } from '@/contexts/AuthContext';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
+import { formatClientDateTime, formatStandardDate } from '@/utils/date-time';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 
@@ -1125,13 +1127,13 @@ export function UsersManagement() {
                     icon={Clock}
                     label="Último Login"
                     value={selectedUser.last_login_at
-                      ? new Date(selectedUser.last_login_at).toLocaleString('es-ES')
+                      ? formatClientDateTime(selectedUser.last_login_at)
                       : 'Nunca'}
                   />
                   <InfoField
                     icon={Clock}
                     label="Creado"
-                    value={new Date(selectedUser.created_at).toLocaleDateString('es-ES')}
+                    value={formatStandardDate(selectedUser.created_at)}
                   />
                 </div>
               </div>
@@ -1200,8 +1202,8 @@ export function UsersManagement() {
                               {(ur.valid_from || ur.valid_to) && (
                                 <p className="text-xs text-gray-400 flex items-center gap-1 mt-1">
                                   <Clock className="w-3 h-3" />
-                                  {ur.valid_from ? new Date(ur.valid_from).toLocaleDateString('es-ES') : '...'} →{' '}
-                                  {ur.valid_to ? new Date(ur.valid_to).toLocaleDateString('es-ES') : '...'}
+                                  {ur.valid_from ? formatStandardDate(ur.valid_from) : '...'} →{' '}
+                                  {ur.valid_to ? formatStandardDate(ur.valid_to) : '...'}
                                 </p>
                               )}
                             </div>
@@ -1515,12 +1517,12 @@ export function UsersManagement() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Válido desde</label>
-                  <input type="date" value={roleForm.valid_from} onChange={e => setRoleForm(f => ({ ...f, valid_from: e.target.value }))}
+                  <StandardDateInput value={roleForm.valid_from} onValueChange={value => setRoleForm(f => ({ ...f, valid_from: value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Válido hasta</label>
-                  <input type="date" value={roleForm.valid_to} onChange={e => setRoleForm(f => ({ ...f, valid_to: e.target.value }))}
+                  <StandardDateInput value={roleForm.valid_to} onValueChange={value => setRoleForm(f => ({ ...f, valid_to: value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm" />
                 </div>
               </div>

@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react';
 import { BarChart3, Bell, ChevronRight, Home, Info, KeyRound, LogOut, User } from 'lucide-react';
 import { SidebarTrigger } from './ui/sidebar';
 import { Separator } from './ui/separator';
+import { formatClientDateTime } from '../utils/date-time';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -49,15 +50,7 @@ type EmployeeHeaderIdentity = {
 
 
 function getReadableDateTime(value: string): string {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return value;
-  return date.toLocaleString('es-EC', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatClientDateTime(value);
 }
 
 export function AppHeader() {
@@ -366,12 +359,14 @@ export function AppHeader() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="h-5 w-5" />
-              <Badge
-                variant="destructive"
-                className="absolute -top-1 -right-1 h-5 min-w-5 px-1 flex items-center justify-center p-0 text-xs"
-              >
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </Badge>
+              {unreadCount > 0 && (
+                <Badge
+                  variant="destructive"
+                  className="absolute -top-1 -right-1 h-5 min-w-5 px-1 flex items-center justify-center p-0 text-xs"
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </Badge>
+              )}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-[calc(100vw-1rem)] max-w-80">

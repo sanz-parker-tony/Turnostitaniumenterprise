@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from './ui/switch';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from './ui/alert-dialog';
 import { ScrollArea } from './ui/scroll-area';
+import { formatClientTime24 } from '../utils/date-time';
 
 // Mock data
 const mockAccesses = [
@@ -1194,11 +1195,11 @@ export default function Configuracion({ activeTab: initialTab = 'dispositivos', 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="edit-start">Hora Inicio *</Label>
-                    <Input id="edit-start" type="time" defaultValue={editDialog.item?.startTime} />
+                    <Input id="edit-start" type="text" inputMode="numeric" placeholder="HH:MI:SS" defaultValue={formatClientTime24(editDialog.item?.startTime)} />
                   </div>
                   <div>
                     <Label htmlFor="edit-end">Hora Fin *</Label>
-                    <Input id="edit-end" type="time" defaultValue={editDialog.item?.endTime} />
+                    <Input id="edit-end" type="text" inputMode="numeric" placeholder="HH:MI:SS" defaultValue={formatClientTime24(editDialog.item?.endTime)} />
                   </div>
                 </div>
                 <div>

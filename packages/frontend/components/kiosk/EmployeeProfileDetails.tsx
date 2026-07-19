@@ -15,6 +15,7 @@ import {
   UsersRound,
   WalletCards,
 } from 'lucide-react';
+import { formatStandardDate } from '@/utils/date-time';
 import { buildApiUrl } from '../../utils/api-config';
 import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../ui/button';
@@ -34,8 +35,7 @@ function text(value: unknown): string {
 function formatDate(value: unknown): string {
   const raw = String(value || '').slice(0, 10);
   if (!raw) return '-';
-  const date = new Date(`${raw}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? raw : date.toLocaleDateString('es-EC');
+  return formatStandardDate(raw);
 }
 
 function InfoGrid({ items }: { items: InfoItem[] }) {

@@ -20,6 +20,7 @@ import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import GridActionIconButton from '@/components/shared/GridActionIconButton';
 import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import { formatStandardDate } from '@/utils/date-time';
 
 // ============================================================================
 // TIPOS
@@ -323,11 +324,11 @@ export function ScopeTypesManagement() {
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-900">{st.scope_type_name}</td>
                   <td className="px-4 py-3 text-xs text-gray-400">
-                    {new Date(st.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    {formatStandardDate(st.created_at)}
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-400">
                     {st.updated_at
-                      ? new Date(st.updated_at).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                      ? formatStandardDate(st.updated_at)
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-center">

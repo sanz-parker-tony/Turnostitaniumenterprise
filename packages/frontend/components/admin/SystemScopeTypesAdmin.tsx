@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { formatStandardDate } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -302,7 +303,7 @@ export default function SystemScopeTypesAdmin() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-gray-600">
-                        {new Date(st.created_at).toLocaleDateString()}
+                        {formatStandardDate(st.created_at)}
                       </TableCell>
                       <TableCell className="text-sm text-gray-600">
                         {st.created_by}

@@ -111,14 +111,15 @@ export function obtenerNombreMes(fecha: string, formato: 'corto' | 'largo' = 'co
  */
 export function formatearFecha(
   fecha: string,
-  formato: 'dd/MM/yyyy' | 'DD de MMM' | 'DD de MMMM, YYYY' = 'dd/MM/yyyy'
+  formato: 'yyyy/MM/dd' | 'dd/MM/yyyy' | 'DD de MMM' | 'DD de MMMM, YYYY' = 'yyyy/MM/dd'
 ): string {
   const [anio, mes, dia] = fecha.split('-').map(Number);
   const d = new Date(anio, mes - 1, dia);
   
   switch (formato) {
+    case 'yyyy/MM/dd':
     case 'dd/MM/yyyy':
-      return `${String(dia).padStart(2, '0')}/${String(mes).padStart(2, '0')}/${anio}`;
+      return `${anio}/${String(mes).padStart(2, '0')}/${String(dia).padStart(2, '0')}`;
     case 'DD de MMM':
       return `${dia} de ${obtenerNombreMes(fecha, 'corto')}`;
     case 'DD de MMMM, YYYY':

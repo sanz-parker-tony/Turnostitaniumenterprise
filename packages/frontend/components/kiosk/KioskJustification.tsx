@@ -17,6 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
+import { formatStandardDate } from '@/utils/date-time';
 import { MessageSquare, Send, Calendar, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiClient } from '@/lib/api-client';
@@ -124,12 +126,7 @@ export default function KioskJustification() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return formatStandardDate(dateString);
   };
 
   const getStatusBadge = (statusCode: string) => {
@@ -170,11 +167,10 @@ export default function KioskJustification() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="absenceDate">Fecha de Ausencia</Label>
-              <Input
+              <StandardDateInput
                 id="absenceDate"
-                type="date"
                 value={absenceDate}
-                onChange={(e) => setAbsenceDate(e.target.value)}
+                onValueChange={setAbsenceDate}
                 max={new Date().toISOString().split('T')[0]}
               />
             </div>

@@ -8,6 +8,7 @@ import { createClient } from '@/utils/backend/client';
 import { formatClientDateTime } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
 
 interface LookupOption {
   id: string;
@@ -198,19 +199,17 @@ export default function KioskPunchHistory() {
             <div className="flex items-end gap-2">
               <label className="text-sm space-y-1">
                 <span className="block text-slate-700">Desde</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeFrom}
-                  onChange={(event) => setRangeFrom(event.target.value)}
+                  onValueChange={setRangeFrom}
                   className="h-10 border rounded-md px-3"
                 />
               </label>
               <label className="text-sm space-y-1">
                 <span className="block text-slate-700">Hasta</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeTo}
-                  onChange={(event) => setRangeTo(event.target.value)}
+                  onValueChange={setRangeTo}
                   className="h-10 border rounded-md px-3"
                 />
               </label>

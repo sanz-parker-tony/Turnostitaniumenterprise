@@ -14,6 +14,7 @@ import GridActionIconButton from '../shared/GridActionIconButton';
 import HeaderInfoTips from '../shared/HeaderInfoTips';
 import HeaderRefreshButton from '../shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '../shared/SystemAdminPageHeader';
+import { formatClientDateTime } from '../../utils/date-time';
 
 type Tenant = {
   id: string;
@@ -53,8 +54,7 @@ function getAccessToken(): string | null {
 
 function formatDate(value: any): string {
   if (!value) return '-';
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString('es-ES') : String(value);
+  return formatClientDateTime(value);
 }
 
 function formatValue(value: any): string {
@@ -336,7 +336,7 @@ export default function TenantsManagement() {
             </div>
             <div className="col-span-2">
               <span className="text-sm text-muted-foreground">Fecha de Creación</span>
-              <p className="text-sm mt-1">{new Date(tenant.created_at).toLocaleString('es-ES')}</p>
+              <p className="text-sm mt-1">{formatClientDateTime(tenant.created_at)}</p>
             </div>
           </div>
         </CardContent>

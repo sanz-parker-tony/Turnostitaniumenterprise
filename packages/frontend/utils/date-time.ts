@@ -6,14 +6,35 @@ export function getClientTimeZone(): string {
   }
 }
 
-export function formatClientDate(date: Date, locale = 'es-EC', timeZone = getClientTimeZone()): string {
-  return date.toLocaleDateString(locale, {
+function formatDateParts(date: Date, timeZone: string): { year: string; month: string; day: string } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
-    weekday: 'long',
-    day: '2-digit',
-    month: '2-digit',
     year: 'numeric',
-  });
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value || '';
+  return { year: get('year'), month: get('month'), day: get('day') };
+}
+
+export function formatStandardDate(
+  value: string | Date | null | undefined,
+  timeZone = getClientTimeZone()
+): string {
+  if (!value) return '-';
+  if (typeof value === 'string') {
+    const dateOnly = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) return `${dateOnly[1]}/${dateOnly[2]}/${dateOnly[3]}`;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value);
+  const { year, month, day } = formatDateParts(date, timeZone);
+  return `${year}/${month}/${day}`;
+}
+
+export function formatClientDate(date: Date, locale = 'es-EC', timeZone = getClientTimeZone()): string {
+  void locale;
+  return formatStandardDate(date, timeZone);
 }
 
 export function formatClientTime(date: Date, locale = 'es-EC', timeZone = getClientTimeZone()): string {
@@ -69,16 +90,8 @@ export function formatClientDateTime(
   if (!value) return '-';
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) return String(value);
-  return date.toLocaleString(locale, {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  void locale;
+  return `${formatStandardDate(date, timeZone)} ${formatClientTime24(date, 'es-EC', timeZone)}`;
 }
 
 export function toClientDateTimeLocal(value: string | Date | null | undefined, timeZone = getClientTimeZone()): string {

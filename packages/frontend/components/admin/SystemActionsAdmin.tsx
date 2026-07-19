@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { formatStandardDate } from '@/utils/date-time';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -374,7 +375,7 @@ export default function SystemActionsAdmin() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-gray-600">
-                        {new Date(action.created_at).toLocaleDateString()}
+                        {formatStandardDate(action.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button

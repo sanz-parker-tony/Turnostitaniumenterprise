@@ -17,6 +17,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
+import { formatClientDateTime, formatStandardDate } from '@/utils/date-time';
 
 interface ShiftPlanRow {
   plan_id: string;
@@ -108,6 +110,59 @@ function getDefaultRange() {
   return { from: toIsoDate(from), to: toIsoDate(to) };
 }
 
+function getInitialRange(deepLinkSearch?: string) {
+  const fallback = getDefaultRange();
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return fallback;
+  const date = new URLSearchParams(deepLinkSearch ?? window.location.search).get('date') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < fallback.from) return fallback;
+  return { from: date, to: date };
+}
+
+function getDeepLinkShiftPlan(deepLinkSearch?: string): ShiftPlanRow | null {
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return null;
+  const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+  const requestId = params.get('request_id');
+  const requestedMode = params.get('mode');
+  const shouldOpen = params.get('open_popup') === '1' || Boolean(requestId || requestedMode);
+  const shiftDate = params.get('date') || '';
+  if (!shouldOpen || !shiftDate) return null;
+
+  const shiftId = params.get('current_shift_id') || '';
+  return {
+    plan_id: '',
+    shift_date: shiftDate,
+    company_id: '',
+    company_name: null,
+    shift_id: shiftId,
+    original_shift_id: shiftId,
+    original_shift_name: null,
+    original_shift_short_name: null,
+    shift_name: 'Cargando turno asignado…',
+    shift_short_name: null,
+    start_time: null,
+    work_minutes: null,
+    shift_icon_key: null,
+    shift_bg_color: null,
+    shift_text_color: null,
+    open_request_id: requestId,
+    open_request_shift_date: shiftDate,
+    open_request_reason: params.get('reason'),
+    open_request_support_document_name: null,
+    open_request_support_document_mime: null,
+    open_requested_shift_id: params.get('requested_shift_id'),
+    open_requested_shift_name: null,
+    open_requested_shift_short_name: null,
+    open_request_status_key: null,
+    open_request_status_label: null,
+  };
+}
+
+function getDeepLinkShiftDialogMode(deepLinkSearch?: string): RequestDialogMode {
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return 'create';
+  const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+  return params.get('request_id') || params.get('mode') === 'view' ? 'view' : 'create';
+}
+
 function addDays(isoDate: string, days: number): string {
   const base = new Date(`${isoDate}T00:00:00`);
   if (!Number.isFinite(base.getTime())) return isoDate;
@@ -124,17 +179,11 @@ function diffDaysInclusive(fromIso: string, toIso: string): number {
 }
 
 function formatDateShort(value: string) {
-  const dateOnly = String(value || '').slice(0, 10);
-  const date = new Date(`${dateOnly}T00:00:00`);
-  if (!Number.isFinite(date.getTime())) return value;
-  return date.toLocaleDateString('es-EC', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  return formatStandardDate(value);
 }
 
 function formatDateLong(value: string) {
-  const dateOnly = String(value || '').slice(0, 10);
-  const date = new Date(`${dateOnly}T00:00:00`);
-  if (!Number.isFinite(date.getTime())) return value;
-  return date.toLocaleDateString('es-EC', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+  return formatStandardDate(value);
 }
 
 function shortRequestId(value: string | null | undefined): string {
@@ -144,10 +193,7 @@ function shortRequestId(value: string | null | undefined): string {
 }
 
 function formatDateTime(value: string | null) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleString('es-EC');
+  return formatClientDateTime(value);
 }
 
 function statusClass(statusKey: string | null | undefined) {
@@ -209,13 +255,21 @@ function formatShiftLabel(shift?: Pick<AvailableShiftRow, 'shift_name' | 'shift_
   return shift.shift_short_name ? `${shift.shift_name} (${shift.shift_short_name})` : shift.shift_name;
 }
 
-export default function KioskShiftChange() {
+type KioskShiftChangeProps = {
+  deepLinkSearch?: string;
+  onPopupClose?: () => void;
+};
+
+export default function KioskShiftChange({
+  deepLinkSearch,
+  onPopupClose,
+}: KioskShiftChangeProps = {}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
-  const [rangeTo, setRangeTo] = useState(getDefaultRange().to);
+  const [rangeFrom, setRangeFrom] = useState(() => getInitialRange(deepLinkSearch).from);
+  const [rangeTo, setRangeTo] = useState(() => getInitialRange(deepLinkSearch).to);
   const minFromDate = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -227,15 +281,19 @@ export default function KioskShiftChange() {
   const [availableShifts, setAvailableShifts] = useState<AvailableShiftRow[]>([]);
   const [shiftChanges, setShiftChanges] = useState<ShiftChangeRow[]>([]);
 
-  const [selectedPlan, setSelectedPlan] = useState<ShiftPlanRow | null>(null);
-  const [dialogMode, setDialogMode] = useState<RequestDialogMode>('create');
+  const [selectedPlan, setSelectedPlan] = useState<ShiftPlanRow | null>(() => getDeepLinkShiftPlan(deepLinkSearch));
+  const [dialogMode, setDialogMode] = useState<RequestDialogMode>(() => getDeepLinkShiftDialogMode(deepLinkSearch));
   const [selectedRequest, setSelectedRequest] = useState<ShiftChangeRow | null>(null);
   const [requestedShiftId, setRequestedShiftId] = useState('');
   const [draftRequestedShiftByDate, setDraftRequestedShiftByDate] = useState<Record<string, string>>({});
-  const [reason, setReason] = useState('');
+  const [reason, setReason] = useState(() => {
+    if (deepLinkSearch === undefined && typeof window === 'undefined') return '';
+    return new URLSearchParams(deepLinkSearch ?? window.location.search).get('reason') || '';
+  });
   const [supportFile, setSupportFile] = useState<File | null>(null);
   const [clearSupportDocument, setClearSupportDocument] = useState(false);
   const requestCellClickTimers = useRef<Record<string, number>>({});
+  const deepLinkHandled = useRef(false);
 
   const fileToBase64 = (file: File) =>
     new Promise<string>((resolve, reject) => {
@@ -335,6 +393,10 @@ export default function KioskShiftChange() {
 
   const loadShiftChanges = async () => {
     const qs = new URLSearchParams();
+    const linkedRequestId = deepLinkSearch !== undefined || typeof window !== 'undefined'
+      ? new URLSearchParams(deepLinkSearch ?? window.location.search).get('request_id')
+      : null;
+    if (linkedRequestId) qs.set('request_id', linkedRequestId);
     qs.set('from', rangeFrom);
     qs.set('to', rangeTo);
     const payload = await request(`/kiosk/my-shift-changes?${qs.toString()}`);
@@ -494,6 +556,37 @@ export default function KioskShiftChange() {
     setReason('');
   };
 
+  useEffect(() => {
+    if (loading || deepLinkHandled.current || (deepLinkSearch === undefined && typeof window === 'undefined')) return;
+
+    const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+    const mode = params.get('mode');
+    const requestId = params.get('request_id');
+    const shiftDate = params.get('date') || '';
+    if (!mode && !requestId) return;
+
+    deepLinkHandled.current = true;
+    if (requestId) {
+      const existing = shiftChanges.find((row) => row.id === requestId);
+      if (!existing) {
+        toast.error('No se encontró la solicitud de turno vinculada con esta incidencia');
+        return;
+      }
+      openRequestFromHistory(existing);
+      setDialogMode('view');
+      return;
+    }
+
+    if (mode !== 'create') return;
+    const plan = shifts.find((row) => row.shift_date === shiftDate);
+    if (!plan) {
+      toast.error('No existe un turno futuro asignado para precargar esta solicitud');
+      return;
+    }
+    beginRequest(plan, params.get('requested_shift_id') || '');
+    setReason(params.get('reason') || `Solicitud relacionada con el turno asignado para ${shiftDate}.`);
+  }, [loading, shifts, shiftChanges, deepLinkSearch]);
+
   const cycleDraftRequestedShift = (plan: ShiftPlanRow) => {
     const options = getSelectableShiftsForPlan(plan);
     if (options.length === 0) {
@@ -548,8 +641,8 @@ export default function KioskShiftChange() {
     beginRequest(plan, initialRequestedShiftId);
   };
 
-  const closeDialog = () => {
-    if (saving) return;
+  const finishDialog = (force: boolean) => {
+    if (saving && !force) return;
     setSelectedPlan(null);
     setSelectedRequest(null);
     setDialogMode('create');
@@ -557,7 +650,10 @@ export default function KioskShiftChange() {
     setReason('');
     setSupportFile(null);
     setClearSupportDocument(false);
+    onPopupClose?.();
   };
+
+  const closeDialog = () => finishDialog(false);
 
   const submitRequest = async () => {
     if (!selectedPlan) return;
@@ -583,8 +679,8 @@ export default function KioskShiftChange() {
         }),
       });
       toast.success('Solicitud de cambio enviada');
-      closeDialog();
-      await Promise.all([loadShifts(), loadShiftChanges()]);
+      finishDialog(true);
+      if (!onPopupClose) await Promise.all([loadShifts(), loadShiftChanges()]);
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo enviar la solicitud');
     } finally {
@@ -615,8 +711,8 @@ export default function KioskShiftChange() {
         }),
       });
       toast.success('Solicitud actualizada');
-      closeDialog();
-      await Promise.all([loadShifts(), loadShiftChanges()]);
+      finishDialog(true);
+      if (!onPopupClose) await Promise.all([loadShifts(), loadShiftChanges()]);
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo actualizar la solicitud');
     } finally {
@@ -634,8 +730,8 @@ export default function KioskShiftChange() {
         method: 'DELETE',
       });
       toast.success('Solicitud eliminada');
-      closeDialog();
-      await Promise.all([loadShifts(), loadShiftChanges()]);
+      finishDialog(true);
+      if (!onPopupClose) await Promise.all([loadShifts(), loadShiftChanges()]);
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo eliminar la solicitud');
     } finally {
@@ -727,7 +823,8 @@ export default function KioskShiftChange() {
             <div>
               <CardTitle>Turnos y Solicitud de Cambio</CardTitle>
               <CardDescription>
-                Visualiza tus turnos por fecha. En la fila inferior, haz clic para alternar el turno y doble clic para solicitar el cambio.
+                <span className="md:hidden">Compara el turno asignado con el solicitado en columnas paralelas para cada fecha.</span>
+                <span className="hidden md:inline">Visualiza tus turnos por fecha. En la fila inferior, haz clic para alternar el turno y doble clic para solicitar el cambio.</span>
               </CardDescription>
             </div>
           </div>
@@ -736,13 +833,11 @@ export default function KioskShiftChange() {
           <div className="flex w-full flex-wrap items-end gap-2">
             <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
               <span className="block text-slate-700">Desde</span>
-              <input
-                type="date"
+              <StandardDateInput
                 value={rangeFrom}
                 min={minFromDate}
                 max={rangeTo || undefined}
-                onChange={(event) => {
-                  const nextFrom = event.target.value;
+                onValueChange={(nextFrom) => {
                   setRangeFrom(nextFrom);
                   if (!nextFrom) return;
                   const maxTo = addDays(nextFrom, 6);
@@ -757,13 +852,11 @@ export default function KioskShiftChange() {
             </label>
             <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
               <span className="block text-slate-700">Hasta</span>
-              <input
-                type="date"
+              <StandardDateInput
                 value={rangeTo}
                 min={rangeFrom || minFromDate}
                 max={rangeFrom ? addDays(rangeFrom, 6) : addDays(minFromDate, 6)}
-                onChange={(event) => {
-                  const nextTo = event.target.value;
+                onValueChange={(nextTo) => {
                   if (!rangeFrom) {
                     setRangeTo(nextTo);
                     return;
@@ -802,8 +895,179 @@ export default function KioskShiftChange() {
             <div className="py-14 flex justify-center">
               <Loader2 className="w-7 h-7 animate-spin text-blue-600" />
             </div>
+          ) : dateColumns.length === 0 ? (
+            <div className="rounded-xl border py-10 text-center text-slate-600">No hay turnos en el rango seleccionado.</div>
           ) : (
-            <div className="rounded-xl border overflow-x-auto overscroll-x-contain">
+            <>
+              <div className="space-y-3 md:hidden">
+                <div className="grid grid-cols-2 gap-2 px-1 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <span>Turno asignado</span>
+                  <span>Turno solicitado</span>
+                </div>
+
+                {dateColumns.map((dateIso) => {
+                  const plan = shiftsByDate.get(dateIso);
+                  const row = openShiftChangesByDate.get(dateIso);
+                  const draftShiftId = draftRequestedShiftByDate[dateIso];
+                  const draftShift = draftShiftId ? availableShiftById.get(draftShiftId) || null : null;
+                  const planVisual = plan
+                    ? getShiftVisual(plan.shift_icon_key, plan.shift_bg_color, plan.shift_text_color)
+                    : null;
+                  const PlanIcon = planVisual?.Icon || CircleDot;
+                  const requested = row ? availableShiftById.get(row.requested_shift_id) : null;
+                  const requestVisual = row
+                    ? getShiftVisual(
+                        requested?.shift_icon_key || null,
+                        requested?.shift_bg_color || '#EEF2FF',
+                        requested?.shift_text_color || '#1E293B'
+                      )
+                    : draftShift
+                    ? getShiftVisual(
+                        draftShift.shift_icon_key,
+                        draftShift.shift_bg_color,
+                        draftShift.shift_text_color
+                      )
+                    : null;
+                  const RequestIcon = requestVisual?.Icon || ArrowLeftRight;
+
+                  return (
+                    <section key={`mobile-${dateIso}`} className="overflow-hidden rounded-xl border bg-white shadow-sm">
+                      <div className="border-b bg-slate-100 px-3 py-2 text-center text-xs font-semibold text-slate-700">
+                        {formatDateShort(dateIso)}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 p-2">
+                        {plan ? (
+                          <button
+                            type="button"
+                            onClick={() => beginRequest(plan)}
+                            className="flex min-h-[142px] min-w-0 flex-col items-center justify-center rounded-xl border p-2 text-center transition active:scale-[0.99]"
+                            style={{ backgroundColor: planVisual?.bgColor, color: planVisual?.textColor }}
+                            aria-label={`${formatDateLong(dateIso)}. Turno asignado: ${formatShiftLabel(plan)}. Abrir solicitud de cambio.`}
+                          >
+                            <PlanIcon className="h-5 w-5" style={{ color: planVisual?.iconColor }} />
+                            <span className="mt-1 max-w-full truncate text-xs font-semibold">
+                              {plan.shift_short_name || plan.shift_name}
+                            </span>
+                            <span className="mt-1 line-clamp-2 text-[10px] opacity-80">{plan.shift_name}</span>
+                            <span className="mt-1 text-[10px] font-medium opacity-80">{plan.start_time || '-'}</span>
+                            <span className="mt-2 rounded-md border border-current/20 bg-white/60 px-2 py-1 text-[10px] font-semibold">
+                              Solicitar cambio
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="min-h-[142px] rounded-xl border border-dashed bg-slate-50" />
+                        )}
+
+                        {row ? (
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openRequestFromHistory(row)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openRequestFromHistory(row);
+                              }
+                            }}
+                            className="flex min-h-[142px] min-w-0 cursor-pointer flex-col items-center justify-center rounded-xl border p-2 text-center transition active:scale-[0.99]"
+                            style={{ backgroundColor: requestVisual?.bgColor, color: requestVisual?.textColor }}
+                            aria-label={`Abrir solicitud ${shortRequestId(row.id)} para ${formatDateLong(dateIso)}`}
+                          >
+                            <RequestIcon className="h-5 w-5" style={{ color: requestVisual?.iconColor }} />
+                            <span className="mt-1 max-w-full truncate text-xs font-semibold">
+                              {row.requested_shift_short_name || row.requested_shift_name || '-'}
+                            </span>
+                            <span className="mt-1 text-[10px] font-semibold text-indigo-700">{shortRequestId(row.id)}</span>
+                            <span className={`mt-1 text-[10px] font-semibold ${statusTextClass(row.request_status_key || row.request_status_label)}`}>
+                              {row.request_status_label || row.request_status_key || '-'}
+                            </span>
+                            <div className="mt-2 flex items-center justify-center gap-1">
+                              <span className="rounded-md border border-current/20 bg-white/70 px-2 py-1 text-[10px] font-semibold">
+                                Ver detalle
+                              </span>
+                              {row.support_document_name ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void openSupportDocument(row.id);
+                                  }}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-white/80 text-rose-700"
+                                  aria-label={`Abrir PDF adjunto ${row.support_document_name}`}
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                              {isPendingShiftChangeStatus(row.request_status_key, row.request_status_label) ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void deleteOpenRequestFromRow(row);
+                                  }}
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 bg-white/80 text-rose-700"
+                                  aria-label="Eliminar solicitud pendiente"
+                                  disabled={saving}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : plan ? (
+                          <div
+                            className="flex min-h-[142px] min-w-0 flex-col items-center justify-center rounded-xl border p-2 text-center"
+                            style={
+                              requestVisual
+                                ? { backgroundColor: requestVisual.bgColor, color: requestVisual.textColor }
+                                : { backgroundColor: '#F1F5F9', color: '#475569' }
+                            }
+                          >
+                            <RequestIcon className="h-5 w-5" style={{ color: requestVisual?.iconColor }} />
+                            <span className="mt-1 max-w-full truncate text-xs font-semibold">
+                              {draftShift?.shift_short_name || draftShift?.shift_name || 'Elegir turno'}
+                            </span>
+                            <span className="mt-1 line-clamp-2 text-[10px] opacity-80">
+                              {draftShift?.shift_name || 'Selecciona una opción'}
+                            </span>
+                            <div className="mt-2 grid w-full grid-cols-2 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => cycleDraftRequestedShift(plan)}
+                                className="rounded-md border border-current/25 bg-white/75 px-1 py-1 text-[10px] font-semibold"
+                              >
+                                {draftShift ? 'Cambiar' : 'Elegir'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openDraftRequest(plan)}
+                                disabled={!draftShift}
+                                className="rounded-md border border-blue-300 bg-blue-600 px-1 py-1 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                Solicitar
+                              </button>
+                              {draftShift ? (
+                                <button
+                                  type="button"
+                                  onClick={() => clearDraftRequestedShift(dateIso)}
+                                  className="col-span-2 inline-flex items-center justify-center gap-1 rounded-md border border-rose-200 bg-white/80 px-1 py-1 text-[10px] font-semibold text-rose-700"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                  Deshacer
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="min-h-[142px] rounded-xl border border-dashed bg-slate-50" />
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+
+              <div className="hidden rounded-xl border overflow-x-auto overscroll-x-contain md:block">
               {dateColumns.length === 0 ? (
                 <div className="py-10 text-center text-slate-600">No hay turnos en el rango seleccionado.</div>
               ) : (
@@ -861,12 +1125,13 @@ export default function KioskShiftChange() {
                   </tbody>
                 </table>
               )}
-            </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="hidden md:block">
         <CardHeader className="p-4 sm:p-6">
           <CardTitle>Solicitudes abiertas de cambio</CardTitle>
           <CardDescription>
@@ -1224,7 +1489,7 @@ export default function KioskShiftChange() {
               Cancelar
             </Button>
             {dialogMode === 'create' ? (
-              <Button onClick={() => void submitRequest()} disabled={saving}>
+              <Button onClick={() => void submitRequest()} disabled={saving || loading}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 Enviar solicitud
               </Button>

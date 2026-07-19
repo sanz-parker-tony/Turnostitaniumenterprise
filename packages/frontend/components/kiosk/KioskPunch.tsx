@@ -630,12 +630,12 @@ export default function KioskPunch() {
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-2 sm:space-y-5">
-      <Card className="border-2 border-slate-300 shadow-lg">
+      <Card className="w-full max-w-[964px] border-2 border-slate-300 shadow-lg">
         <CardHeader className="hidden pb-2 sm:block">
           <CardTitle className="text-2xl">Marcar</CardTitle>
           <CardDescription>Interfaz de marcacion tipo reloj biometrico.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-2 p-2 sm:space-y-5 sm:p-6">
+        <CardContent className="timeclock-layout-container space-y-2 p-2 sm:space-y-5 sm:p-6">
           <div className="rounded-xl border bg-slate-50 p-2 sm:p-4 flex flex-wrap items-center justify-between gap-2 sm:gap-4">
             <div className="hidden min-w-0 items-center gap-3 sm:flex">
               <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-blue-600 text-white flex items-center justify-center overflow-hidden">
@@ -684,15 +684,15 @@ export default function KioskPunch() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 sm:gap-4 lg:grid-cols-[220px_440px_220px] items-start">
-            <div className="order-2 hidden space-y-3 lg:order-1 lg:block">
+          <div className="timeclock-punch-layout grid grid-cols-2 items-start gap-2 sm:gap-4">
+            <div className="timeclock-left-actions order-2 hidden space-y-3">
               {renderKeyButton(1)}
               {renderKeyButton(2)}
               {renderKeyButton(3)}
               {renderKeyButton(4)}
             </div>
 
-            <div className="order-1 col-span-2 space-y-2 sm:space-y-3 lg:order-2 lg:col-span-1">
+            <div className="timeclock-camera-column order-1 col-span-2 space-y-2 sm:space-y-3">
               <div className="h-[40dvh] min-h-[220px] overflow-hidden bg-black sm:h-[312px] sm:min-h-0">
                 <video
                   ref={videoRef}
@@ -703,15 +703,19 @@ export default function KioskPunch() {
                 />
               </div>
 
+              <div className="timeclock-below-actions grid grid-cols-6 gap-1.5 sm:hidden">
+                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber, true))}
+              </div>
+              <div className="timeclock-below-actions hidden grid-cols-6 gap-2 sm:grid">
+                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber))}
+              </div>
+
               <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-14 sm:h-24 px-3 sm:px-5 py-2 sm:py-3 flex items-center justify-between shadow-inner">
                 <div className="leading-tight">
                   <p className="text-slate-300 text-[11px] uppercase tracking-widest">Hora del sistema</p>
                   <p className="hidden text-slate-300 text-[13px] capitalize sm:block">{formatClientDate(clockNow)}</p>
                 </div>
                 <p className="text-2xl sm:text-5xl font-semibold tabular-nums leading-none">{formatClientTime(clockNow)}</p>
-              </div>
-              <div className="grid grid-cols-6 gap-1.5 lg:hidden">
-                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber, true))}
               </div>
               {lastMarkAt && (
                 <p className="hidden text-xs text-slate-600 sm:block">
@@ -730,10 +734,10 @@ export default function KioskPunch() {
               </p>
             </div>
 
-            <div className="order-3 hidden space-y-3 lg:order-3 lg:block">
+            <div className="timeclock-right-actions order-3 hidden space-y-3">
               {renderKeyButton(5)}
               {renderKeyButton(6)}
-              <div className="hidden h-[216px] lg:block" />
+              <div className="hidden h-[216px]" />
             </div>
           </div>
 

@@ -16,6 +16,7 @@ const TIME_PUNCH_STATUS_GROUP_KEY = 'TIME_PUNCH_STATUS';
 const REQUEST_STATUS_GROUP_KEY = 'REQUEST_STATUS';
 const ABSENCE_DISCOUNT_METHOD_GROUP_KEY = 'JUSTIFY_METHOD';
 const EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY = 'DEC';
+const EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS = ['INC', 'LFH', 'TNL'];
 const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
@@ -548,12 +549,12 @@ async function saveRequestSupportDocument(params: {
 
   const buffer = parseBase64Document(params.fileBase64);
   if (!buffer.length) {
-    throw new Error('El documento PDF estÃ¡ vacÃ­o');
+    throw new Error('El documento PDF está vacío');
   }
 
   const config = await resolveSupportDocumentStorageConfig(params.tenantId);
   if (buffer.length > config.maxSizeBytes) {
-    throw new Error(`El documento supera el tamaÃ±o mÃ¡ximo permitido (${config.maxSizeBytes} bytes)`);
+    throw new Error(`El documento supera el tamaño máximo permitido (${config.maxSizeBytes} bytes)`);
   }
 
   const safeName = sanitizeSupportDocumentName(params.fileName);
@@ -2300,12 +2301,15 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
               jt.attendance_event_id IS NULL
               OR (
                 event_direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-                AND UPPER(event_direction.lookup_key) = $2
+                AND (
+                  UPPER(event_direction.lookup_key) = $2
+                  OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($3::text[])
+                )
               )
             )
           ORDER BY jt.justification_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
       ),
       pool.query(
         `
@@ -2321,10 +2325,13 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
           WHERE ae.tenant_id = $1
             AND ae.is_active = true
             AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND UPPER(direction.lookup_key) = $2
+            AND (
+              UPPER(direction.lookup_key) = $2
+              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($3::text[])
+            )
           ORDER BY ae.event_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
+        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
       ),
       pool.query(
         `
@@ -2408,18 +2415,23 @@ router.get('/requests', async (req: Request, res: Response) => {
 
     const from = normalizeNullableText(req.query.from);
     const to = normalizeNullableText(req.query.to);
+    const requestId = normalizeNullableText(req.query.request_id);
     const statusId = normalizeNullableText(req.query.request_status_id);
     const includeInactive = String(req.query.include_inactive || '').toLowerCase() === 'true';
 
     const params: any[] = [context.tenant_id, context.employee_id, includeInactive];
     let whereExtra = '';
 
-    if (from) {
+    if (requestId) {
+      params.push(requestId);
+      whereExtra += ` AND r.id = $${params.length}::uuid`;
+    }
+    if (from && !requestId) {
       if (!isIsoDate(from)) return res.status(400).json({ error: 'from debe tener formato YYYY-MM-DD' });
       params.push(`${from}T00:00:00`);
       whereExtra += ` AND r.start_datetime >= $${params.length}::timestamptz`;
     }
-    if (to) {
+    if (to && !requestId) {
       if (!isIsoDate(to)) return res.status(400).json({ error: 'to debe tener formato YYYY-MM-DD' });
       params.push(`${to}T23:59:59`);
       whereExtra += ` AND r.end_datetime <= $${params.length}::timestamptz`;
@@ -2607,7 +2619,7 @@ router.post('/requests', async (req: Request, res: Response) => {
     }
     if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
       return res.status(400).json({
-        error: 'Los datos de aprobaciÃ³n solo pueden ser definidos por Supervisor/RRHH',
+        error: 'Los datos de aprobación solo pueden ser definidos por Supervisor/RRHH',
       });
     }
 
@@ -2623,10 +2635,10 @@ router.post('/requests', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'El rango de fechas es invalido' });
     }
     if (req.body?.start_time !== undefined && startTime === null) {
-      return res.status(400).json({ error: 'start_time invalido (use HH:mm o hh:mm AM/PM)' });
+      return res.status(400).json({ error: 'start_time inválido (use HH24:MI:SS)' });
     }
     if (req.body?.end_time !== undefined && endTime === null) {
-      return res.status(400).json({ error: 'end_time invalido (use HH:mm o hh:mm AM/PM)' });
+      return res.status(400).json({ error: 'end_time inválido (use HH24:MI:SS)' });
     }
 
     const [justificationResult, eventResult] = await Promise.all([
@@ -2653,10 +2665,13 @@ router.post('/requests', async (req: Request, res: Response) => {
             AND ae.tenant_id = $2
             AND ae.is_active = true
             AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND UPPER(direction.lookup_key) = $3
+            AND (
+              UPPER(direction.lookup_key) = $3
+              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($4::text[])
+            )
           LIMIT 1
         `,
-        [attendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
+        [attendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
       ),
     ]);
 
@@ -2818,7 +2833,7 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     }
     if (req.body?.approval_notes !== undefined || req.body?.approved_by !== undefined || req.body?.approved_at !== undefined) {
       return res.status(400).json({
-        error: 'Los datos de aprobaciÃ³n solo pueden ser modificados por Supervisor/RRHH',
+        error: 'Los datos de aprobación solo pueden ser modificados por Supervisor/RRHH',
       });
     }
 
@@ -2872,10 +2887,10 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'El rango de fechas es invalido' });
     }
     if (req.body?.start_time !== undefined && startTime === null) {
-      return res.status(400).json({ error: 'start_time invalido (use HH:mm o hh:mm AM/PM)' });
+      return res.status(400).json({ error: 'start_time inválido (use HH24:MI:SS)' });
     }
     if (req.body?.end_time !== undefined && endTime === null) {
-      return res.status(400).json({ error: 'end_time invalido (use HH:mm o hh:mm AM/PM)' });
+      return res.status(400).json({ error: 'end_time inválido (use HH24:MI:SS)' });
     }
 
     const effectiveAttendanceEventId = attendanceEventId ?? current.attendance_event_id;
@@ -2892,10 +2907,13 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
             AND ae.tenant_id = $2
             AND ae.is_active = true
             AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND UPPER(direction.lookup_key) = $3
+            AND (
+              UPPER(direction.lookup_key) = $3
+              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($4::text[])
+            )
           LIMIT 1
         `,
-        [effectiveAttendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY]
+        [effectiveAttendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
       );
       if (!validation.rows[0]) return res.status(400).json({ error: 'attendance_event_id no valido' });
     }
@@ -3176,7 +3194,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         ? ['REJECTED', 'RECHAZADO']
         : status === 'ALL'
         ? []
-        : ['ENVIADA', 'ENVIADO', 'SENT', 'PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N'];
+        : ['ENVIADA', 'ENVIADO', 'SENT', 'PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN'];
 
     const params: any[] = [userContext.tenant_id, managedEmployeeIds];
     let whereStatus = '';
@@ -3479,7 +3497,7 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         : await resolveRequestStatusIdByKeys(userContext.tenant_id, ['REJECTED', 'RECHAZADO']);
 
     if (!targetStatusId) {
-      return res.status(400).json({ error: 'No existe estado de decisiÃ³n configurado' });
+      return res.status(400).json({ error: 'No existe estado de decisión configurado' });
     }
 
     const updated = await pool.query(
@@ -3619,7 +3637,6 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
       normalizeNullableText(req.query.to) ||
       normalizeNullableText(req.query.date_to) ||
       normalizeNullableText(req.query.end_date);
-
     const now = new Date();
     const defaultFrom = getTomorrowIsoDate();
     const defaultTo = toLocalIsoDate(new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000));
@@ -3636,7 +3653,7 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'to no puede ser menor que from' });
     }
     if (diffDaysInclusive(dateFrom, dateTo) > 7) {
-      return res.status(400).json({ error: 'El rango mÃ¡ximo permitido es de 7 dÃ­as' });
+      return res.status(400).json({ error: 'El rango máximo permitido es de 7 días' });
     }
 
     const shiftsResult = await pool.query(
@@ -3697,7 +3714,7 @@ router.get('/my-shifts', async (req: Request, res: Response) => {
             AND r.employee_id = p.employee_id
             AND r.shift_date = p.shift_date
             AND r.is_active = true
-            AND UPPER(COALESCE(rsv.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N')
+            AND UPPER(COALESCE(rsv.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
           ORDER BY r.created_at DESC
           LIMIT 1
         ) latest_req ON true
@@ -3919,6 +3936,7 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
       normalizeNullableText(req.query.to) ||
       normalizeNullableText(req.query.date_to) ||
       normalizeNullableText(req.query.end_date);
+    const requestId = normalizeNullableText(req.query.request_id);
 
     const now = new Date();
     const defaultFrom = getTomorrowIsoDate();
@@ -3926,18 +3944,27 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
     const dateFrom = fromQuery || defaultFrom;
     const dateTo = toQuery || defaultTo;
 
-    if (!isIsoDate(dateFrom) || !isIsoDate(dateTo)) {
+    if (!requestId && (!isIsoDate(dateFrom) || !isIsoDate(dateTo))) {
       return res.status(400).json({ error: 'from/to deben tener formato YYYY-MM-DD' });
     }
-    if (dateFrom < defaultFrom) {
+    if (!requestId && dateFrom < defaultFrom) {
       return res.status(400).json({ error: `from no puede ser menor a ${defaultFrom}` });
     }
-    if (dateTo < dateFrom) {
+    if (!requestId && dateTo < dateFrom) {
       return res.status(400).json({ error: 'to no puede ser menor que from' });
     }
-    if (diffDaysInclusive(dateFrom, dateTo) > 7) {
-      return res.status(400).json({ error: 'El rango mÃ¡ximo permitido es de 7 dÃ­as' });
+    if (!requestId && diffDaysInclusive(dateFrom, dateTo) > 7) {
+      return res.status(400).json({ error: 'El rango máximo permitido es de 7 días' });
     }
+
+    const requestFilter = requestId
+      ? 'AND r.id = $3::uuid'
+      : `AND r.shift_date >= $3::date
+          AND r.shift_date <= $4::date
+          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')`;
+    const queryParams = requestId
+      ? [context.tenant_id, context.employee_id, requestId]
+      : [context.tenant_id, context.employee_id, dateFrom, dateTo];
 
     const result = await pool.query(
       `
@@ -3981,12 +4008,10 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = $2::uuid
           AND r.is_active = true
-          AND r.shift_date >= $3::date
-          AND r.shift_date <= $4::date
-          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
+          ${requestFilter}
         ORDER BY r.shift_date DESC, r.created_at DESC
       `,
-      [context.tenant_id, context.employee_id, dateFrom, dateTo]
+      queryParams
     );
 
     return res.status(200).json({
@@ -4021,7 +4046,7 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
     }
     const tomorrow = getTomorrowIsoDate();
     if (shiftDate < tomorrow) {
-      return res.status(400).json({ error: `No se puede solicitar cambio para turnos pasados. Fecha mÃ­nima: ${tomorrow}` });
+      return res.status(400).json({ error: `No se puede solicitar cambio para turnos pasados. Fecha mínima: ${tomorrow}` });
     }
     if (!requestedShiftId) {
       return res.status(400).json({ error: 'requested_shift_id es obligatorio' });
@@ -4087,7 +4112,7 @@ router.post('/request-shift-change', async (req: Request, res: Response) => {
           AND r.employee_id = $2::uuid
           AND r.shift_date = $3::date
           AND r.is_active = true
-          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÃ“N')
+          AND UPPER(COALESCE(st.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN')
         ORDER BY r.created_at DESC
         LIMIT 1
       `,
@@ -4639,7 +4664,7 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
     const current = currentResult.rows[0];
     if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
     if (!isEditableShiftChangeStatusKey(current.request_status_key)) {
-      return res.status(400).json({ error: 'La solicitud ya tiene decisiÃ³n final' });
+      return res.status(400).json({ error: 'La solicitud ya tiene decisión final' });
     }
 
     const approvedStatusId = await resolveLookupValueIdByGroupKeyAndKeys(
@@ -4888,6 +4913,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
 
     const from = normalizeNullableText(req.query.from) || normalizeNullableText(req.query.date_from);
     const to = normalizeNullableText(req.query.to) || normalizeNullableText(req.query.date_to);
+    const requestId = normalizeNullableText(req.query.request_id);
     const status = String(req.query.status || 'ALL').trim().toUpperCase();
     const statusKeys =
       status === 'PENDING'
@@ -4902,15 +4928,19 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
 
     const params: any[] = [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID];
     let whereExtra = '';
-    if (from && isIsoDate(from)) {
+    if (requestId) {
+      params.push(requestId);
+      whereExtra += ` AND r.id = $${params.length}::uuid`;
+    }
+    if (from && isIsoDate(from) && !requestId) {
       params.push(`${from}T00:00:00`);
       whereExtra += ` AND r.created_at >= $${params.length}::timestamptz`;
     }
-    if (to && isIsoDate(to)) {
+    if (to && isIsoDate(to) && !requestId) {
       params.push(`${to}T23:59:59`);
       whereExtra += ` AND r.created_at <= $${params.length}::timestamptz`;
     }
-    if (statusKeys.length > 0) {
+    if (statusKeys.length > 0 && !requestId) {
       params.push(statusKeys);
       whereExtra += ` AND UPPER(COALESCE(st.lookup_key, '')) = ANY($${params.length}::text[])`;
     }

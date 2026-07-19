@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { formatClientDateTime } from '@/utils/date-time';
 import { Search, CheckCircle, XCircle, Clock, User, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -229,14 +230,7 @@ export default function ApprovalsPage() {
     });
   }, [requests, searchTerm]);
 
-  const formatDateTime = (value: string) =>
-    new Date(value).toLocaleString('es-EC', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  const displayDateTime = (value: string) => formatClientDateTime(value);
 
   if (!canUseApprovals) {
     return (
@@ -329,9 +323,9 @@ export default function ApprovalsPage() {
                           <div className="space-y-2 text-sm">
                             <div className="flex items-center gap-2 text-gray-700">
                               <Calendar className="w-4 h-4 text-gray-400" />
-                              <span>Desde: <strong>{formatDateTime(row.start_datetime)}</strong></span>
+                              <span>Desde: <strong>{displayDateTime(row.start_datetime)}</strong></span>
                               <span>·</span>
-                              <span>Hasta: <strong>{formatDateTime(row.end_datetime)}</strong></span>
+                              <span>Hasta: <strong>{displayDateTime(row.end_datetime)}</strong></span>
                             </div>
                             <div className="text-gray-700">
                               Justificación: <strong>{row.justification_name || '-'}</strong>
@@ -355,7 +349,7 @@ export default function ApprovalsPage() {
                                   <strong>{row.approved_by_display_name || row.approved_by_username || row.approved_by || '-'}</strong>
                                 </div>
                                 <div className="text-gray-700">
-                                  Fecha de revisión: <strong>{formatDateTime(row.approved_at)}</strong>
+                                  Fecha de revisión: <strong>{displayDateTime(row.approved_at)}</strong>
                                 </div>
                                 <div className="text-gray-700">
                                   Observación revisión: <strong>{row.approval_notes || '-'}</strong>
@@ -368,7 +362,7 @@ export default function ApprovalsPage() {
                               </div>
                             ) : null}
                             <div className="text-xs text-gray-500 pt-2">
-                              Solicitado el {formatDateTime(row.created_at)}
+                              Solicitado el {displayDateTime(row.created_at)}
                             </div>
                           </div>
 

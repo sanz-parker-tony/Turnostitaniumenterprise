@@ -17,6 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { StandardDateInput, StandardTimeInput } from '@/components/ui/standard-date-input';
+import { formatStandardDate } from '@/utils/date-time';
 import { 
   ClipboardList, 
   Send, 
@@ -156,12 +158,7 @@ export default function KioskPermission() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return formatStandardDate(dateString);
   };
 
   const getStatusBadge = (statusCode: string) => {
@@ -202,11 +199,10 @@ export default function KioskPermission() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="permissionDate">Fecha</Label>
-              <Input
+              <StandardDateInput
                 id="permissionDate"
-                type="date"
                 value={permissionDate}
-                onChange={(e) => setPermissionDate(e.target.value)}
+                onValueChange={setPermissionDate}
                 min={new Date().toISOString().split('T')[0]}
               />
             </div>
@@ -214,21 +210,19 @@ export default function KioskPermission() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="startTime">Hora Inicio</Label>
-                <Input
+                <StandardTimeInput
                   id="startTime"
-                  type="time"
                   value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
+                  onValueChange={setStartTime}
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="endTime">Hora Fin</Label>
-                <Input
+                <StandardTimeInput
                   id="endTime"
-                  type="time"
                   value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
+                  onValueChange={setEndTime}
                 />
               </div>
             </div>

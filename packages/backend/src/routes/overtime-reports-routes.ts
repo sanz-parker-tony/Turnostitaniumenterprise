@@ -232,7 +232,14 @@ function buildOvertimeCtes(
         sw.work_minutes,
         holiday.id AS holiday_id,
         holiday.holiday_name,
-        (holiday.id IS NOT NULL AND COALESCE(holiday.is_working_day, false) = false) AS is_non_working_day
+        (
+          (holiday.id IS NOT NULL AND COALESCE(holiday.is_working_day, false) = false)
+          OR vacation.id IS NOT NULL
+          OR CASE
+            WHEN sc.id IS NOT NULL THEN COALESCE(blocks.regular_block_count, 0) = 0
+            ELSE COALESCE(s.work_minutes, 0) <= 0
+          END
+        ) AS is_non_working_day
       FROM assigned_employees ae
       INNER JOIN public.employee_shift_plans p
         ON p.employee_id = ae.employee_id
@@ -271,8 +278,33 @@ function buildOvertimeCtes(
         LIMIT 1
       ) holiday ON true
       LEFT JOIN LATERAL (
+        SELECT request.id
+        FROM public.employee_absence_requests request
+        INNER JOIN public.lookup_values request_status
+          ON request_status.id = request.request_status_id
+        LEFT JOIN public.lookup_values justify_method
+          ON justify_method.id = request.justify_method_id
+        LEFT JOIN public.justification_types justification_type
+          ON justification_type.id = request.justification_type_id
+        WHERE request.tenant_id = p.tenant_id
+          AND request.employee_id = ae.employee_id
+          AND request.is_active = true
+          AND UPPER(COALESCE(request_status.lookup_key, request_status.lookup_label, '')) IN ('APPROVED', 'APROBADO', 'APROBADA')
+          AND p.shift_date BETWEEN request.start_datetime::date
+              AND COALESCE(request.end_datetime, request.start_datetime)::date
+          AND (
+            UPPER(COALESCE(justify_method.lookup_key, '')) IN ('VACACIONES', 'VACATION')
+            OR UPPER(COALESCE(justification_type.justification_name, '')) LIKE '%VACAC%'
+          )
+        LIMIT 1
+      ) vacation ON true
+      LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS active_block_count,
+          COUNT(*) FILTER (
+            WHERE b.is_break = false
+              AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
+          )::int AS regular_block_count,
           COALESCE(MIN(b.start_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_start_minutes,
           COALESCE(MAX(b.end_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_end_minutes,
           COALESCE(SUM(b.end_minutes - b.start_minutes) FILTER (WHERE b.is_break = false AND b.block_type IN ('ORDINARIA', 'NOCTURNA')), 0)::int AS work_minutes
@@ -348,12 +380,14 @@ function buildOvertimeCtes(
         END::int AS absence_minutes,
         CASE
           WHEN pl.work_minutes > 0
+           AND pl.is_non_working_day = false
            AND COALESCE(ps.first_entry, ps.first_punch) > pl.shift_date::timestamp + (pl.work_start_minutes || ' minutes')::interval + (pl.entry_grace_minutes || ' minutes')::interval
             THEN GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(ps.first_entry, ps.first_punch) - (pl.shift_date::timestamp + (pl.work_start_minutes || ' minutes')::interval + (pl.entry_grace_minutes || ' minutes')::interval))) / 60)::int
           ELSE 0
         END::int AS late_minutes,
         CASE
           WHEN pl.work_minutes > 0
+           AND pl.is_non_working_day = false
            AND COALESCE(ps.last_exit, ps.last_punch) IS NOT NULL
            AND COALESCE(ps.last_exit, ps.last_punch) < pl.shift_date::timestamp + (pl.work_end_minutes || ' minutes')::interval - (pl.exit_grace_minutes || ' minutes')::interval
             THEN GREATEST(0, EXTRACT(EPOCH FROM ((pl.shift_date::timestamp + (pl.work_end_minutes || ' minutes')::interval - (pl.exit_grace_minutes || ' minutes')::interval) - COALESCE(ps.last_exit, ps.last_punch))) / 60)::int
@@ -505,10 +539,30 @@ function buildOvertimeCtes(
         CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.night_minutes, 0) END::int AS night_25_minutes,
         CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_50_minutes, 0) END::int AS extra_50_minutes,
         CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_100_minutes, 0) END::int AS extra_100_minutes,
-        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN attendance.worked_minutes ELSE 0 END::int AS non_working_100_minutes,
-        GREATEST(attendance.absence_minutes, COALESCE(approved_leave_by_day.approved_absence_minutes, 0))::int AS absence_minutes,
-        GREATEST(attendance.late_minutes, COALESCE(approved_leave_by_day.approved_late_minutes, 0))::int AS late_minutes,
-        GREATEST(attendance.early_departure_minutes, COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0))::int AS early_departure_minutes,
+        CASE
+          WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN
+            CASE
+              WHEN attendance.constructor_id IS NOT NULL THEN
+                COALESCE(surcharge_by_day.ordinary_minutes, 0)
+                + COALESCE(surcharge_by_day.night_minutes, 0)
+                + COALESCE(surcharge_by_day.extra_50_minutes, 0)
+                + COALESCE(surcharge_by_day.extra_100_minutes, 0)
+              ELSE attendance.worked_minutes
+            END
+          ELSE 0
+        END::int AS non_working_100_minutes,
+        CASE
+          WHEN attendance.is_non_working_day THEN 0
+          ELSE GREATEST(attendance.absence_minutes, COALESCE(approved_leave_by_day.approved_absence_minutes, 0))
+        END::int AS absence_minutes,
+        CASE
+          WHEN attendance.is_non_working_day THEN 0
+          ELSE GREATEST(attendance.late_minutes, COALESCE(approved_leave_by_day.approved_late_minutes, 0))
+        END::int AS late_minutes,
+        CASE
+          WHEN attendance.is_non_working_day THEN 0
+          ELSE GREATEST(attendance.early_departure_minutes, COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0))
+        END::int AS early_departure_minutes,
         0::int AS lunch_excess_minutes,
         0::int AS unjustified_incident_minutes,
         COALESCE(approved_leave_by_day.unpaid_leave_minutes, 0)::int AS unpaid_leave_minutes
@@ -902,6 +956,7 @@ router.get('/anomalies', async (req: Request, res: Response) => {
             ON pl.employee_id = pbd.employee_id
            AND pl.shift_date = pbd.issue_date
            AND pl.work_minutes > 0
+           AND pl.is_non_working_day = false
           WHERE NOT EXISTS (
               SELECT 1
               FROM public.employee_time_punches p

@@ -237,3 +237,40 @@ html {
     line-height: 1.25rem;
   }
 }
+
+/*
+ * El reloj conserva sus controles laterales mientras el propio panel dispone
+ * del ancho necesario. El cambio de distribucion depende del panel y no del
+ * viewport completo, porque el menu lateral tambien reduce el espacio util.
+ */
+.timeclock-layout-container {
+  container-type: inline-size;
+}
+
+@container (min-width: 912px) {
+  .timeclock-punch-layout {
+    grid-template-columns: 220px 440px 220px;
+  }
+
+  .timeclock-left-actions,
+  .timeclock-right-actions {
+    display: block;
+  }
+
+  .timeclock-left-actions {
+    order: 1;
+  }
+
+  .timeclock-camera-column {
+    grid-column: span 1 / span 1;
+    order: 2;
+  }
+
+  .timeclock-right-actions {
+    order: 3;
+  }
+
+  .timeclock-below-actions {
+    display: none;
+  }
+}

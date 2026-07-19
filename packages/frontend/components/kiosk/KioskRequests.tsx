@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { buildApiUrl } from '../../utils/api-config';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Loader2, Pencil, Plus, RefreshCw, Trash2, FileText, Eye, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
@@ -15,6 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { StandardDateInput, StandardTimeInput } from '@/components/ui/standard-date-input';
+import { formatClientDateTime, formatStandardDate } from '@/utils/date-time';
 
 interface CatalogItem {
   id: string;
@@ -113,6 +115,26 @@ function getDefaultRange() {
   return { from: toIsoDate(from), to: toIsoDate(to) };
 }
 
+function getInitialRange(deepLinkSearch?: string) {
+  const fallback = getDefaultRange();
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return fallback;
+  const date = new URLSearchParams(deepLinkSearch ?? window.location.search).get('date') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fallback;
+  return { from: date, to: date };
+}
+
+function getDeepLinkPopupState(deepLinkSearch?: string): { open: boolean; mode: PopupMode } {
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return { open: false, mode: 'create' };
+  const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+  const requestId = params.get('request_id');
+  const requestedMode = params.get('mode');
+  const open = params.get('open_popup') === '1' || Boolean(requestId || requestedMode);
+  return {
+    open,
+    mode: requestId || requestedMode === 'view' ? 'view' : 'create',
+  };
+}
+
 function normalizeStatus(statusKey: string | null | undefined, statusLabel: string | null | undefined): string {
   return String(statusKey || statusLabel || '').trim().toUpperCase();
 }
@@ -137,17 +159,11 @@ function statusBadgeClass(statusKey: string | null | undefined, statusLabel: str
 }
 
 function formatDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleString('es-EC');
+  return formatClientDateTime(value);
 }
 
 function formatDateOnly(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '-';
-  return date.toLocaleDateString('es-EC');
+  return formatStandardDate(value);
 }
 
 function normalizeTimeForApi(value: string): string {
@@ -155,7 +171,7 @@ function normalizeTimeForApi(value: string): string {
   if (!raw) return '';
   const strict24 = raw.match(/^([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/);
   if (strict24) {
-    return `${String(Number(strict24[1])).padStart(2, '0')}:${strict24[2]}`;
+    return `${String(Number(strict24[1])).padStart(2, '0')}:${strict24[2]}:${strict24[3] || '00'}`;
   }
   const ampm = raw.match(/^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/);
   if (ampm) {
@@ -172,7 +188,15 @@ function normalizeTimeForApi(value: string): string {
   return raw;
 }
 
-export default function KioskRequests() {
+type KioskRequestsProps = {
+  deepLinkSearch?: string;
+  onPopupClose?: () => void;
+};
+
+export default function KioskRequests({
+  deepLinkSearch,
+  onPopupClose,
+}: KioskRequestsProps = {}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -184,11 +208,12 @@ export default function KioskRequests() {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [employee, setEmployee] = useState<EmployeeContext | null>(null);
 
-  const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
-  const [rangeTo, setRangeTo] = useState(getDefaultRange().to);
+  const [rangeFrom, setRangeFrom] = useState(() => getInitialRange(deepLinkSearch).from);
+  const [rangeTo, setRangeTo] = useState(() => getInitialRange(deepLinkSearch).to);
+  const deepLinkHandled = useRef(false);
 
-  const [popupOpen, setPopupOpen] = useState(false);
-  const [popupMode, setPopupMode] = useState<PopupMode>('create');
+  const [popupOpen, setPopupOpen] = useState(() => getDeepLinkPopupState(deepLinkSearch).open);
+  const [popupMode, setPopupMode] = useState<PopupMode>(() => getDeepLinkPopupState(deepLinkSearch).mode);
   const [popupForm, setPopupForm] = useState<PopupForm>({
     id: null,
     justification_type_id: '',
@@ -232,10 +257,14 @@ export default function KioskRequests() {
     };
 
     let { response, payload } = await doFetch(token);
-    if (response.status === 401 && session?.access_token && token !== session.access_token) {
-      const retry = await doFetch(session.access_token);
-      response = retry.response;
-      payload = retry.payload;
+    if (response.status === 401) {
+      const api = createClient();
+      const { data: { session: refreshedSession } } = await api.auth.getSession();
+      if (refreshedSession?.access_token && token !== refreshedSession.access_token) {
+        const retry = await doFetch(refreshedSession.access_token);
+        response = retry.response;
+        payload = retry.payload;
+      }
     }
     if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
     return payload;
@@ -292,6 +321,10 @@ export default function KioskRequests() {
 
   const loadRows = async () => {
     const qs = new URLSearchParams();
+    const linkedRequestId = deepLinkSearch !== undefined || typeof window !== 'undefined'
+      ? new URLSearchParams(deepLinkSearch ?? window.location.search).get('request_id')
+      : null;
+    if (linkedRequestId) qs.set('request_id', linkedRequestId);
     if (rangeFrom) qs.set('from', rangeFrom);
     if (rangeTo) qs.set('to', rangeTo);
     const payload = await request(`/kiosk/requests?${qs.toString()}`);
@@ -424,13 +457,75 @@ export default function KioskRequests() {
     setPopupOpen(true);
   };
 
-  const closePopup = () => {
-    if (saving) return;
+  useEffect(() => {
+    if (loading || deepLinkHandled.current || (deepLinkSearch === undefined && typeof window === 'undefined')) return;
+
+    const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+    const mode = params.get('mode');
+    const requestId = params.get('request_id');
+    if (!mode && !requestId) return;
+
+    deepLinkHandled.current = true;
+    if (requestId) {
+      const requestRow = rows.find((row) => row.id === requestId);
+      if (!requestRow) {
+        toast.error('No se encontró la justificación vinculada con esta incidencia');
+        return;
+      }
+      openViewPopup(requestRow);
+      return;
+    }
+
+    if (mode !== 'create') return;
+    const incidentDate = params.get('date') || '';
+    const incidentStartDate = params.get('start_date') || incidentDate;
+    const incidentEndDate = params.get('end_date') || incidentDate;
+    const incidentStartTime = params.get('start_time') || '';
+    const incidentEndTime = params.get('end_time') || '';
+    const attendanceEventId = params.get('attendance_event_id') || '';
+    const requestedJustificationId = params.get('justification_type_id') || '';
+    const incidentName = params.get('incident') || 'Incidencia de asistencia';
+    const minutes = Number(params.get('minutes') || 0);
+    const detail = params.get('detail') || '';
+    const matchingJustification = justifications.find((item) =>
+      item.id === requestedJustificationId || item.attendance_event_id === attendanceEventId
+    );
+    const selectedJustification = matchingJustification || justifications[0];
+    const selectedEventId = attendanceEventId || selectedJustification?.attendance_event_id || events[0]?.id || '';
+    const notes = [
+      `Justificación de ${incidentName} detectada el ${incidentDate || 'día seleccionado'}.`,
+      minutes > 0 ? `Tiempo asociado: ${Math.round(minutes)} minutos.` : '',
+      detail,
+    ].filter(Boolean).join(' ');
+
+    setPopupMode('create');
+    setPopupForm({
+      id: null,
+      justification_type_id: selectedJustification?.id || '',
+      attendance_event_id: selectedEventId,
+      justify_method_id: discountMethods[0]?.id || '',
+      start_date: incidentStartDate,
+      end_date: incidentEndDate,
+      start_time: incidentStartTime,
+      end_time: incidentEndTime,
+      notes,
+    });
+    setSupportFile(null);
+    setRemoveSupport(false);
+    setEditingRequestSnapshot(null);
+    setPopupOpen(true);
+  }, [loading, rows, justifications, events, discountMethods, deepLinkSearch]);
+
+  const finishPopup = (force: boolean) => {
+    if (saving && !force) return;
     setPopupOpen(false);
     setSupportFile(null);
     setRemoveSupport(false);
     setEditingRequestSnapshot(null);
+    onPopupClose?.();
   };
+
+  const closePopup = () => finishPopup(false);
 
   const onChangeJustification = (value: string) => {
     const found = justifications.find((item) => item.id === value);
@@ -449,10 +544,10 @@ export default function KioskRequests() {
     if (!popupForm.end_date) return toast.error('Selecciona fecha de fin');
     if (supportFile && supportFile.type !== 'application/pdf') return toast.error('El respaldo debe ser PDF');
 
-    const resolvedStartTime = normalizeTimeForApi(popupForm.start_time || '00:00') || '00:00';
-    const resolvedEndTime = normalizeTimeForApi(popupForm.end_time || '23:59') || '23:59';
-    const startDateTimeIso = new Date(`${popupForm.start_date}T${resolvedStartTime}:00`).toISOString();
-    const endDateTimeIso = new Date(`${popupForm.end_date}T${resolvedEndTime}:00`).toISOString();
+    const resolvedStartTime = normalizeTimeForApi(popupForm.start_time || '00:00:00') || '00:00:00';
+    const resolvedEndTime = normalizeTimeForApi(popupForm.end_time || '23:59:59') || '23:59:59';
+    const startDateTimeIso = new Date(`${popupForm.start_date}T${resolvedStartTime}`).toISOString();
+    const endDateTimeIso = new Date(`${popupForm.end_date}T${resolvedEndTime}`).toISOString();
 
     setSaving(true);
     try {
@@ -498,8 +593,8 @@ export default function KioskRequests() {
         toast.success('Justificación actualizada');
       }
 
-      closePopup();
-      await loadRows();
+      finishPopup(true);
+      if (!onPopupClose) await loadRows();
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo guardar la solicitud');
     } finally {
@@ -546,19 +641,17 @@ export default function KioskRequests() {
             <div className="flex w-full flex-wrap items-end gap-2 lg:w-auto">
               <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Desde</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeFrom}
-                  onChange={(event) => setRangeFrom(event.target.value)}
+                  onValueChange={setRangeFrom}
                   className="h-10 w-full rounded-md border px-3"
                 />
               </label>
               <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Hasta</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeTo}
-                  onChange={(event) => setRangeTo(event.target.value)}
+                  onValueChange={setRangeTo}
                   className="h-10 w-full rounded-md border px-3"
                 />
               </label>
@@ -732,13 +825,9 @@ export default function KioskRequests() {
 
       <Dialog open={popupOpen} onOpenChange={(open) => (!open ? closePopup() : null)}>
         <DialogContent
-          className={
-            popupMode === 'view'
-              ? 'h-[94svh] w-[96vw] !max-w-[1280px] grid-rows-[auto_minmax(0,1fr)_auto] !overflow-hidden p-3 sm:!max-w-[1280px] sm:p-5'
-              : 'w-[96vw] !max-w-[1280px] sm:!max-w-[1280px]'
-          }
+          className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] !max-w-[680px] grid-rows-[auto_minmax(0,1fr)_auto] !overflow-hidden p-3 sm:max-h-[calc(100svh-2rem)] sm:!max-w-[680px] sm:p-5"
         >
-          <DialogHeader>
+          <DialogHeader className="shrink-0 pr-7 text-left">
             <DialogTitle>
               {popupMode === 'create'
                 ? 'Nueva justificación de ausentismo'
@@ -747,14 +836,16 @@ export default function KioskRequests() {
                 : 'Detalle de justificación de ausentismo'}
             </DialogTitle>
             <DialogDescription>
-              No se muestran campos de estado/aprobación porque esos datos los gestiona el Supervisor.
+              {loading
+                ? 'Cargando la información de la incidencia…'
+                : 'No se muestran campos de estado/aprobación porque esos datos los gestiona el Supervisor.'}
             </DialogDescription>
           </DialogHeader>
 
           {popupMode === 'view' && editingRequestSnapshot ? (
-            <div className="min-h-0 overflow-hidden rounded-xl border bg-slate-50 p-2.5 sm:p-4">
-              <dl className="grid h-full min-h-0 grid-cols-2 content-start gap-2 text-xs sm:grid-cols-4 sm:text-sm">
-                <div className="col-span-2 flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 sm:col-span-4">
+            <div className="min-h-0 overflow-y-auto overscroll-contain rounded-xl border bg-slate-50 p-2.5 pr-1 sm:p-4 sm:pr-2">
+              <dl className="grid min-h-0 grid-cols-1 content-start gap-2 pr-1 text-xs min-[420px]:grid-cols-2 sm:grid-cols-4 sm:text-sm">
+                <div className="col-span-1 flex items-center justify-between gap-2 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-4">
                   <dt className="font-medium text-slate-500">Estado</dt>
                   <dd>
                     <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${statusBadgeClass(editingRequestSnapshot.request_status_key, editingRequestSnapshot.request_status_label)}`}>
@@ -764,11 +855,11 @@ export default function KioskRequests() {
                 </div>
                 <div className="rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Justificación</dt>
-                  <dd className="mt-0.5 truncate font-semibold text-slate-900">{editingRequestSnapshot.justification_name || '-'}</dd>
+                  <dd className="mt-0.5 break-words font-semibold text-slate-900">{editingRequestSnapshot.justification_name || '-'}</dd>
                 </div>
                 <div className="rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Evento</dt>
-                  <dd className="mt-0.5 truncate font-semibold text-slate-900">{editingRequestSnapshot.event_name || '-'}</dd>
+                  <dd className="mt-0.5 break-words font-semibold text-slate-900">{editingRequestSnapshot.event_name || '-'}</dd>
                 </div>
                 <div className="rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Desde</dt>
@@ -778,9 +869,9 @@ export default function KioskRequests() {
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Hasta</dt>
                   <dd className="mt-0.5 text-slate-800">{formatDateTime(editingRequestSnapshot.end_datetime)}</dd>
                 </div>
-                <div className="col-span-2 rounded-lg bg-white px-2.5 py-2 sm:col-span-4">
+                <div className="col-span-1 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-4">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Método de descuento</dt>
-                  <dd className="mt-0.5 truncate text-slate-800">
+                  <dd className="mt-0.5 break-words text-slate-800">
                     {editingRequestSnapshot.justify_method_label ||
                       (editingRequestSnapshot.justify_method_id
                         ? discountMethodLabelById.get(editingRequestSnapshot.justify_method_id)
@@ -789,33 +880,33 @@ export default function KioskRequests() {
                       '-'}
                   </dd>
                 </div>
-                <div className="col-span-2 min-h-0 rounded-lg bg-white px-2.5 py-2 sm:col-span-4">
+                <div className="col-span-1 min-h-0 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-4">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Motivo / notas</dt>
-                  <dd className="mt-0.5 max-h-16 overflow-y-auto whitespace-pre-wrap break-words text-slate-800">
+                  <dd className="mt-0.5 whitespace-pre-wrap break-words text-slate-800">
                     {editingRequestSnapshot.notes || '-'}
                   </dd>
                 </div>
-                <div className="col-span-2 rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
+                <div className="col-span-1 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Aprobador</dt>
-                  <dd className="mt-0.5 truncate text-slate-800">
+                  <dd className="mt-0.5 break-words text-slate-800">
                     {editingRequestSnapshot.approved_by_display_name ||
                       editingRequestSnapshot.approved_by_username ||
                       editingRequestSnapshot.approved_by ||
                       'Pendiente'}
                   </dd>
                 </div>
-                <div className="col-span-2 rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
+                <div className="col-span-1 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Fecha de decisión</dt>
                   <dd className="mt-0.5 text-slate-800">{formatDateTime(editingRequestSnapshot.approved_at)}</dd>
                 </div>
-                <div className="col-span-2 rounded-lg bg-white px-2.5 py-2 sm:col-span-4">
+                <div className="col-span-1 rounded-lg bg-white px-2.5 py-2 min-[420px]:col-span-2 sm:col-span-4">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Resolución</dt>
-                  <dd className="mt-0.5 max-h-12 overflow-y-auto whitespace-pre-wrap break-words text-slate-800">
+                  <dd className="mt-0.5 whitespace-pre-wrap break-words text-slate-800">
                     {editingRequestSnapshot.approval_notes || 'Sin resolución todavía.'}
                   </dd>
                 </div>
                 {editingRequestSnapshot.support_document_name ? (
-                  <div className="col-span-2 sm:col-span-4">
+                  <div className="col-span-1 min-[420px]:col-span-2 sm:col-span-4">
                     <Button
                       size="sm"
                       variant="outline"
@@ -831,14 +922,14 @@ export default function KioskRequests() {
             </div>
           ) : null}
 
-          <div className={popupMode === 'view' ? 'hidden' : 'grid grid-cols-1 md:grid-cols-12 gap-3'}>
-            <label className="text-sm space-y-1 md:col-span-4">
+          <div className={popupMode === 'view' ? 'hidden' : 'grid min-h-0 grid-cols-1 content-start gap-3 overflow-y-auto overscroll-contain pr-1 pb-3 sm:grid-cols-2'}>
+            <label className="min-w-0 space-y-1 text-sm">
               <span className="block text-slate-700">Tipo de justificación</span>
               <select
                 value={popupForm.justification_type_id}
                 onChange={(event) => onChangeJustification(event.target.value)}
-                className="h-10 border rounded-md px-3 w-full"
-                disabled={saving || popupMode === 'view'}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
               >
                 <option value="">Seleccionar...</option>
                 {justifications.map((item) => (
@@ -847,13 +938,13 @@ export default function KioskRequests() {
               </select>
             </label>
 
-            <label className="text-sm space-y-1 md:col-span-4">
+            <label className="min-w-0 space-y-1 text-sm">
               <span className="block text-slate-700">Evento de asistencia</span>
               <select
                 value={popupForm.attendance_event_id}
                 onChange={(event) => setPopupForm((prev) => ({ ...prev, attendance_event_id: event.target.value }))}
-                className="h-10 border rounded-md px-3 w-full"
-                disabled={saving || popupMode === 'view'}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
               >
                 <option value="">Seleccionar...</option>
                 {events.map((item) => (
@@ -862,13 +953,13 @@ export default function KioskRequests() {
               </select>
             </label>
 
-            <label className="text-sm space-y-1 md:col-span-4">
+            <label className="min-w-0 space-y-1 text-sm sm:col-span-2">
               <span className="block text-slate-700">Método de descuento</span>
               <select
                 value={popupForm.justify_method_id}
                 onChange={(event) => setPopupForm((prev) => ({ ...prev, justify_method_id: event.target.value }))}
-                className="h-10 border rounded-md px-3 w-full"
-                disabled={saving || popupMode === 'view'}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
               >
                 <option value="">Seleccionar...</option>
                 {allowedDiscountMethods.map((item) => (
@@ -877,72 +968,64 @@ export default function KioskRequests() {
               </select>
             </label>
 
-            <label className="text-sm space-y-1 md:col-span-4">
+            <label className="min-w-0 space-y-1 text-sm">
               <span className="block text-slate-700">Desde</span>
-              <input
-                type="date"
+              <StandardDateInput
                 value={popupForm.start_date}
-                onChange={(event) => setPopupForm((prev) => ({ ...prev, start_date: event.target.value }))}
-                className="h-10 border rounded-md px-3 w-full"
-                disabled={saving || popupMode === 'view'}
+                onValueChange={(value) => setPopupForm((prev) => ({ ...prev, start_date: value }))}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
               />
             </label>
-
-            <label className="text-sm space-y-1 md:col-span-4">
+            <label className="min-w-0 space-y-1 text-sm">
               <span className="block text-slate-700">Hasta</span>
-              <input
-                type="date"
+              <StandardDateInput
                 value={popupForm.end_date}
-                onChange={(event) => setPopupForm((prev) => ({ ...prev, end_date: event.target.value }))}
-                className="h-10 border rounded-md px-3 w-full"
-                disabled={saving || popupMode === 'view'}
+                onValueChange={(value) => setPopupForm((prev) => ({ ...prev, end_date: value }))}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
               />
             </label>
 
-            <div className="grid grid-cols-1 gap-2 min-[420px]:grid-cols-2 md:col-span-4">
-              <label className="text-sm space-y-1">
-                <span className="block text-slate-700">Hora inicio</span>
-                <input
-                  type="time"
-                  value={popupForm.start_time}
-                  onChange={(event) => setPopupForm((prev) => ({ ...prev, start_time: event.target.value }))}
-                  className="h-10 border rounded-md px-3 w-full"
-                  disabled={saving || popupMode === 'view'}
-                />
-              </label>
+            <label className="min-w-0 space-y-1 text-sm">
+              <span className="block text-slate-700">Hora inicio</span>
+              <StandardTimeInput
+                value={popupForm.start_time}
+                onValueChange={(value) => setPopupForm((prev) => ({ ...prev, start_time: value }))}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
+              />
+            </label>
+            <label className="min-w-0 space-y-1 text-sm">
+              <span className="block text-slate-700">Hora fin</span>
+              <StandardTimeInput
+                value={popupForm.end_time}
+                onValueChange={(value) => setPopupForm((prev) => ({ ...prev, end_time: value }))}
+                className="h-10 w-full min-w-0 rounded-md border px-3"
+                disabled={saving}
+              />
+            </label>
 
-              <label className="text-sm space-y-1">
-                <span className="block text-slate-700">Hora fin</span>
-                <input
-                  type="time"
-                  value={popupForm.end_time}
-                  onChange={(event) => setPopupForm((prev) => ({ ...prev, end_time: event.target.value }))}
-                  className="h-10 border rounded-md px-3 w-full"
-                  disabled={saving || popupMode === 'view'}
-                />
-              </label>
-            </div>
-
-            <label className="text-sm space-y-1 md:col-span-12">
+            <label className="min-w-0 space-y-1 text-sm sm:col-span-2">
               <span className="block text-slate-700">Motivo / notas</span>
               <textarea
                 value={popupForm.notes}
                 onChange={(event) => setPopupForm((prev) => ({ ...prev, notes: event.target.value }))}
-                className="border rounded-md px-3 py-2 w-full min-h-[90px]"
-                disabled={saving || popupMode === 'view'}
+                className="min-h-[110px] w-full rounded-md border px-3 py-2"
+                disabled={saving}
               />
             </label>
 
-            <label className="text-sm space-y-1 md:col-span-12">
+            <label className="min-w-0 space-y-1 text-sm sm:col-span-2">
               <span className="block text-slate-700">Respaldo PDF (opcional)</span>
               <input
                 type="file"
                 accept="application/pdf"
                 onChange={(event) => setSupportFile(event.target.files?.[0] || null)}
-                className="block min-h-10 w-full max-w-full rounded-md border px-3 py-1 text-xs sm:text-sm"
-                disabled={saving || popupMode === 'view'}
+                className="block min-h-10 w-full min-w-0 max-w-full overflow-hidden rounded-md border px-2 py-1 text-xs file:mr-2 file:max-w-[55%] sm:px-3 sm:text-sm sm:file:max-w-none"
+                disabled={saving}
               />
-              <span className="text-xs text-slate-500">
+              <span className="block break-all text-xs text-slate-500">
                 {supportFile
                   ? `Nuevo archivo: ${supportFile.name}`
                   : editingRequestSnapshot?.support_document_name
@@ -952,7 +1035,7 @@ export default function KioskRequests() {
             </label>
 
             {popupMode === 'edit' && editingRequestSnapshot?.support_document_name ? (
-              <label className="md:col-span-12 inline-flex items-center gap-2 text-sm text-slate-700">
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
                 <input
                   type="checkbox"
                   checked={removeSupport}
@@ -962,34 +1045,9 @@ export default function KioskRequests() {
                 Quitar documento actual
               </label>
             ) : null}
-
-            {popupMode === 'view' ? (
-              <div className="md:col-span-12 rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700 space-y-1">
-                <div>
-                  Estado:{' '}
-                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${statusBadgeClass(editingRequestSnapshot?.request_status_key, editingRequestSnapshot?.request_status_label)}`}>
-                    {editingRequestSnapshot?.request_status_label || editingRequestSnapshot?.request_status_key || '-'}
-                  </span>
-                </div>
-                <div>Aprobador: {editingRequestSnapshot?.approved_by_display_name || editingRequestSnapshot?.approved_by_username || editingRequestSnapshot?.approved_by || '-'}</div>
-                <div>Fecha decisión: {formatDateTime(editingRequestSnapshot?.approved_at)}</div>
-                <div>Observación aprobación/rechazo: {editingRequestSnapshot?.approval_notes || '-'}</div>
-                <div>
-                  Respaldo:{' '}
-                  {editingRequestSnapshot?.support_document_name ? (
-                    <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs bg-white text-slate-700">
-                      <FileText className="w-3.5 h-3.5" />
-                      {editingRequestSnapshot.support_document_name}
-                    </span>
-                  ) : (
-                    '-'
-                  )}
-                </div>
-              </div>
-            ) : null}
           </div>
 
-          <DialogFooter className="flex-row justify-end gap-2">
+          <DialogFooter className="static bottom-auto mx-0 mb-0 shrink-0 flex-col-reverse gap-2 px-0 pt-3 pb-0 sm:mx-0 sm:mb-0 sm:flex-row sm:flex-wrap sm:px-0">
             {popupMode === 'view' && editingRequestSnapshot && isEditableStatus(editingRequestSnapshot.request_status_key, editingRequestSnapshot.request_status_label) ? (
               <>
                 <Button variant="outline" onClick={() => openEditPopup(editingRequestSnapshot)} disabled={saving}>
@@ -1013,7 +1071,7 @@ export default function KioskRequests() {
               {popupMode === 'view' ? 'Cerrar' : 'Cancelar'}
             </Button>
             {popupMode !== 'view' ? (
-              <Button onClick={() => void submitPopup()} disabled={saving}>
+              <Button onClick={() => void submitPopup()} disabled={saving || loading}>
                 {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                 {popupMode === 'create' ? 'Enviar solicitud' : 'Guardar cambios'}
               </Button>

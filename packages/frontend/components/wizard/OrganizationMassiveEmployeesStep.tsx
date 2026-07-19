@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronLeft, Download, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatClientTime24 } from '@/utils/date-time';
 import {
   EmployeeImportRow,
   downloadMigrationExport,
@@ -21,9 +22,7 @@ type OrganizationMassiveEmployeesStepProps = {
 };
 
 function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString();
+  return formatClientTime24(iso);
 }
 
 export default function OrganizationMassiveEmployeesStep({

@@ -21,6 +21,7 @@ import GridActionIconButton from '@/components/shared/GridActionIconButton';
 import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
+import { formatStandardDate } from '@/utils/date-time';
 
 const API = buildApiUrl('/actions-management');
 function getToken() {
@@ -266,7 +267,7 @@ export default function ActionsManagement() {
                     <tr key={row.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3"><span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded">{row.action_key}</span></td>
                       <td className="px-4 py-3 font-medium text-gray-900">{row.action_name}</td>
-                      <td className="px-4 py-3 text-gray-400 text-xs">{new Date(row.created_at).toLocaleDateString('es')}</td>
+                      <td className="px-4 py-3 text-gray-400 text-xs">{formatStandardDate(row.created_at)}</td>
                       <td className="px-4 py-3 text-center"><span className={row.is_active ? BADGE.active : BADGE.inactive}>{row.is_active ? 'Activa' : 'Inactiva'}</span></td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-center gap-1">

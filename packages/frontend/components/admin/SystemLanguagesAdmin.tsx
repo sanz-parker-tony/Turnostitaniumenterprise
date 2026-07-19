@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiClient } from '../../lib/api-client';
+import { formatStandardDate } from '../../utils/date-time';
 import { useAuth } from '../../contexts/AuthContext';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
@@ -311,7 +312,7 @@ export default function SystemLanguagesAdmin() {
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-gray-600">
-                        {lang.created_at ? new Date(lang.created_at).toLocaleDateString('es-EC') : 'N/A'}
+                        {lang.created_at ? formatStandardDate(lang.created_at) : 'N/A'}
                       </TableCell>
                       <TableCell className="text-right">
                         <GridActionIconButton

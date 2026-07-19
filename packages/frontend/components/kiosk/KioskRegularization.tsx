@@ -11,7 +11,7 @@
  */
 
 import { buildApiUrl } from '../../utils/api-config';
-import { formatClientTime24 } from '../../utils/date-time';
+import { formatClientTime24, formatStandardDate } from '../../utils/date-time';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
+import { StandardDateInput, StandardTimeInput } from '@/components/ui/standard-date-input';
 import { 
   FileEdit, 
   AlertTriangle, 
@@ -165,7 +166,7 @@ export default function KioskRegularization() {
         return;
       }
 
-      const requestedDatetime = `${selectedDate}T${selectedTime}:00`;
+      const requestedDatetime = `${selectedDate}T${selectedTime.length === 5 ? `${selectedTime}:00` : selectedTime}`;
 
       const response = await fetch(`${BASE_URL}/kiosk/request-regularization`, {
         method: 'POST',
@@ -208,12 +209,7 @@ export default function KioskRegularization() {
 
   // Formatear fecha
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
+    return formatStandardDate(dateString);
   };
 
   // Formatear hora
@@ -263,22 +259,20 @@ export default function KioskRegularization() {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="date">Fecha</Label>
-                <Input
+                <StandardDateInput
                   id="date"
-                  type="date"
                   value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
+                  onValueChange={setSelectedDate}
                   max={new Date().toISOString().split('T')[0]}
                 />
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="time">Hora</Label>
-                <Input
+                <StandardTimeInput
                   id="time"
-                  type="time"
                   value={selectedTime}
-                  onChange={(e) => setSelectedTime(e.target.value)}
+                  onValueChange={setSelectedTime}
                 />
               </div>
             </div>

@@ -6,7 +6,7 @@
 'use client';
 
 import { buildApiUrl } from '../utils/api-config';
-import { formatClientTime24 } from '../utils/date-time';
+import { formatClientDateTime, formatClientTime24, formatStandardDate } from '../utils/date-time';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
@@ -63,9 +63,18 @@ import {
   Network,
   CalendarDays,
   CircleDot,
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpRight,
+  Eye,
 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import SystemAdminPageHeader from './shared/SystemAdminPageHeader';
+import KioskRequests from './kiosk/KioskRequests';
+import KioskShiftChange from './kiosk/KioskShiftChange';
+import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
+import { StandardDateInput, StandardTimeInput } from './ui/standard-date-input';
 
 const RoleInfo = ({ roleKey }: { roleKey: string | undefined }) => {
   const roleInfo: Record<string, { title: string; description: string; icon: any; color: string }> = {
@@ -126,23 +135,33 @@ function statusPillClass(statusKey: string | null | undefined): string {
 }
 
 function formatDate(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-  return date.toLocaleDateString('es-EC', { year: 'numeric', month: '2-digit', day: '2-digit' });
+  return formatStandardDate(value);
+}
+
+function isPendingIncident(incident: any): boolean {
+  if (!incident?.request_id) return true;
+  const status = String(incident?.request_status_key || incident?.request_status_label || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+  if (!status) return true;
+  return [
+    'PENDING',
+    'PENDIENTE',
+    'IN_REVIEW',
+    'EN_REVISION',
+    'ENVIADA',
+    'ENVIADO',
+    'SENT',
+    'REQUESTED',
+    'SOLICITADO',
+    'SOLICITADA',
+  ].includes(status) || status.includes('PENDIENT');
 }
 
 function formatDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString('es-EC', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return formatClientDateTime(value);
 }
 
 function formatShiftTime(value: string | null | undefined): string {
@@ -174,6 +193,13 @@ function requestStatusVisual(statusKey: string | null | undefined) {
     return { bg_color: '#FFE4E6', text_color: '#9F1239', labelClass: 'bg-rose-100 text-rose-700 border-rose-200' };
   }
   return { bg_color: '#F1F5F9', text_color: '#475569', labelClass: 'bg-slate-100 text-slate-700 border-slate-200' };
+}
+
+function toLocalIsoDate(value: Date): string {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 const EMPLOYEE_CALENDAR_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -307,7 +333,21 @@ function EmployeeMonthlyEventsCalendar({
   );
 }
 
-function EmployeeHome({ payload }: { payload: any }) {
+function EmployeeHome({
+  payload,
+  rangeLoading,
+  onRangeChange,
+  onIncidentFlowClosed,
+}: {
+  payload: any;
+  rangeLoading: boolean;
+  onRangeChange: (from: string, to: string) => void;
+  onIncidentFlowClosed: () => void;
+}) {
+  const [incidentFlow, setIncidentFlow] = useState<{
+    target: 'TIME_PUNCH_REQUEST' | 'SHIFT_CHANGE' | 'JUSTIFICATION';
+    search: string;
+  } | null>(null);
   const employee = payload?.employee || {};
   const employeeCompany = payload?.employee_company || {};
   const recentPunches = (payload?.recent_punches || []) as any[];
@@ -322,6 +362,9 @@ function EmployeeHome({ payload }: { payload: any }) {
   const module5HolidayEventsRaw = (payload?.calendars?.modules?.module5_holidays || []) as EmployeeCalendarEvent[];
   const plusEvents = (payload?.attendance_impact?.plus_events || []) as any[];
   const minusEvents = (payload?.attendance_impact?.minus_events || []) as any[];
+  const incidents = (payload?.incidents || []) as any[];
+  const pendingIncidents = incidents.filter(isPendingIncident);
+  const selectedRange = payload?.range || {};
   const plusDisplayEvents = plusEvents.length > 0 ? plusEvents : [
     { key: 'ordinary_minutes', label: 'Jornada ordinaria', total_hours: 0 },
     { key: 'night_minutes', label: 'Jornada nocturna', total_hours: 0 },
@@ -333,18 +376,10 @@ function EmployeeHome({ payload }: { payload: any }) {
     { key: 'absence_minutes', label: 'Faltas', total_hours: 0 },
     { key: 'early_departure_minutes', label: 'Salidas anticipadas', total_hours: 0 },
   ];
-  const mobileSurchargeRows = [
-    { key: 'ordinary_minutes', label: 'Jornada ordinaria', valueClass: 'text-emerald-600', bgClass: 'bg-emerald-50/60' },
-    { key: 'night_minutes', label: 'Jornada nocturna', valueClass: 'text-emerald-700', bgClass: 'bg-emerald-50' },
-    { key: 'extra_50_minutes', label: 'Horas Extras 50%', valueClass: 'text-emerald-700', bgClass: 'bg-emerald-100/70' },
-    { key: 'extra_100_minutes', label: 'Horas Extras 100%', valueClass: 'text-emerald-800', bgClass: 'bg-emerald-200/70' },
-  ].map((config) => ({
-    ...config,
-    total_hours: Number(plusDisplayEvents.find((row) => row?.key === config.key)?.total_hours || 0),
-  }));
-
   const maxPlusHours = plusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
   const maxMinusHours = minusDisplayEvents.reduce((acc, row) => Math.max(acc, Number(row?.total_hours || 0)), 0) || 1;
+  const totalWorkedHours = plusDisplayEvents.reduce((sum, row) => sum + Number(row?.total_hours || 0), 0);
+  const totalNotWorkedHours = minusDisplayEvents.reduce((sum, row) => sum + Number(row?.total_hours || 0), 0);
   const toDateKey = (value: string | null | undefined) => String(value || '').slice(0, 10);
   const toPunchHourLabel = (row: any): string => {
     const subtitle = String(row?.subtitle || '').trim();
@@ -455,42 +490,277 @@ function EmployeeHome({ payload }: { payload: any }) {
   };
   const requestDate = (row: any) => row?.start_datetime || row?.shift_date || row?.request_datetime || row?.created_at;
 
+  const shiftRangeByWeek = (direction: -1 | 1) => {
+    const from = new Date(`${selectedRange.from}T00:00:00`);
+    if (Number.isNaN(from.getTime())) return;
+    const targetMonday = new Date(from);
+    targetMonday.setDate(targetMonday.getDate() - ((targetMonday.getDay() + 6) % 7));
+    targetMonday.setDate(targetMonday.getDate() + direction * 7);
+    const targetSunday = new Date(targetMonday);
+    targetSunday.setDate(targetSunday.getDate() + 6);
+    const today = new Date(`${selectedRange.today}T00:00:00`);
+    if (direction > 0 && targetMonday > today) return;
+    const targetTo = targetSunday > today ? today : targetSunday;
+    onRangeChange(toLocalIsoDate(targetMonday), toLocalIsoDate(targetTo));
+  };
+
+  const goToCurrentWeek = () => {
+    const today = new Date(`${selectedRange.today}T00:00:00`);
+    if (Number.isNaN(today.getTime())) return;
+    const monday = new Date(today);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    onRangeChange(toLocalIsoDate(monday), selectedRange.today);
+  };
+
+  const openIncidentJustification = (incident: any) => {
+    const params = new URLSearchParams();
+    params.set('open_popup', '1');
+    params.set('source', 'my-incidents');
+    if (incident?.incident_date) params.set('date', String(incident.incident_date));
+
+    if (incident?.request_target === 'TIME_PUNCH_REQUEST') {
+      if (incident?.request_id) {
+        params.set('request_id', String(incident.request_id));
+        params.set('mode', 'view');
+      } else {
+        params.set('mode', 'create');
+        params.set('request_type_key', String(incident?.suggested_request_type_key || 'CREATE_PUNCH'));
+        if (incident?.suggested_punch_key) params.set('punch_key', String(incident.suggested_punch_key));
+        if (incident?.last_punch_id) params.set('context_punch_id', String(incident.last_punch_id));
+        params.set('incident', String(incident?.event_name || 'Incidencia de marcación'));
+        params.set('reason', String(incident?.notes || 'Regularización de una incidencia de marcación.'));
+      }
+      setIncidentFlow({ target: 'TIME_PUNCH_REQUEST', search: params.toString() });
+      return;
+    }
+
+    if (incident?.request_target === 'SHIFT_CHANGE') {
+      params.set('mode', incident?.request_id ? 'view' : 'create');
+      if (incident?.request_id) params.set('request_id', String(incident.request_id));
+      if (incident?.shift_id) params.set('current_shift_id', String(incident.shift_id));
+      if (incident?.notes) params.set('reason', String(incident.notes));
+      setIncidentFlow({ target: 'SHIFT_CHANGE', search: params.toString() });
+      return;
+    }
+
+    if (incident?.request_id) {
+      params.set('request_id', String(incident.request_id));
+      params.set('mode', 'view');
+    } else {
+      params.set('mode', 'create');
+      params.set('date', String(incident?.incident_date || ''));
+      if (incident?.attendance_event_id) params.set('attendance_event_id', String(incident.attendance_event_id));
+      if (incident?.justification_type_id) params.set('justification_type_id', String(incident.justification_type_id));
+      if (incident?.calculation_id) params.set('calculation_id', String(incident.calculation_id));
+      params.set('incident', String(incident?.event_name || 'Incidencia de asistencia'));
+      if (Number(incident?.minutes || 0) > 0) params.set('minutes', String(incident.minutes));
+      if (incident?.notes) params.set('detail', String(incident.notes));
+      if (incident?.start_date) params.set('start_date', String(incident.start_date));
+      if (incident?.end_date) params.set('end_date', String(incident.end_date));
+      if (incident?.start_time) params.set('start_time', String(incident.start_time));
+      if (incident?.end_time) params.set('end_time', String(incident.end_time));
+    }
+    setIncidentFlow({ target: 'JUSTIFICATION', search: params.toString() });
+  };
+
+  const closeIncidentFlow = () => {
+    setIncidentFlow(null);
+    onIncidentFlowClosed();
+  };
+
   return (
     <div className="space-y-6">
-      <div className="space-y-3 md:hidden">
-        <Card>
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-base">Resumen mensual de asistencia</CardTitle>
-            <CardDescription className="text-xs">Descuentos y distribución de horas del mes actual.</CardDescription>
-          </CardHeader>
-          <CardContent className="p-3 pt-0">
-            <Tabs defaultValue="discounts" className="w-full">
-              <TabsList className="grid h-auto w-full grid-cols-2">
-                <TabsTrigger value="discounts" className="text-xs">Descuentos</TabsTrigger>
-                <TabsTrigger value="hours" className="text-xs">Horas trabajadas</TabsTrigger>
-              </TabsList>
-              <TabsContent value="discounts" className="mt-3 space-y-2">
-                {minusDisplayEvents.map((row) => (
-                  <div key={row.key || row.attendance_event_id || row.label} className="flex items-center justify-between rounded-lg bg-rose-50 px-3 py-2 text-xs">
-                    <span className="font-medium text-slate-800">{row.label || row.event_short_name || row.event_name}</span>
-                    <span className="font-semibold text-rose-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
-                  </div>
-                ))}
-              </TabsContent>
-              <TabsContent value="hours" className="mt-3">
-                <div className="grid grid-cols-1 gap-2">
-                  {mobileSurchargeRows.map((row) => (
-                    <div key={row.key} className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-xs ${row.bgClass}`}>
-                      <span className="font-medium text-slate-700">{row.label}</span>
-                      <span className={`font-semibold ${row.valueClass}`}>{row.total_hours.toFixed(2)} h</span>
-                    </div>
+      <section className="space-y-3" aria-label="Resumen de asistencia por rango de fechas">
+        <div className="flex flex-col gap-3 rounded-xl border bg-white p-3 shadow-sm sm:p-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Resumen de mi asistencia</h2>
+            <p className="text-xs text-muted-foreground">Las incidencias, horas trabajadas y tiempos no laborados corresponden al mismo período.</p>
+          </div>
+          <div className="grid w-full grid-cols-[36px_minmax(0,1fr)_minmax(0,1fr)_36px] items-end gap-1.5 sm:gap-2 lg:w-auto lg:min-w-[560px] lg:grid-cols-[36px_minmax(145px,1fr)_minmax(145px,1fr)_36px_auto]">
+            <button
+              type="button"
+              onClick={() => shiftRangeByWeek(-1)}
+              disabled={rangeLoading}
+              className="flex h-9 w-9 items-center justify-center rounded-md border bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              aria-label="Semana anterior"
+              title="Semana anterior"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <label className="min-w-0 space-y-1 text-xs text-slate-600">
+              <span className="block">Desde</span>
+              <StandardDateInput
+                value={selectedRange.from || ''}
+                max={selectedRange.to || selectedRange.today || ''}
+                onValueChange={(value) => onRangeChange(value, selectedRange.to)}
+                disabled={rangeLoading}
+                className="h-9 w-full min-w-0 rounded-md border bg-white px-1.5 text-xs text-slate-900 disabled:opacity-60 sm:px-2 sm:text-sm"
+              />
+            </label>
+            <label className="min-w-0 space-y-1 text-xs text-slate-600">
+              <span className="block">Hasta</span>
+              <StandardDateInput
+                value={selectedRange.to || ''}
+                min={selectedRange.from || ''}
+                max={selectedRange.today || ''}
+                onValueChange={(value) => onRangeChange(selectedRange.from, value)}
+                disabled={rangeLoading}
+                className="h-9 w-full min-w-0 rounded-md border bg-white px-1.5 text-xs text-slate-900 disabled:opacity-60 sm:px-2 sm:text-sm"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => shiftRangeByWeek(1)}
+              disabled={rangeLoading || !selectedRange.can_navigate_next_week}
+              className="flex h-9 w-9 items-center justify-center rounded-md border bg-white text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Semana siguiente"
+              title={!selectedRange.can_navigate_next_week ? 'No hay navegación a semanas futuras' : 'Semana siguiente'}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            {!selectedRange.is_current_week ? (
+              <button
+                type="button"
+                onClick={goToCurrentWeek}
+                disabled={rangeLoading}
+                className="col-span-4 h-8 justify-self-end rounded-md border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50 lg:col-span-1 lg:h-9 lg:justify-self-stretch lg:whitespace-nowrap"
+              >
+                <span className="lg:hidden">Semana actual</span>
+                <span className="hidden lg:inline">Última semana</span>
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className={`grid grid-cols-1 gap-4 xl:grid-cols-3 ${rangeLoading ? 'opacity-60' : ''}`} aria-busy={rangeLoading}>
+          <Card className={`border-amber-200 ${pendingIncidents.length === 0 ? 'hidden md:block' : ''}`}>
+            <CardHeader className="p-4 pb-2">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" />
+                    <span className="md:hidden">Mis incidencias pendientes</span>
+                    <span className="hidden md:inline">Mis incidencias</span>
+                  </CardTitle>
+                  <CardDescription className="mt-1 text-xs">Selecciona una fila para gestionar el requerimiento correspondiente.</CardDescription>
+                </div>
+                <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
+                  <span className="md:hidden">{pendingIncidents.length}</span>
+                  <span className="hidden md:inline">{incidents.length}</span>
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="p-4 pt-1">
+              {incidents.length === 0 ? (
+                <div className="rounded-lg bg-emerald-50 px-3 py-4 text-center text-xs text-emerald-700">
+                  No tienes incidencias en este período.
+                </div>
+              ) : (
+                <div className="max-h-72 divide-y overflow-y-auto rounded-lg border">
+                  {incidents.map((incident: any, index: number) => (
+                    <button
+                      type="button"
+                      key={incident.id || `${incident.incident_date}-${incident.event_short_name}-${index}`}
+                      onClick={() => openIncidentJustification(incident)}
+                      className={`group w-full items-center gap-2 bg-white px-3 py-2.5 text-left hover:bg-amber-50 ${isPendingIncident(incident) ? 'flex' : 'hidden md:flex'}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-xs font-semibold text-slate-900">{incident.event_name}</span>
+                          {incident.request_status_label || incident.request_status_key ? (
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] ${statusPillClass(incident.request_status_key || incident.request_status_label)}`}>
+                              {incident.request_status_label || incident.request_status_key}
+                            </span>
+                          ) : (
+                            <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-600">
+                              {incident.request_target === 'TIME_PUNCH_REQUEST'
+                                ? 'Gestionar marcación'
+                                : incident.request_target === 'SHIFT_CHANGE'
+                                  ? 'Cambiar turno'
+                                  : 'Justificar'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 truncate text-[10px] text-slate-500">
+                          {formatDate(incident.incident_date)}
+                          {Number(incident.minutes || 0) > 0 ? ` · ${Number(incident.minutes).toFixed(0)} min` : ''}
+                          {incident.punch_count ? ` · ${incident.punch_count} marcaciones` : ''}
+                        </p>
+                        {incident.notes ? (
+                          <p className="mt-0.5 truncate text-[10px] text-slate-600" title={incident.notes}>{incident.notes}</p>
+                        ) : null}
+                      </div>
+                      {incident.request_id ? (
+                        <Eye className="h-4 w-4 shrink-0 text-blue-600" aria-label="Ver detalle de la solicitud" />
+                      ) : (
+                        <ArrowUpRight className="h-4 w-4 shrink-0 text-amber-600 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                      )}
+                    </button>
                   ))}
                 </div>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
 
+          <Card className="border-emerald-200">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="flex items-center justify-between gap-2 text-base">
+                <span className="flex items-center gap-2"><Clock className="h-4 w-4 text-emerald-600" />Mis horas trabajadas</span>
+                <span className="text-sm text-emerald-700">{totalWorkedHours.toFixed(2)} h</span>
+              </CardTitle>
+              <CardDescription className="text-xs">Distribución de jornada y sobretiempos.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 p-4 pt-1">
+              {plusDisplayEvents.map((row) => {
+                const pct = Number(row.total_hours || 0) > 0
+                  ? Math.max(4, Math.round((Number(row.total_hours || 0) / maxPlusHours) * 100))
+                  : 0;
+                return (
+                  <div key={row.key || row.attendance_event_id || row.label}>
+                    <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate text-slate-700">{row.label || row.event_short_name || row.event_name}</span>
+                      <span className="shrink-0 font-semibold text-emerald-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded bg-emerald-50">
+                      <div className="h-full rounded bg-emerald-500" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+
+          <Card className="border-rose-200">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="flex items-center justify-between gap-2 text-base">
+                <span className="flex items-center gap-2"><Clock3 className="h-4 w-4 text-rose-600" />Mis tiempos no laborados</span>
+                <span className="text-sm text-rose-700">{totalNotWorkedHours.toFixed(2)} h</span>
+              </CardTitle>
+              <CardDescription className="text-xs">Atrasos, faltas, salidas y otras afectaciones.</CardDescription>
+            </CardHeader>
+            <CardContent className="max-h-72 space-y-3 overflow-y-auto p-4 pt-1">
+              {minusDisplayEvents.map((row) => {
+                const pct = Number(row.total_hours || 0) > 0
+                  ? Math.max(4, Math.round((Number(row.total_hours || 0) / maxMinusHours) * 100))
+                  : 0;
+                return (
+                  <div key={row.key || row.attendance_event_id || row.label}>
+                    <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate text-slate-700">{row.label || row.event_short_name || row.event_name}</span>
+                      <span className="shrink-0 font-semibold text-rose-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded bg-rose-50">
+                      <div className="h-full rounded bg-rose-500" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+
+      <div className="space-y-3 md:hidden">
         <Card>
           <CardHeader className="p-3 pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -571,52 +841,6 @@ function EmployeeHome({ payload }: { payload: any }) {
       </div>
 
       <div className="hidden space-y-6 md:block">
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Módulo 6: Novedades que suman</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {plusDisplayEvents.map((row) => {
-              const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxPlusHours) * 100));
-              return (
-                <div key={row.key || row.attendance_event_id || row.label}>
-                  <div className="flex items-center justify-between text-sm mb-1">
-                    <span>{row.label || row.event_short_name || row.event_name}</span>
-                    <span className="font-medium text-emerald-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
-                  </div>
-                  <div className="h-2 rounded bg-emerald-50 overflow-hidden">
-                    <div className="h-full bg-emerald-500 rounded" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Módulo 7: Novedades que restan</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {minusDisplayEvents.map((row) => {
-              const pct = Math.max(6, Math.round((Number(row.total_hours || 0) / maxMinusHours) * 100));
-              return (
-                <div key={row.key || row.attendance_event_id || row.label}>
-                  <div className="flex items-center justify-between text-sm mb-1">
-                    <span>{row.label || row.event_short_name || row.event_name}</span>
-                    <span className="font-medium text-rose-700">{Number(row.total_hours || 0).toFixed(2)} h</span>
-                  </div>
-                  <div className="h-2 rounded bg-rose-50 overflow-hidden">
-                    <div className="h-full bg-rose-500 rounded" style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      </div>
-
       <Card>
         <CardContent className="pt-6">
           <Tabs defaultValue="punches" className="w-full">
@@ -682,6 +906,26 @@ function EmployeeHome({ payload }: { payload: any }) {
         </CardContent>
       </Card>
       </div>
+      {incidentFlow ? (
+        <div className="hidden" aria-hidden="true">
+          {incidentFlow.target === 'TIME_PUNCH_REQUEST' ? (
+            <KioskTimePunchRequests
+              deepLinkSearch={incidentFlow.search}
+              onPopupClose={closeIncidentFlow}
+            />
+          ) : incidentFlow.target === 'SHIFT_CHANGE' ? (
+            <KioskShiftChange
+              deepLinkSearch={incidentFlow.search}
+              onPopupClose={closeIncidentFlow}
+            />
+          ) : (
+            <KioskRequests
+              deepLinkSearch={incidentFlow.search}
+              onPopupClose={closeIncidentFlow}
+            />
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1256,10 +1500,9 @@ function SupervisorHome({
                 </label>
                 <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                   Evaluar desde
-                  <input
-                    type="time"
+                  <StandardTimeInput
                     value={latestPunchesFromTime}
-                    onChange={(event) => setLatestPunchesFromTime(event.target.value)}
+                    onValueChange={setLatestPunchesFromTime}
                     className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                   />
                 </label>
@@ -1743,7 +1986,7 @@ function StaleDevicesTable({ staleDevices }: { staleDevices: any[] }) {
                 <span className="block truncate text-slate-700">{device.company_name || '-'}</span>
                 <span className="block truncate text-slate-500">{device.location_name || '-'}</span>
               </span>
-              <span className="text-slate-600">{hasNeverPunched ? 'Nunca' : new Date(device.last_punch_datetime).toLocaleString()}</span>
+              <span className="text-slate-600">{hasNeverPunched ? 'Nunca' : formatClientDateTime(device.last_punch_datetime)}</span>
               <span className="text-right font-semibold text-amber-700">{hasNeverPunched ? 'Sin registros' : formatMetric(hours)}</span>
             </div>
           );
@@ -2077,6 +2320,19 @@ export function Dashboard() {
   const [employeeLoading, setEmployeeLoading] = useState(false);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
   const [employeePayload, setEmployeePayload] = useState<any>(null);
+  const [employeeRefreshKey, setEmployeeRefreshKey] = useState(0);
+  const [employeeRange, setEmployeeRange] = useState(() => {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Guayaquil',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const current = new Date(`${today}T12:00:00`);
+    const monday = new Date(current);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    return { from: toLocalIsoDate(monday), to: today };
+  });
   const [systemAdminLoading, setSystemAdminLoading] = useState(false);
   const [systemAdminError, setSystemAdminError] = useState<string | null>(null);
   const [systemAdminPayload, setSystemAdminPayload] = useState<any>(null);
@@ -2110,7 +2366,8 @@ export function Dashboard() {
           setEmployeeLoading(true);
           setEmployeeError(null);
         }
-        const resp = await fetch(buildApiUrl('/dashboard/employee-summary'), {
+        const query = new URLSearchParams({ from: employeeRange.from, to: employeeRange.to });
+        const resp = await fetch(buildApiUrl(`/dashboard/employee-summary?${query.toString()}`), {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const data = await resp.json().catch(() => ({}));
@@ -2127,7 +2384,7 @@ export function Dashboard() {
     return () => {
       mounted = false;
     };
-  }, [isEmployee, session?.access_token]);
+  }, [isEmployee, session?.access_token, employeeRange.from, employeeRange.to, employeeRefreshKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -2440,12 +2697,17 @@ export function Dashboard() {
           />
         )
       ) : isEmployee ? (
-        employeeLoading ? (
+        employeeLoading && !employeePayload ? (
           <Card><CardContent className="pt-6"><p className="text-sm text-muted-foreground">Cargando informacion del empleado...</p></CardContent></Card>
-        ) : employeeError ? (
+        ) : employeeError && !employeePayload ? (
           <Card><CardContent className="pt-6"><p className="text-sm text-red-600">{employeeError}</p></CardContent></Card>
         ) : (
-          <EmployeeHome payload={employeePayload} />
+          <EmployeeHome
+            payload={employeePayload}
+            rangeLoading={employeeLoading}
+            onRangeChange={(from, to) => setEmployeeRange({ from, to })}
+            onIncidentFlowClosed={() => setEmployeeRefreshKey((current) => current + 1)}
+          />
         )
       ) : (
         <>

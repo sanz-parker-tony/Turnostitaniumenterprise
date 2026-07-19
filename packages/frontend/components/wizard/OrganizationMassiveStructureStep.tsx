@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatClientTime24 } from '@/utils/date-time';
 import {
   ImportLogEvent,
   StagedAssignment,
@@ -21,9 +22,7 @@ type OrganizationMassiveStructureStepProps = {
 const EMPTY_LOGS: ImportLogEvent[] = [];
 
 function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString();
+  return formatClientTime24(iso);
 }
 
 export default function OrganizationMassiveStructureStep({ onComplete }: OrganizationMassiveStructureStepProps) {

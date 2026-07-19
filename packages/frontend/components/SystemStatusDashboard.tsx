@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatClientTime24, formatStandardDate } from '@/utils/date-time';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { 
   Building2, 
@@ -142,21 +143,11 @@ export default function SystemStatusDashboard() {
   }, []);
 
   const formatTime = (date: Date) => {
-    return date.toLocaleTimeString('es-ES', { 
-      hour: '2-digit', 
-      minute: '2-digit', 
-      second: '2-digit',
-      hour12: false 
-    });
+    return formatClientTime24(date);
   };
 
   const formatDate = (date: Date) => {
-    return date.toLocaleDateString('es-ES', { 
-      weekday: 'long', 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    });
+    return formatStandardDate(date);
   };
 
   const getStatusIcon = (status: string) => {

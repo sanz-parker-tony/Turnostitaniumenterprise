@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import { projectId, publicApiToken } from '../utils/backend/info';
 import { ApiClient } from '../lib/api-client';
 import DiagnosticTool from './DiagnosticTool';
+import { formatClientDateTime } from '../utils/date-time';
 import { IconPicker, DynamicIcon } from './IconPicker';
 import { useAuth } from '../contexts/AuthContext';
 import SuperAdminOnly from './security/SuperAdminOnly';
@@ -50,7 +51,7 @@ const getAuthToken = async (): Promise<string | null> => {
     console.log('✅ Token obtenido de sesión:', {
       hasToken: !!session.access_token,
       tokenPreview: session.access_token?.substring(0, 50) + '...',
-      expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toLocaleString() : 'N/A',
+      expiresAt: session.expires_at ? formatClientDateTime(new Date(session.expires_at * 1000)) : 'N/A',
       user: session.user?.email,
       userId: session.user?.id
     });

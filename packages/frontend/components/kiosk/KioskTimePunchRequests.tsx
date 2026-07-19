@@ -1,7 +1,7 @@
 'use client';
 
 import { buildApiUrl } from '../../utils/api-config';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Pencil, Plus, RefreshCw, Trash2, Paperclip, Clock3, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { StandardDateInput, StandardDateTimeInput } from '@/components/ui/standard-date-input';
 
 interface LookupItem {
   id: string;
@@ -61,7 +62,7 @@ interface RequestRow {
   created_at: string | null;
 }
 
-type PopupMode = 'create' | 'edit';
+type PopupMode = 'create' | 'edit' | 'view';
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'ALL';
 
 interface EmployeeContext {
@@ -73,6 +74,7 @@ interface EmployeeContext {
 
 type PopupForm = {
   id: string | null;
+  incident_date: string;
   request_type_id: string;
   target_punch_id: string;
   reason: string;
@@ -122,6 +124,26 @@ function getDefaultRange() {
   return { from: toIsoDate(from), to: toIsoDate(to) };
 }
 
+function getInitialRange(deepLinkSearch?: string) {
+  const fallback = getDefaultRange();
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return fallback;
+  const date = new URLSearchParams(deepLinkSearch ?? window.location.search).get('date') || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return fallback;
+  return { from: date, to: date };
+}
+
+function getDeepLinkPopupState(deepLinkSearch?: string): { open: boolean; mode: PopupMode } {
+  if (deepLinkSearch === undefined && typeof window === 'undefined') return { open: false, mode: 'create' };
+  const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+  const requestId = params.get('request_id');
+  const requestedMode = params.get('mode');
+  const open = params.get('open_popup') === '1' || Boolean(requestId || requestedMode);
+  return {
+    open,
+    mode: requestId || requestedMode === 'view' ? 'view' : 'create',
+  };
+}
+
 function formatPunchLabel(punch: PunchRow): string {
   const label = punch.punch_key_label || `Movimiento ${punch.punch_key}`;
   return `${formatDateTime(punch.punch_datetime, punch.punch_time_zone)} - ${label}${punch.is_active ? '' : ' (inactiva)'}`;
@@ -130,6 +152,7 @@ function formatPunchLabel(punch: PunchRow): string {
 function emptyForm(defaultTypeId = ''): PopupForm {
   return {
     id: null,
+    incident_date: '',
     request_type_id: defaultTypeId,
     target_punch_id: '',
     reason: '',
@@ -154,7 +177,15 @@ function fileToBase64(file: File) {
   });
 }
 
-export default function KioskTimePunchRequests() {
+type KioskTimePunchRequestsProps = {
+  deepLinkSearch?: string;
+  onPopupClose?: () => void;
+};
+
+export default function KioskTimePunchRequests({
+  deepLinkSearch,
+  onPopupClose,
+}: KioskTimePunchRequestsProps = {}) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -168,12 +199,14 @@ export default function KioskTimePunchRequests() {
 
   const [status, setStatus] = useState<StatusFilter>('PENDING');
   const [query, setQuery] = useState('');
-  const [rangeFrom, setRangeFrom] = useState(getDefaultRange().from);
-  const [rangeTo, setRangeTo] = useState(getDefaultRange().to);
+  const [rangeFrom, setRangeFrom] = useState(() => getInitialRange(deepLinkSearch).from);
+  const [rangeTo, setRangeTo] = useState(() => getInitialRange(deepLinkSearch).to);
+  const deepLinkHandled = useRef(false);
 
-  const [popupOpen, setPopupOpen] = useState(false);
-  const [popupMode, setPopupMode] = useState<PopupMode>('create');
+  const [popupOpen, setPopupOpen] = useState(() => getDeepLinkPopupState(deepLinkSearch).open);
+  const [popupMode, setPopupMode] = useState<PopupMode>(() => getDeepLinkPopupState(deepLinkSearch).mode);
   const [popupForm, setPopupForm] = useState<PopupForm>(emptyForm());
+  const [viewingRequest, setViewingRequest] = useState<RequestRow | null>(null);
   const [supportFile, setSupportFile] = useState<File | null>(null);
   const [clearSupport, setClearSupport] = useState(false);
 
@@ -216,7 +249,11 @@ export default function KioskTimePunchRequests() {
 
   const loadRows = async () => {
     const qs = new URLSearchParams();
-    qs.set('status', status);
+    const linkedRequestId = deepLinkSearch !== undefined || typeof window !== 'undefined'
+      ? new URLSearchParams(deepLinkSearch ?? window.location.search).get('request_id')
+      : null;
+    if (linkedRequestId) qs.set('request_id', linkedRequestId);
+    qs.set('status', linkedRequestId ? 'ALL' : status);
     if (rangeFrom) qs.set('from', rangeFrom);
     if (rangeTo) qs.set('to', rangeTo);
     const payload = await request(`/time-punch-requests?${qs.toString()}`);
@@ -312,6 +349,7 @@ export default function KioskTimePunchRequests() {
     const defaultType = requestTypes[0]?.id || '';
     setPopupMode('create');
     setPopupForm(emptyForm(defaultType));
+    setViewingRequest(null);
     setSupportFile(null);
     setClearSupport(false);
     setPopupOpen(true);
@@ -321,6 +359,10 @@ export default function KioskTimePunchRequests() {
     const rv = row.requested_values || {};
     const nextForm: PopupForm = {
       id: row.id,
+      incident_date: toDateTimeLocal(
+        rv.punch_datetime || row.current_values?.punch_datetime || row.created_at || null,
+        rv.punch_time_zone || row.current_values?.punch_time_zone || null
+      ).slice(0, 10),
       request_type_id: row.request_type_id,
       target_punch_id: row.target_punch_id || '',
       reason: row.reason || '',
@@ -345,17 +387,63 @@ export default function KioskTimePunchRequests() {
     };
 
     setPopupMode('edit');
+    setViewingRequest(row);
     setPopupForm(nextForm);
     setSupportFile(null);
     setClearSupport(false);
     setPopupOpen(true);
   };
 
+  useEffect(() => {
+    if (loading || deepLinkHandled.current || (deepLinkSearch === undefined && typeof window === 'undefined')) return;
+
+    const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
+    const mode = params.get('mode');
+    const requestId = params.get('request_id');
+    if (!mode && !requestId) return;
+
+    deepLinkHandled.current = true;
+    if (requestId) {
+      const existing = rows.find((row) => row.id === requestId);
+      if (!existing) {
+        toast.error('No se encontró la solicitud vinculada con esta incidencia de marcación');
+        return;
+      }
+      openEditPopup(existing);
+      setPopupMode('view');
+      return;
+    }
+
+    if (mode !== 'create') return;
+    const requestTypeKey = String(params.get('request_type_key') || 'CREATE_PUNCH').toUpperCase();
+    const requestType = requestTypes.find((item) => String(item.lookup_key || '').toUpperCase() === requestTypeKey)
+      || requestTypes[0];
+    const incidentDate = params.get('date') || '';
+    const punchDateTime = params.get('punch_datetime') || '';
+    const incidentName = params.get('incident') || 'Incidencia de marcación';
+    const reason = params.get('reason') || `Regularización de ${incidentName} del ${incidentDate}.`;
+
+    setPopupMode('create');
+    setPopupForm({
+      ...emptyForm(requestType?.id || ''),
+      incident_date: incidentDate,
+      reason,
+      punch_datetime: punchDateTime,
+      punch_key: params.get('punch_key') || '',
+      notes: `Incidencia detectada el ${incidentDate}: ${incidentName}.`,
+    });
+    setSupportFile(null);
+    setClearSupport(false);
+    setPopupOpen(true);
+  }, [loading, rows, requestTypes, deepLinkSearch]);
+
   const closePopup = () => {
     setPopupOpen(false);
+    setViewingRequest(null);
     setSaving(false);
     setSupportFile(null);
     setClearSupport(false);
+    onPopupClose?.();
   };
 
   const selectedRequestTypeKey = requestTypeKeyById.get(popupForm.request_type_id) || '';
@@ -450,7 +538,7 @@ export default function KioskTimePunchRequests() {
         toast.success('Solicitud actualizada correctamente');
       }
       closePopup();
-      await refresh();
+      if (!onPopupClose) await refresh();
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo guardar la solicitud');
     } finally {
@@ -517,19 +605,17 @@ export default function KioskTimePunchRequests() {
             <div className="flex w-full flex-wrap items-end gap-2 lg:w-auto">
               <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Desde</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeFrom}
-                  onChange={(event) => setRangeFrom(event.target.value)}
+                  onValueChange={setRangeFrom}
                   className="h-10 w-full rounded-md border px-3"
                 />
               </label>
               <label className="w-full space-y-1 text-sm min-[420px]:w-auto">
                 <span className="block text-slate-700">Hasta</span>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={rangeTo}
-                  onChange={(event) => setRangeTo(event.target.value)}
+                  onValueChange={setRangeTo}
                   className="h-10 w-full rounded-md border px-3"
                 />
               </label>
@@ -639,16 +725,65 @@ export default function KioskTimePunchRequests() {
         </CardContent>
       </Card>
 
-      <Dialog open={popupOpen} onOpenChange={(next) => !saving && setPopupOpen(next)}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={popupOpen} onOpenChange={(next) => !next && !saving && closePopup()}>
+        <DialogContent className="h-[min(900px,calc(100svh-1rem))] max-h-[calc(100svh-1rem)] max-w-2xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-h-[calc(100svh-1rem)] sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{popupMode === 'create' ? 'Nueva solicitud de marcacion' : 'Editar solicitud de marcacion'}</DialogTitle>
+            <DialogTitle>
+              {popupMode === 'create'
+                ? 'Nueva solicitud de marcación'
+                : popupMode === 'view'
+                  ? 'Detalle de la solicitud de marcación'
+                  : 'Editar solicitud de marcación'}
+            </DialogTitle>
             <DialogDescription>
-              Define el tipo de solicitud y los valores que el supervisor debe aprobar.
+              {loading
+                ? 'Cargando la información de la incidencia…'
+                : popupMode === 'view'
+                ? 'Consulta la información enviada y el estado de revisión.'
+                : 'Define el tipo de solicitud y los valores que el supervisor debe aprobar.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-1 pb-3">
+            {popupMode === 'view' && viewingRequest ? (
+              <div className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">Estado de la solicitud</span>
+                <span className={`rounded border px-2 py-1 text-xs font-medium ${statusBadgeClass(viewingRequest.request_status_key)}`}>
+                  {viewingRequest.request_status_label || viewingRequest.request_status_key || '-'}
+                </span>
+              </div>
+              {viewingRequest.supervisor_notes ? (
+                <p className="mt-2"><span className="font-medium">Respuesta:</span> {viewingRequest.supervisor_notes}</p>
+              ) : null}
+              {viewingRequest.approved_at ? (
+                <p className="mt-1 text-xs text-slate-500">Revisada: {formatDateTime(viewingRequest.approved_at)}</p>
+              ) : null}
+              {viewingRequest.support_document_name ? (
+                <button
+                  type="button"
+                  onClick={() => void openSupportDocument(viewingRequest)}
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline"
+                >
+                  <Paperclip className="h-3.5 w-3.5" /> Ver respaldo adjunto
+                </button>
+              ) : null}
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 md:grid-cols-2">
+            {popupForm.incident_date ? (
+              <label className="space-y-1 text-sm">
+                <span className="font-medium text-slate-700">Fecha de la incidencia</span>
+                <StandardDateInput
+                  className="w-full rounded border border-slate-300 bg-slate-50 px-3 py-2"
+                  value={popupForm.incident_date}
+                  onValueChange={() => undefined}
+                  readOnly
+                />
+              </label>
+            ) : null}
+
             <label className="space-y-1 text-sm">
               <span className="font-medium text-slate-700">Tipo de solicitud</span>
               <select
@@ -661,7 +796,7 @@ export default function KioskTimePunchRequests() {
                     target_punch_id: '',
                   }))
                 }
-                disabled={popupMode === 'edit'}
+                disabled={popupMode !== 'create'}
               >
                 <option value="">Seleccione...</option>
                 {requestTypes.map((item) => (
@@ -676,6 +811,7 @@ export default function KioskTimePunchRequests() {
                 <select
                   className="w-full rounded border border-slate-300 px-3 py-2"
                   value={popupForm.target_punch_id}
+                  disabled={popupMode === 'view'}
                   onChange={(e) => {
                     const targetPunchId = e.target.value;
                     const punch = recentPunches.find((item) => item.id === targetPunchId) || null;
@@ -698,11 +834,11 @@ export default function KioskTimePunchRequests() {
               <>
                 <label className="space-y-1 text-sm">
                   <span className="font-medium text-slate-700">Fecha y hora</span>
-                  <input
-                    type="datetime-local"
+                  <StandardDateTimeInput
                     className="w-full rounded border border-slate-300 px-3 py-2"
                     value={popupForm.punch_datetime}
-                    onChange={(e) => setPopupForm((prev) => ({ ...prev, punch_datetime: e.target.value }))}
+                    disabled={popupMode === 'view'}
+                    onValueChange={(value) => setPopupForm((prev) => ({ ...prev, punch_datetime: value }))}
                   />
                 </label>
 
@@ -711,6 +847,7 @@ export default function KioskTimePunchRequests() {
                   <select
                     className="w-full rounded border border-slate-300 px-3 py-2"
                     value={popupForm.punch_key}
+                    disabled={popupMode === 'view'}
                     onChange={(e) => setPopupForm((prev) => ({ ...prev, punch_key: e.target.value }))}
                   >
                     <option value="">Seleccione...</option>
@@ -727,6 +864,7 @@ export default function KioskTimePunchRequests() {
                   <select
                     className="w-full rounded border border-slate-300 px-3 py-2"
                     value={popupForm.time_punch_status_id}
+                    disabled={popupMode === 'view'}
                     onChange={(e) => setPopupForm((prev) => ({ ...prev, time_punch_status_id: e.target.value }))}
                   >
                     <option value="">Sin cambio</option>
@@ -743,6 +881,7 @@ export default function KioskTimePunchRequests() {
               <textarea
                 className="min-h-[84px] w-full rounded border border-slate-300 px-3 py-2"
                 value={popupForm.reason}
+                disabled={popupMode === 'view'}
                 onChange={(e) => setPopupForm((prev) => ({ ...prev, reason: e.target.value }))}
                 placeholder="Describe por que solicitas este cambio"
               />
@@ -753,6 +892,7 @@ export default function KioskTimePunchRequests() {
               <textarea
                 className="min-h-[72px] w-full rounded border border-slate-300 px-3 py-2"
                 value={popupForm.notes}
+                disabled={popupMode === 'view'}
                 onChange={(e) => setPopupForm((prev) => ({ ...prev, notes: e.target.value }))}
               />
             </label>
@@ -762,7 +902,7 @@ export default function KioskTimePunchRequests() {
                 type="checkbox"
                 checked={popupForm.is_active}
                 onChange={(e) => setPopupForm((prev) => ({ ...prev, is_active: e.target.checked }))}
-                disabled={selectedRequestTypeKey === 'TOGGLE_ACTIVE'}
+                disabled={popupMode === 'view' || selectedRequestTypeKey === 'TOGGLE_ACTIVE'}
               />
               <span className="text-slate-700">
                 {selectedRequestTypeKey === 'TOGGLE_ACTIVE'
@@ -773,7 +913,7 @@ export default function KioskTimePunchRequests() {
               </span>
             </label>
 
-            <label className="space-y-1 text-sm md:col-span-2">
+            {popupMode !== 'view' ? <label className="space-y-1 text-sm md:col-span-2">
               <span className="font-medium text-slate-700">Adjuntar respaldo PDF (opcional)</span>
               <input
                 type="file"
@@ -785,7 +925,7 @@ export default function KioskTimePunchRequests() {
                   if (file) setClearSupport(false);
                 }}
               />
-            </label>
+            </label> : null}
 
             {popupMode === 'edit' ? (
               <label className="inline-flex items-center gap-2 text-sm md:col-span-2">
@@ -809,14 +949,21 @@ export default function KioskTimePunchRequests() {
                 </div>
               </div>
             ) : null}
+            </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={closePopup} disabled={saving}>Cancelar</Button>
-            <Button onClick={() => void submitPopup()} disabled={saving}>
-              {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {popupMode === 'create' ? 'Enviar solicitud' : 'Guardar cambios'}
-            </Button>
+          <DialogFooter className="static bottom-auto mx-0 mb-0 shrink-0 px-0 pt-4 pb-0 sm:mx-0 sm:mb-0 sm:px-0">
+            {popupMode === 'view' ? (
+              <Button variant="outline" onClick={closePopup}>Cerrar</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={closePopup} disabled={saving}>Cancelar</Button>
+                <Button onClick={() => void submitPopup()} disabled={saving || loading}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {popupMode === 'create' ? 'Enviar solicitud' : 'Guardar cambios'}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

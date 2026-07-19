@@ -8,6 +8,7 @@
 import { buildApiUrl } from '../../utils/api-config';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissions } from '@/contexts/PermissionsContext';
+import { formatStandardDate } from '@/utils/date-time';
 import LayoutNew from '@/components/LayoutNewAppRouter';
 import Link from 'next/link';
 import { 
@@ -295,10 +296,7 @@ function EmployeeDashboard() {
     });
 
   const fmtDate = (value: string | null | undefined) => {
-    if (!value) return '-';
-    const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-    if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
-    return date.toLocaleDateString('es-EC', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    return formatStandardDate(value);
   };
 
   const fmtHours = (value: any) => `${Number(value || 0).toFixed(2)} h`;

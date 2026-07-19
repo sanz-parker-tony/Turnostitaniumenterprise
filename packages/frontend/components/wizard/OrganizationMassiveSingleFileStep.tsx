@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, Loader2, RefreshCw, StopCircle, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import { formatClientDateTime, formatClientTime24 } from '@/utils/date-time';
 import {
   downloadMigrationExport,
   createMassImportRun,
@@ -50,15 +51,11 @@ function nowEvent(
 }
 
 function formatTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString();
+  return formatClientTime24(iso);
 }
 
 function formatDateTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString();
+  return formatClientDateTime(iso);
 }
 
 function inferActivity(event: ImportLogEvent): { key: string; label: string } | null {

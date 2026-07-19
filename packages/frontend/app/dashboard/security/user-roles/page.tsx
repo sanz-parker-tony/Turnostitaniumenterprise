@@ -14,6 +14,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Pencil, Trash2, Search, CheckCircle, XCircle, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
+import { formatStandardDate } from '@/utils/date-time';
 
 interface UserRole {
   id: string;
@@ -357,10 +359,10 @@ export default function UserRolesPage() {
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-xs text-gray-600">
                           {ur.valid_from && (
-                            <div>Desde: {new Date(ur.valid_from).toLocaleDateString()}</div>
+                            <div>Desde: {formatStandardDate(ur.valid_from)}</div>
                           )}
                           {ur.valid_to && (
-                            <div>Hasta: {new Date(ur.valid_to).toLocaleDateString()}</div>
+                            <div>Hasta: {formatStandardDate(ur.valid_to)}</div>
                           )}
                           {!ur.valid_from && !ur.valid_to && '-'}
                         </div>
@@ -502,10 +504,10 @@ export default function UserRolesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Válido Desde
                   </label>
-                  <Input
-                    type="date"
+                  <StandardDateInput
                     value={formData.valid_from}
-                    onChange={(e) => setFormData({ ...formData, valid_from: e.target.value })}
+                    onValueChange={(value) => setFormData({ ...formData, valid_from: value })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs"
                   />
                 </div>
 
@@ -513,10 +515,10 @@ export default function UserRolesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Válido Hasta
                   </label>
-                  <Input
-                    type="date"
+                  <StandardDateInput
                     value={formData.valid_to}
-                    onChange={(e) => setFormData({ ...formData, valid_to: e.target.value })}
+                    onValueChange={(value) => setFormData({ ...formData, valid_to: value })}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs"
                   />
                 </div>
               </div>

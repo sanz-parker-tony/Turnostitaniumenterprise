@@ -9,6 +9,7 @@ import { MapPinned, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
 import MapBaseLayers from '../../shared/MapBaseLayers';
+import { StandardDateInput } from '../../ui/standard-date-input';
 import {
   defaultSystemReportConfig,
   fetchSystemReportConfig,
@@ -349,19 +350,17 @@ export default function EmployeeRouteTrackingReport() {
           </div> : null}
           {showParameter('DATE_FROM') ? <div>
             <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_FROM', 'Desde')}</label>
-            <input
-              type="date"
+            <StandardDateInput
               value={dateFrom}
-              onChange={(event) => setDateFrom(event.target.value)}
+              onValueChange={setDateFrom}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
           </div> : null}
           {showParameter('DATE_TO') ? <div>
             <label className="text-sm font-medium text-slate-700">{parameterLabel('DATE_TO', 'Hasta')}</label>
-            <input
-              type="date"
+            <StandardDateInput
               value={dateTo}
-              onChange={(event) => setDateTo(event.target.value)}
+              onValueChange={setDateTo}
               className="mt-1 h-10 w-full rounded-md border px-3 text-sm"
             />
           </div> : null}

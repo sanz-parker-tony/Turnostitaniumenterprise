@@ -28,6 +28,124 @@ async function resolveRequestUserContext(req: Request): Promise<{ user_id: strin
   return { user_id: row.user_id, tenant_id: row.tenant_id };
 }
 
+const terminalRequestStatusesSql = `
+  'APPROVED', 'APROBADO', 'APROBADA',
+  'REJECTED', 'RECHAZADO', 'RECHAZADA',
+  'CANCELLED', 'CANCELED', 'CANCELADO', 'CANCELADA',
+  'COMPLETED', 'COMPLETE', 'CUMPLIDO', 'CUMPLIDA',
+  'FULFILLED', 'RESOLVED', 'RESUELTO', 'RESUELTA',
+  'CLOSED', 'CERRADO', 'CERRADA',
+  'PROCESSED', 'PROCESADO', 'PROCESADA',
+  'EXPIRED', 'EXPIRADO', 'EXPIRADA',
+  'VOID', 'ANULADO', 'ANULADA'
+`;
+
+/**
+ * Una notificacion referenciada solo permanece visible mientras el asunto que
+ * la origino siga pendiente. Los avisos genericos, sin flujo asociado, se
+ * conservan hasta que el usuario los marque como leidos.
+ */
+const currentNotificationSql = `
+  (
+    n.ref_table IS NULL
+    OR n.ref_table NOT IN (
+      'employee_absence_requests',
+      'employee_shift_change_requests',
+      'employee_time_punch_change_requests',
+      'employee_time_punches'
+    )
+    OR (
+      n.ref_table = 'employee_absence_requests'
+      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
+      AND EXISTS (
+        SELECT 1
+        FROM public.employee_absence_requests request
+        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+        WHERE request.id = n.ref_id
+          AND request.tenant_id = n.tenant_id
+          AND request.is_active = true
+          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      )
+    )
+    OR (
+      n.ref_table = 'employee_shift_change_requests'
+      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
+      AND EXISTS (
+        SELECT 1
+        FROM public.employee_shift_change_requests request
+        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+        WHERE request.id = n.ref_id
+          AND request.tenant_id = n.tenant_id
+          AND request.is_active = true
+          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      )
+    )
+    OR (
+      n.ref_table = 'employee_time_punch_change_requests'
+      AND UPPER(COALESCE(notification_type.lookup_key, '')) NOT LIKE '%_DECIDED'
+      AND EXISTS (
+        SELECT 1
+        FROM public.employee_time_punch_change_requests request
+        LEFT JOIN public.lookup_values status ON status.id = request.request_status_id
+        WHERE request.id = n.ref_id
+          AND request.tenant_id = n.tenant_id
+          AND request.is_active = true
+          AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+      )
+    )
+    OR (
+      n.ref_table = 'employee_time_punches'
+      AND EXISTS (
+        SELECT 1
+        FROM public.employee_time_punches referenced_punch
+        INNER JOIN public.attendance_movements movement
+          ON movement.id = NULLIF(n.metadata->>'movement_id', '')::uuid
+         AND movement.tenant_id = referenced_punch.tenant_id
+         AND movement.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT
+            COUNT(*) FILTER (
+              WHERE candidate.punch_key = movement.start_key
+                AND (
+                  candidate.punch_datetime < referenced_punch.punch_datetime
+                  OR (
+                    candidate.punch_datetime = referenced_punch.punch_datetime
+                    AND candidate.id <= referenced_punch.id
+                  )
+                )
+            )::int AS referenced_start_rank,
+            COUNT(*) FILTER (
+              WHERE candidate.punch_key = movement.end_key
+                AND (
+                  candidate.punch_datetime < referenced_punch.punch_datetime
+                  OR (
+                    candidate.punch_datetime = referenced_punch.punch_datetime
+                    AND candidate.id <= referenced_punch.id
+                  )
+                )
+            )::int AS referenced_end_rank,
+            COUNT(*) FILTER (WHERE candidate.punch_key = movement.start_key)::int AS start_count,
+            COUNT(*) FILTER (WHERE candidate.punch_key = movement.end_key)::int AS end_count
+          FROM public.employee_time_punches candidate
+          WHERE candidate.tenant_id = referenced_punch.tenant_id
+            AND candidate.company_id = referenced_punch.company_id
+            AND candidate.employee_id = referenced_punch.employee_id
+            AND candidate.is_active = true
+            AND candidate.punch_key IN (movement.start_key, movement.end_key)
+            AND date_trunc('day', candidate.punch_datetime) = date_trunc('day', referenced_punch.punch_datetime)
+        ) pairing ON true
+        WHERE referenced_punch.id = n.ref_id
+          AND referenced_punch.tenant_id = n.tenant_id
+          AND referenced_punch.is_active = true
+          AND (
+            (referenced_punch.punch_key = movement.start_key AND pairing.end_count < pairing.referenced_start_rank)
+            OR (referenced_punch.punch_key = movement.end_key AND pairing.start_count < pairing.referenced_end_rank)
+          )
+      )
+    )
+  )
+`;
+
 router.get('/me', async (req: Request, res: Response) => {
   try {
     const userContext = await resolveRequestUserContext(req);
@@ -41,51 +159,49 @@ router.get('/me', async (req: Request, res: Response) => {
 
     const itemsResult = await pool.query(
       `
+        WITH current_notifications AS (
+          SELECT
+            n.id,
+            n.tenant_id,
+            n.user_id,
+            n.notification_type_id,
+            n.title,
+            n.message,
+            n.icon_key,
+            n.ref_table,
+            n.ref_id,
+            n.metadata,
+            n.is_read,
+            n.read_at,
+            n.created_at,
+            notification_type.lookup_key AS notification_type_key,
+            notification_type.lookup_label AS notification_type_label
+          FROM public.user_notifications n
+          LEFT JOIN public.lookup_values notification_type
+            ON notification_type.id = n.notification_type_id
+          WHERE n.tenant_id = $1::uuid
+            AND n.user_id = $2::uuid
+            AND n.is_active = true
+            AND ${currentNotificationSql}
+        )
         SELECT
-          n.id,
-          n.tenant_id,
-          n.user_id,
-          n.notification_type_id,
-          n.title,
-          n.message,
-          n.icon_key,
-          n.ref_table,
-          n.ref_id,
-          n.metadata,
-          n.is_read,
-          n.read_at,
-          n.created_at,
-          lv.lookup_key AS notification_type_key,
-          lv.lookup_label AS notification_type_label
-        FROM public.user_notifications n
-        LEFT JOIN public.lookup_values lv
-          ON lv.id = n.notification_type_id
-        WHERE n.tenant_id = $1::uuid
-          AND n.user_id = $2::uuid
-          AND n.is_active = true
-          AND ($3::boolean = true OR n.is_read = false)
-        ORDER BY n.created_at DESC
+          current_notifications.*,
+          COUNT(*) FILTER (WHERE is_read = false) OVER ()::int AS current_unread_count
+        FROM current_notifications
+        WHERE $3::boolean = true OR is_read = false
+        ORDER BY created_at DESC
         LIMIT $4::int
       `,
       [userContext.tenant_id, userContext.user_id, includeRead, limit]
     );
 
-    const unreadResult = await pool.query(
-      `
-        SELECT COUNT(*)::int AS unread_count
-        FROM public.user_notifications
-        WHERE tenant_id = $1::uuid
-          AND user_id = $2::uuid
-          AND is_active = true
-          AND is_read = false
-      `,
-      [userContext.tenant_id, userContext.user_id]
-    );
+    const unreadCount = Number(itemsResult.rows[0]?.current_unread_count || 0);
+    const notifications = itemsResult.rows.map(({ current_unread_count: _count, ...item }) => item);
 
     return res.status(200).json({
       success: true,
-      unread_count: Number(unreadResult.rows[0]?.unread_count || 0),
-      notifications: itemsResult.rows,
+      unread_count: unreadCount,
+      notifications,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

@@ -7,6 +7,7 @@ import { buildApiUrl } from '../utils/api-config';
 import React, { useState, useEffect } from 'react';
 import { AlertCircle, CheckCircle, XCircle, Loader2 } from 'lucide-react';
 import { projectId, publicApiToken } from '../utils/backend/info';
+import { formatClientDateTime } from '../utils/date-time';
 
 export function AuthDiagnostics() {
   const [loading, setLoading] = useState(true);
@@ -144,7 +145,7 @@ export function AuthDiagnostics() {
                               ID: {user.id}
                             </p>
                             <p className="text-xs text-gray-500">
-                              Creado: {new Date(user.created_at).toLocaleString()}
+                              Creado: {formatClientDateTime(user.created_at)}
                             </p>
                           </div>
                           <div>
@@ -209,7 +210,7 @@ export function AuthDiagnostics() {
                     <p>Correo electrónico: {diagnostics.systemAdmin.email}</p>
                     <p>ID: {diagnostics.systemAdmin.id}</p>
                     <p>Confirmado: {diagnostics.systemAdmin.confirmed ? 'Sí' : 'No'}</p>
-                    <p>Creado: {new Date(diagnostics.systemAdmin.created_at).toLocaleString()}</p>
+                    <p>Creado: {formatClientDateTime(diagnostics.systemAdmin.created_at)}</p>
                   </div>
                 </div>
               )}

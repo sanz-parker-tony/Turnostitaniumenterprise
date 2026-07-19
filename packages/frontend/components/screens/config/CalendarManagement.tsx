@@ -17,6 +17,7 @@ import { publicApiToken } from '../../../utils/backend/info';
 import HeaderInfoTips from '../../shared/HeaderInfoTips';
 import HeaderRefreshButton from '../../shared/HeaderRefreshButton';
 import SystemAdminPageHeader from '../../shared/SystemAdminPageHeader';
+import { StandardDateInput } from '../../ui/standard-date-input';
 
 interface OptionItem {
   id: string;
@@ -911,11 +912,10 @@ export function CalendarManagement() {
 
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-gray-700">Fecha *</label>
-                  <input
-                    type="date"
+                  <StandardDateInput
                     value={formData.holiday_date}
-                    onChange={(event) =>
-                      setFormData((prev) => ({ ...prev, holiday_date: event.target.value }))
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({ ...prev, holiday_date: value }))
                     }
                     className="w-full border rounded px-2 py-1.5 text-sm"
                   />

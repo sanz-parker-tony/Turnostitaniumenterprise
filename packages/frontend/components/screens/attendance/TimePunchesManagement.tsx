@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
+import { StandardDateInput } from '../../ui/standard-date-input';
 
 interface CompanyRow {
   id: string;
@@ -308,12 +309,10 @@ export function TimePunchesManagement() {
         <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
           <div>
             <label className="text-sm font-medium">Desde</label>
-            <input
-              type="date"
+            <StandardDateInput
               className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
               value={dateFrom}
-              onChange={(event) => {
-                const nextFrom = event.target.value;
+              onValueChange={(nextFrom) => {
                 setDateFrom(nextFrom);
                 setDateTo((prevTo) => {
                   if (!nextFrom) return prevTo;
@@ -326,12 +325,11 @@ export function TimePunchesManagement() {
           </div>
           <div>
             <label className="text-sm font-medium">Hasta</label>
-            <input
-              type="date"
+            <StandardDateInput
               className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
               value={dateTo}
-              onChange={(event) => {
-                setDateTo(event.target.value);
+              onValueChange={(value) => {
+                setDateTo(value);
                 setRows([]);
               }}
             />

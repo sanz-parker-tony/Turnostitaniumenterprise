@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatClientDateTime } from '@/utils/date-time';
 
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
 
@@ -243,7 +244,7 @@ export default function RequestsApprovalsManagement() {
                 </div>
 
                 <div className="mb-2 text-sm text-gray-600">
-                  Desde: {new Date(r.start_datetime).toLocaleString('es-EC')} · Hasta: {new Date(r.end_datetime).toLocaleString('es-EC')}
+                  Desde: {formatClientDateTime(r.start_datetime)} · Hasta: {formatClientDateTime(r.end_datetime)}
                 </div>
 
                 <div className="mb-2 text-sm">
@@ -300,7 +301,7 @@ export default function RequestsApprovalsManagement() {
                       Aprobador: {r.approved_by_display_name || r.approved_by_username || '-'}
                     </div>
                     <div className="text-slate-700">
-                      Fecha decision: {r.approved_at ? new Date(r.approved_at).toLocaleString('es-EC') : '-'}
+                      Fecha decision: {r.approved_at ? formatClientDateTime(r.approved_at) : '-'}
                     </div>
                     <div className="text-slate-700">
                       Observacion aprobador: {r.approval_notes || '-'}

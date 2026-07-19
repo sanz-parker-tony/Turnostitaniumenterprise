@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { formatClientDateTime, formatStandardDate } from '@/utils/date-time';
 
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
 
@@ -52,9 +53,7 @@ function formatTime(time: string | null): string {
 }
 
 function formatDate(value: string): string {
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  if (!Number.isFinite(date.getTime())) return value;
-  return date.toLocaleDateString('es-EC', { weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit' });
+  return formatStandardDate(value);
 }
 
 function isPendingStatus(statusKey: string | null | undefined): boolean {
@@ -371,7 +370,7 @@ export default function ShiftChangeApprovalsManagement() {
                       Aprobador: {row.approved_by_display_name || row.approved_by_username || '-'}
                     </div>
                     <div className="text-slate-700">
-                      Fecha decision: {row.approved_at ? new Date(row.approved_at).toLocaleString('es-EC') : '-'}
+                      Fecha decision: {row.approved_at ? formatClientDateTime(row.approved_at) : '-'}
                     </div>
                     <div className="text-slate-700">
                       Observacion aprobador: {row.supervisor_notes || '-'}

@@ -29,6 +29,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
+import { StandardDateInput } from '@/components/ui/standard-date-input';
 import {
   generateShiftPlanning,
   ShiftPlanningGeneratePayload,
@@ -2027,11 +2028,9 @@ export function EmployeeShiftPlanningManagement() {
             <div className="space-y-2">
               <div className="flex items-center gap-3">
                 <label className="w-24 text-sm font-medium">Fecha Inicio</label>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={fechaInicio}
-                  onChange={(event) => {
-                    const value = event.target.value;
+                  onValueChange={(value) => {
                     setFechaInicio(value);
                     if (fechaFin && value && value > fechaFin) {
                       setFechaFin(value);
@@ -2042,11 +2041,9 @@ export function EmployeeShiftPlanningManagement() {
               </div>
               <div className="flex items-center gap-3">
                 <label className="w-24 text-sm font-medium">Fecha Fin</label>
-                <input
-                  type="date"
+                <StandardDateInput
                   value={fechaFin}
-                  onChange={(event) => {
-                    const value = event.target.value;
+                  onValueChange={(value) => {
                     if (fechaInicio && value && value < fechaInicio) {
                       setFechaInicio(value);
                     }
