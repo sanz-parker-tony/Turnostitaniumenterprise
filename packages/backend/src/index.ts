@@ -4868,7 +4868,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               issue.expected_at,
               issue.actual_at,
               issue.start_at,
-              issue.end_at
+              issue.end_at,
+              issue.target_punch_id
             FROM daily
             CROSS JOIN LATERAL (
               VALUES
