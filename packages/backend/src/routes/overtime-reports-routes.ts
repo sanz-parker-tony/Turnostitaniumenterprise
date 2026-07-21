@@ -643,13 +643,14 @@ export function buildOvertimeCtes(
         attendance.department_name,
         attendance.area_name,
         attendance.shift_date,
+        attendance.is_non_working_day,
         attendance.shift_name,
         attendance.shift_short_name,
         attendance.shift_date::timestamp + (attendance.work_start_minutes || ' minutes')::interval AS shift_work_start,
         attendance.shift_date::timestamp + (attendance.work_end_minutes || ' minutes')::interval AS shift_work_end,
         attendance.first_entry,
         attendance.last_exit,
-        attendance.worked_minutes,
+        attendance.worked_minutes AS elapsed_worked_minutes,
         attendance.max_overtime_min_day,
         attendance.max_overtime_min_week,
         attendance.weekly_regular_minutes,
@@ -664,10 +665,13 @@ export function buildOvertimeCtes(
         CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE LEAST(COALESCE(surcharge_by_day.night_minutes, 0), LEAST(attendance.worked_minutes, attendance.work_minutes)) END::int AS raw_night_25_minutes,
         CASE
           WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0
-          ELSE GREATEST(
-            0,
-            attendance.worked_minutes - attendance.work_minutes
-            - LEAST(COALESCE(surcharge_by_day.extra_100_minutes, 0), GREATEST(0, attendance.worked_minutes - attendance.work_minutes))
+          ELSE LEAST(
+            COALESCE(surcharge_by_day.extra_50_minutes, 0),
+            GREATEST(
+              0,
+              attendance.worked_minutes - attendance.work_minutes
+              - LEAST(COALESCE(surcharge_by_day.extra_100_minutes, 0), GREATEST(0, attendance.worked_minutes - attendance.work_minutes))
+            )
           )
         END::int AS raw_extra_50_minutes,
         CASE
@@ -777,7 +781,7 @@ export function buildOvertimeCtes(
         )::int AS allowed_overtime_minutes
       FROM weekly_overtime_running
     ),
-    metrics_by_day AS (
+    classified_metrics AS (
       SELECT
         overtime_limited.*,
         LEAST(raw_night_25_minutes, GREATEST(0, raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_overflow_minutes))::int AS night_25_minutes,
@@ -791,8 +795,20 @@ export function buildOvertimeCtes(
         GREATEST(0, allowed_overtime_minutes - raw_extra_100_minutes)::int AS extra_50_minutes,
         GREATEST(0, overtime_candidate_minutes - allowed_overtime_minutes)::int AS overtime_excess_minutes
       FROM overtime_limited
+    ),
+    metrics_by_day AS (
+      SELECT
+        classified_metrics.*,
+        (
+          ordinary_minutes
+          + night_25_minutes
+          + extra_50_minutes
+          + extra_100_minutes
+          + non_working_100_minutes
+        )::int AS worked_minutes
+      FROM classified_metrics
       CROSS JOIN filters
-      WHERE overtime_limited.shift_date BETWEEN filters.date_from AND filters.date_to
+      WHERE classified_metrics.shift_date BETWEEN filters.date_from AND filters.date_to
     )
   `;
 }

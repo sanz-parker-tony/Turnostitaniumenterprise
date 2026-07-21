@@ -3885,6 +3885,75 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
     const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
 
+    // El dashboard del empleado debe usar el mismo motor de tiempos que los
+    // dashboards y reportes del supervisor. Así la jornada efectiva, lunch,
+    // límites semanales y tratamiento de días no laborables tienen una sola
+    // fuente de verdad.
+    const employeeAssignedForWorkTimeSql = `
+      SELECT DISTINCT ON (e.id)
+        e.id AS employee_id,
+        e.employee_code,
+        e.employee_name,
+        e.employee_lastname,
+        ec.company_id,
+        ec.employee_profile_id,
+        c.company_name,
+        c.logo AS company_logo,
+        c.banner AS company_banner,
+        ec.work_location_id,
+        wl.work_location_name,
+        COALESCE(wl.country_id, c.company_country_id) AS employee_country_id,
+        COALESCE(wl.state_id, c.company_state_id) AS employee_state_id,
+        COALESCE(wl.city_id, c.company_city_id) AS employee_city_id,
+        ec.department_id,
+        d.department_name,
+        ec.area_id,
+        ar.area_name,
+        ec.cost_center_id,
+        cc.cost_center_name,
+        ec.payroll_group_id,
+        pg.payroll_group_name,
+        ec.work_group_id,
+        wg.work_group_name,
+        ec.hire_date,
+        ec.termination_date,
+        COALESCE(ec.work_on_holidays, false) AS work_on_holidays
+      FROM public.employees e
+      INNER JOIN public.employee_companies ec
+        ON ec.employee_id = e.id
+       AND ec.tenant_id = e.tenant_id
+       AND ec.is_active = true
+      LEFT JOIN public.companies c ON c.id = ec.company_id
+      LEFT JOIN public.work_locations wl
+        ON wl.id = ec.work_location_id
+       AND wl.tenant_id = ec.tenant_id
+       AND wl.company_id = ec.company_id
+      LEFT JOIN public.departments d ON d.id = ec.department_id
+      LEFT JOIN public.areas ar ON ar.id = ec.area_id
+      LEFT JOIN public.cost_centers cc ON cc.id = ec.cost_center_id
+      LEFT JOIN public.payroll_groups pg ON pg.id = ec.payroll_group_id
+      LEFT JOIN public.work_groups wg ON wg.id = ec.work_group_id
+      WHERE e.tenant_id = $1::uuid
+        AND e.id = $2::uuid
+        AND e.is_active = true
+        AND ($5::uuid IS NULL OR ec.company_id = $5::uuid)
+      ORDER BY
+        e.id,
+        CASE WHEN ec.company_id = $5::uuid THEN 0 ELSE 1 END,
+        ec.created_at DESC NULLS LAST
+    `;
+    const employeeWorkTimeCtes = buildOvertimeCtes(
+      employeeAssignedForWorkTimeSql,
+      '$3',
+      '$4',
+      'NULL::uuid',
+      'NULL::uuid',
+      'NULL::uuid',
+      'NULL::uuid',
+      'NULL::uuid',
+      'NULL::uuid'
+    );
+
     const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthTimePunchChangeRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult, incidentsResult, oddPunchesResult, derivedIncidentsResult, shiftOperationalIncidentsResult] = await Promise.all([
       pool.query(
         `
@@ -4213,320 +4282,22 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       ),
       pool.query(
         `
-          WITH plans AS (
-            SELECT
-              p.employee_id,
-              p.shift_date,
-              s.id AS shift_id,
-              s.start_time,
-              COALESCE(s.work_minutes, 0)::int AS shift_work_minutes,
-              COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
-              COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes,
-              sc.id AS constructor_id,
-              sc.tenant_id AS constructor_tenant_id,
-              (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int) AS shift_start_minutes
-            FROM public.employee_shift_plans p
-            INNER JOIN public.shifts s
-              ON s.id = p.shift_id
-             AND s.tenant_id = p.tenant_id
-            LEFT JOIN public.shift_constructors sc
-              ON sc.shift_id = s.id
-             AND sc.tenant_id = s.tenant_id
-             AND sc.is_active = true
-            WHERE p.tenant_id = $1::uuid
-              AND p.employee_id = $2::uuid
-              AND p.is_active = true
-              AND p.shift_date >= $3::date
-              AND p.shift_date < $4::date
-              AND ($5::date IS NULL OR p.shift_date >= $5::date)
-              AND ($6::date IS NULL OR p.shift_date <= $6::date)
-          ),
-          plan_bounds AS (
-            SELECT
-              pl.*,
-              COALESCE(
-                MIN(b.start_minutes) FILTER (
-                  WHERE b.is_break = false
-                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
-                ),
-                pl.shift_start_minutes
-              )::int AS work_start_minutes,
-              COALESCE(
-                MAX(b.end_minutes) FILTER (
-                  WHERE b.is_break = false
-                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
-                ),
-                pl.shift_start_minutes + pl.shift_work_minutes
-              )::int AS work_end_minutes,
-              COALESCE(
-                SUM(b.end_minutes - b.start_minutes) FILTER (
-                  WHERE b.is_break = false
-                    AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
-                ),
-                pl.shift_work_minutes
-              )::int AS planned_work_minutes,
-              COUNT(b.id) FILTER (
-                WHERE b.is_break = false
-                  AND b.block_type IN ('ORDINARIA', 'NOCTURNA')
-              )::int AS regular_block_count
-            FROM plans pl
-            LEFT JOIN public.shift_constructor_blocks b
-              ON b.constructor_id = pl.constructor_id
-             AND b.tenant_id = pl.constructor_tenant_id
-             AND b.is_active = true
-            GROUP BY
-              pl.employee_id,
-              pl.shift_date,
-              pl.shift_id,
-              pl.start_time,
-              pl.shift_work_minutes,
-              pl.entry_grace_minutes,
-              pl.exit_grace_minutes,
-              pl.constructor_id,
-              pl.constructor_tenant_id,
-              pl.shift_start_minutes
-          ),
-          classified_plan_bounds AS (
-            SELECT
-              pb.*,
-              (
-                CASE
-                  WHEN pb.constructor_id IS NOT NULL THEN pb.regular_block_count = 0
-                  ELSE pb.shift_work_minutes <= 0
-                END
-                OR EXISTS (
-                  SELECT 1
-                  FROM public.holidays holiday
-                  WHERE holiday.tenant_id = $1::uuid
-                    AND holiday.is_active = true
-                    AND (
-                      (COALESCE(holiday.is_recurring, false) = false AND holiday.holiday_date = pb.shift_date)
-                      OR (
-                        COALESCE(holiday.is_recurring, false) = true
-                        AND EXTRACT(MONTH FROM holiday.holiday_date) = EXTRACT(MONTH FROM pb.shift_date)
-                        AND EXTRACT(DAY FROM holiday.holiday_date) = EXTRACT(DAY FROM pb.shift_date)
-                      )
-                    )
-                    AND (holiday.company_id IS NULL OR holiday.company_id = $7::uuid)
-                    AND (holiday.country_id IS NULL OR holiday.country_id = $8::uuid)
-                    AND (holiday.state_id IS NULL OR holiday.state_id = $9::uuid)
-                    AND (holiday.city_id IS NULL OR holiday.city_id = $10::uuid)
-                    AND (holiday.work_location_id IS NULL OR holiday.work_location_id = $11::uuid)
-                )
-                OR EXISTS (
-                  SELECT 1
-                  FROM public.employee_absence_requests absence_request
-                  INNER JOIN public.lookup_values request_status
-                    ON request_status.id = absence_request.request_status_id
-                  LEFT JOIN public.lookup_values justify_method
-                    ON justify_method.id = absence_request.justify_method_id
-                  LEFT JOIN public.justification_types justification_type
-                    ON justification_type.id = absence_request.justification_type_id
-                  WHERE absence_request.tenant_id = $1::uuid
-                    AND absence_request.employee_id = $2::uuid
-                    AND absence_request.is_active = true
-                    AND UPPER(COALESCE(request_status.lookup_key, request_status.lookup_label, '')) IN ('APPROVED', 'APROBADO', 'APROBADA')
-                    AND pb.shift_date BETWEEN absence_request.start_datetime::date
-                        AND COALESCE(absence_request.end_datetime, absence_request.start_datetime)::date
-                    AND (
-                      UPPER(COALESCE(justify_method.lookup_key, '')) IN ('VACACIONES', 'VACATION')
-                      OR UPPER(COALESCE(justification_type.justification_name, '')) LIKE '%VACAC%'
-                    )
-                )
-              ) AS is_non_working_day
-            FROM plan_bounds pb
-          ),
-          punch_summary AS (
-            SELECT
-              p.employee_id,
-              (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS shift_date,
-              MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS work_entry,
-              MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS work_exit
-            FROM public.employee_time_punches p
-            WHERE p.tenant_id = $1::uuid
-              AND p.employee_id = $2::uuid
-              AND p.is_active = true
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date >= $3::date
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date < $4::date
-            GROUP BY
-              p.employee_id,
-              (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date
-          ),
-          daily AS (
-            SELECT
-              pb.*,
-              ps.work_entry,
-              ps.work_exit,
-              (pb.shift_date + (pb.work_start_minutes || ' minutes')::interval) AS expected_entry_at,
-              (pb.shift_date + (pb.work_end_minutes || ' minutes')::interval) AS expected_work_exit_at
-            FROM classified_plan_bounds pb
-            LEFT JOIN punch_summary ps
-              ON ps.employee_id = pb.employee_id
-             AND ps.shift_date = pb.shift_date
-            WHERE pb.planned_work_minutes > 0
-               OR pb.is_non_working_day = true
-          ),
-          block_minutes AS (
-            SELECT
-              b.block_type,
-              SUM(
-                GREATEST(
-                  0,
-                  EXTRACT(EPOCH FROM (
-                    LEAST(d.work_exit, d.shift_date + (b.end_minutes || ' minutes')::interval)
-                    - GREATEST(d.work_entry, d.shift_date + (b.start_minutes || ' minutes')::interval)
-                  )) / 60
-                )
-              )::int AS minutes
-            FROM daily d
-            INNER JOIN public.shift_constructor_blocks b
-              ON b.constructor_id = d.constructor_id
-             AND b.tenant_id = d.constructor_tenant_id
-             AND b.is_active = true
-             AND b.is_break = false
-             AND b.block_type IN ('ORDINARIA', 'NOCTURNA', 'EXTRA_50', 'EXTRA_100')
-            WHERE d.work_entry IS NOT NULL
-              AND d.work_exit IS NOT NULL
-              AND d.work_exit > d.work_entry
-              AND d.is_non_working_day = false
-              AND d.work_exit > (d.shift_date + (b.start_minutes || ' minutes')::interval)
-              AND d.work_entry < (d.shift_date + (b.end_minutes || ' minutes')::interval)
-            GROUP BY b.block_type
-          ),
-          fallback_ordinary AS (
-            SELECT
-              SUM(
-                CASE
-                  WHEN d.is_non_working_day = false
-                   AND d.constructor_id IS NULL
-                   AND d.work_entry IS NOT NULL
-                   AND d.work_exit IS NOT NULL
-                   AND d.work_exit > d.work_entry
-                    THEN LEAST(
-                      d.planned_work_minutes,
-                      GREATEST(0, EXTRACT(EPOCH FROM (d.work_exit - d.work_entry)) / 60)::int
-                    )
-                  ELSE 0
-                END
-              )::int AS minutes
-            FROM daily d
-          ),
-          non_working_minutes AS (
-            SELECT
-              COALESCE(SUM(recognized.minutes), 0)::int AS minutes
-            FROM (
-              SELECT
-                d.shift_date,
-                SUM(
-                  GREATEST(
-                    0,
-                    EXTRACT(EPOCH FROM (
-                      LEAST(d.work_exit, d.shift_date + (block.end_minutes || ' minutes')::interval)
-                      - GREATEST(d.work_entry, d.shift_date + (block.start_minutes || ' minutes')::interval)
-                    )) / 60
-                  )
-                )::int AS minutes
-              FROM daily d
-              INNER JOIN public.shift_constructor_blocks block
-                ON block.constructor_id = d.constructor_id
-               AND block.tenant_id = d.constructor_tenant_id
-               AND block.is_active = true
-               AND block.is_break = false
-              WHERE d.is_non_working_day = true
-                AND d.work_entry IS NOT NULL
-                AND d.work_exit IS NOT NULL
-                AND d.work_exit > d.work_entry
-                AND d.work_exit > (d.shift_date + (block.start_minutes || ' minutes')::interval)
-                AND d.work_entry < (d.shift_date + (block.end_minutes || ' minutes')::interval)
-              GROUP BY d.shift_date
-
-              UNION ALL
-
-              SELECT
-                d.shift_date,
-                GREATEST(0, EXTRACT(EPOCH FROM (d.work_exit - d.work_entry)) / 60)::int AS minutes
-              FROM daily d
-              WHERE d.is_non_working_day = true
-                AND d.work_entry IS NOT NULL
-                AND d.work_exit IS NOT NULL
-                AND d.work_exit > d.work_entry
-                AND NOT EXISTS (
-                  SELECT 1
-                  FROM public.shift_constructor_blocks block
-                  WHERE block.constructor_id = d.constructor_id
-                    AND block.tenant_id = d.constructor_tenant_id
-                    AND block.is_active = true
-                    AND block.is_break = false
-                )
-            ) recognized
-          ),
-          daily_minus AS (
-            SELECT
-              SUM(
-                CASE
-                  WHEN d.is_non_working_day = false
-                   AND d.work_entry IS NOT NULL
-                   AND d.work_entry > d.expected_entry_at + (d.entry_grace_minutes || ' minutes')::interval
-                    THEN GREATEST(0, EXTRACT(EPOCH FROM (d.work_entry - d.expected_entry_at)) / 60)::int
-                  ELSE 0
-                END
-              )::int AS late_minutes,
-              SUM(
-                CASE
-                  WHEN d.is_non_working_day = false
-                   AND d.work_exit IS NOT NULL
-                   AND d.work_exit < d.expected_work_exit_at - (d.exit_grace_minutes || ' minutes')::interval
-                    THEN GREATEST(0, EXTRACT(EPOCH FROM (d.expected_work_exit_at - d.work_exit)) / 60)::int
-                  ELSE 0
-                END
-              )::int AS early_departure_minutes,
-              SUM(
-                CASE
-                  WHEN d.is_non_working_day = false
-                   AND d.work_entry IS NULL
-                   AND (
-                     d.shift_date < CURRENT_DATE
-                     OR now() > d.expected_work_exit_at
-                   )
-                    THEN d.planned_work_minutes
-                  ELSE 0
-                END
-              )::int AS absence_minutes
-            FROM daily d
-          )
+          ${employeeWorkTimeCtes}
           SELECT
-            (
-              COALESCE((SELECT minutes FROM fallback_ordinary), 0)
-              + COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'ORDINARIA'), 0)
-            )::int AS ordinary_minutes,
-            COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'NOCTURNA'), 0)::int AS night_minutes,
-            COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'EXTRA_50'), 0)::int AS extra_50_minutes,
-            (
-              COALESCE((SELECT SUM(minutes) FROM block_minutes WHERE block_type = 'EXTRA_100'), 0)
-              + COALESCE((SELECT minutes FROM non_working_minutes), 0)
-            )::int AS extra_100_minutes,
-            COALESCE(dm.late_minutes, 0)::int AS late_minutes,
-            COALESCE(dm.absence_minutes, 0)::int AS absence_minutes,
-            COALESCE(dm.early_departure_minutes, 0)::int AS early_departure_minutes,
+            COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
+            COALESCE(SUM(night_25_minutes), 0)::int AS night_minutes,
+            COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
+            COALESCE(SUM(extra_100_minutes + non_working_100_minutes), 0)::int AS extra_100_minutes,
+            COALESCE(SUM(late_minutes), 0)::int AS late_minutes,
+            COALESCE(SUM(absence_minutes), 0)::int AS absence_minutes,
+            COALESCE(SUM(early_departure_minutes), 0)::int AS early_departure_minutes,
             COALESCE(
-              (SELECT ARRAY_AGG(d.shift_date ORDER BY d.shift_date) FROM daily d WHERE d.is_non_working_day = true),
+              ARRAY_AGG(DISTINCT shift_date ORDER BY shift_date) FILTER (WHERE is_non_working_day = true),
               ARRAY[]::date[]
             ) AS non_working_dates
-          FROM daily_minus dm
+          FROM metrics_by_day
         `,
-        [
-          tenantId,
-          employeeId,
-          rangeFromIso,
-          rangeEndExclusiveIso,
-          employeeHireDateIso,
-          employeeTerminationDateIso,
-          companyId || null,
-          employeeCountryId || null,
-          employeeStateId || null,
-          employeeCityId || null,
-          workLocationId || null,
-        ]
+        [tenantId, employeeId, rangeFromIso, rangeToIso, companyId || null]
       ),
       pool.query(
         `
