@@ -582,11 +582,13 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         `
           INSERT INTO public.shifts (
             id, tenant_id, company_id, shift_name, shift_short_name, start_time,
-            work_minutes, lunch_minutes, entry_grace_minutes, exit_grace_minutes,
+            shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes,
+            lunch_is_paid, lunch_deduction_mode,
+            entry_grace_minutes, exit_grace_minutes,
             is_active, created_by
           ) VALUES (
             gen_random_uuid(), $1, $2, 'Turno Libre', 'LIB', '00:00',
-            0, 0, 0, 0, true, $3
+            1440, 0, 0, 0, false, NULL, 0, 0, true, $3
           )
           RETURNING id
         `,

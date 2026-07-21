@@ -4637,6 +4637,21 @@ router.post('/:entity', async (req: Request, res: Response) => {
     }
 
     if (req.params.entity === 'shifts') {
+      const workMinutes = Math.max(0, Math.trunc(Number(payload.work_minutes || 0)));
+      const lunchMinutes = Math.max(0, Math.trunc(Number(payload.lunch_minutes || 0)));
+      const lunchWindowMinutes = Math.max(lunchMinutes, Math.trunc(Number(payload.lunch_window_minutes ?? lunchMinutes)));
+      const lunchIsPaid = payload.lunch_is_paid === true || String(payload.lunch_is_paid || '').toLowerCase() === 'true';
+      payload.work_minutes = workMinutes;
+      payload.lunch_minutes = lunchMinutes;
+      payload.lunch_window_minutes = lunchWindowMinutes;
+      payload.lunch_is_paid = lunchIsPaid;
+      payload.shift_duration_minutes = Math.max(
+        workMinutes,
+        Math.trunc(Number(payload.shift_duration_minutes ?? workMinutes + (lunchIsPaid ? 0 : lunchMinutes)))
+      );
+      const lunchMode = String(payload.lunch_deduction_mode || '').trim().toUpperCase();
+      payload.lunch_deduction_mode = lunchMode || null;
+
       const allCompany = isAllSelector(payload.company_id);
       const allPayrollGroup = isAllSelector(payload.payroll_group_id);
 
@@ -4753,7 +4768,7 @@ router.put('/:entity/:id', async (req: Request, res: Response) => {
 
       const { data: currentShift, error: currentShiftError } = await Postgres
         .from('shifts')
-        .select('company_id, payroll_group_id')
+        .select('company_id, payroll_group_id, shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes, lunch_is_paid, lunch_deduction_mode')
         .eq('tenant_id', tenantId)
         .eq('id', req.params.id)
         .maybeSingle();
@@ -4767,6 +4782,22 @@ router.put('/:entity/:id', async (req: Request, res: Response) => {
 
       const candidateCompanyId = payload.company_id ?? currentShift.company_id;
       const candidatePayrollGroupId = payload.payroll_group_id ?? currentShift.payroll_group_id;
+
+      const workMinutes = Math.max(0, Math.trunc(Number(payload.work_minutes ?? currentShift.work_minutes ?? 0)));
+      const lunchMinutes = Math.max(0, Math.trunc(Number(payload.lunch_minutes ?? currentShift.lunch_minutes ?? 0)));
+      const lunchWindowMinutes = Math.max(lunchMinutes, Math.trunc(Number(payload.lunch_window_minutes ?? currentShift.lunch_window_minutes ?? lunchMinutes)));
+      const lunchIsPaidRaw = payload.lunch_is_paid ?? currentShift.lunch_is_paid;
+      const lunchIsPaid = lunchIsPaidRaw === true || String(lunchIsPaidRaw || '').toLowerCase() === 'true';
+      payload.work_minutes = workMinutes;
+      payload.lunch_minutes = lunchMinutes;
+      payload.lunch_window_minutes = lunchWindowMinutes;
+      payload.lunch_is_paid = lunchIsPaid;
+      payload.shift_duration_minutes = Math.max(
+        workMinutes,
+        Math.trunc(Number(payload.shift_duration_minutes ?? currentShift.shift_duration_minutes ?? workMinutes + (lunchIsPaid ? 0 : lunchMinutes)))
+      );
+      const lunchMode = String(payload.lunch_deduction_mode ?? currentShift.lunch_deduction_mode ?? '').trim().toUpperCase();
+      payload.lunch_deduction_mode = lunchMode || null;
 
       const validationError = await validateShiftCombination(
         Postgres,

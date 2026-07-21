@@ -128,27 +128,48 @@ function toStartTimeFromMinutes(startMinutes: number): string {
   return `${pad2(hh)}:${pad2(mm)}:00`;
 }
 
-function deriveShiftFields(blocks: ReturnType<typeof normalizeBlock>[]) {
-  const workBlocks = blocks
-    .filter((block) => !block.is_break)
+const LUNCH_DEDUCTION_MODES = new Set(['ACTUAL_OR_SCHEDULED', 'ACTUAL', 'SCHEDULED', 'NONE']);
+
+function normalizeLunchDeductionMode(value: any): string | null {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (!normalized) return null;
+  return LUNCH_DEDUCTION_MODES.has(normalized) ? normalized : null;
+}
+
+function deriveShiftFields(
+  blocks: ReturnType<typeof normalizeBlock>[],
+  lunchAllowedMinutes: number,
+  lunchIsPaid: boolean
+) {
+  const regularWorkBlocks = blocks
+    .filter((block) => !block.is_break && ['ORDINARIA', 'NOCTURNA'].includes(block.block_type))
     .sort((a, b) => a.start_minutes - b.start_minutes);
 
-  const totalWorkMinutes = workBlocks.reduce((sum, block) => sum + (block.end_minutes - block.start_minutes), 0);
+  const allNonBreakBlocks = blocks.filter((block) => !block.is_break);
+  const grossRegularMinutes = regularWorkBlocks.reduce((sum, block) => sum + (block.end_minutes - block.start_minutes), 0);
   const totalBreakMinutes = blocks
     .filter((block) => block.is_break)
     .reduce((sum, block) => sum + (block.end_minutes - block.start_minutes), 0);
-  const totalLunchMinutes = blocks
+  const lunchWindowMinutes = blocks
     .filter((block) => block.block_type === 'LUNCH')
     .reduce((sum, block) => sum + (block.end_minutes - block.start_minutes), 0);
+  const effectiveLunchMinutes = Math.max(0, Math.min(Math.trunc(lunchAllowedMinutes), lunchWindowMinutes));
+  const totalWorkMinutes = Math.max(0, grossRegularMinutes - (lunchIsPaid ? 0 : effectiveLunchMinutes));
 
-  const startMinutes = workBlocks.length > 0
-    ? workBlocks[0].start_minutes
+  const spanBlocks = regularWorkBlocks.length > 0 ? regularWorkBlocks : allNonBreakBlocks.length > 0 ? allNonBreakBlocks : blocks;
+  const startMinutes = spanBlocks.length > 0
+    ? Math.min(...spanBlocks.map((block) => block.start_minutes))
     : blocks[0].start_minutes;
+  const endMinutes = spanBlocks.length > 0
+    ? Math.max(...spanBlocks.map((block) => block.end_minutes))
+    : startMinutes;
 
   return {
     totalWorkMinutes,
     totalBreakMinutes,
-    totalLunchMinutes,
+    totalLunchMinutes: effectiveLunchMinutes,
+    lunchWindowMinutes,
+    shiftDurationMinutes: Math.max(0, endMinutes - startMinutes),
     startTime: toStartTimeFromMinutes(startMinutes),
   };
 }
@@ -292,10 +313,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
     }
 
-    const [shiftsResult, constructorsResult] = await Promise.all([
+    const [shiftsResult, constructorsResult, lunchDeductionModesResult] = await Promise.all([
       pool.query(
         `
-          SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
+          SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, company_id, payroll_group_id, start_time, shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes, lunch_is_paid, lunch_deduction_mode, is_active
           FROM public.shifts
           WHERE tenant_id = $1
           ORDER BY shift_name ASC
@@ -310,6 +331,24 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             AND is_active = true
         `,
         [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            lv.lookup_key,
+            lv.lookup_label,
+            lv.lookup_short_label,
+            lv.sort_order
+          FROM public.lookup_values lv
+          INNER JOIN public.lookup_groups lg
+            ON lg.id = lv.lookup_group_id
+           AND lg.lookup_group_key = 'LUNCH_DEDUCTION_MODE'
+           AND lg.is_active = true
+          WHERE lv.tenant_id IS NULL
+            AND lv.lookup_scope = 'SYSTEM'
+            AND lv.is_active = true
+          ORDER BY lv.sort_order ASC, lv.lookup_key ASC
+        `
       ),
     ]);
 
@@ -327,6 +366,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       success: true,
       tenant_id: tenantId,
       shifts,
+      lunch_deduction_modes: lunchDeductionModesResult.rows,
       count: shifts.length,
     });
   } catch (err: any) {
@@ -348,7 +388,7 @@ router.get('/shift/:shiftId', async (req: Request, res: Response) => {
 
     const shiftResult = await pool.query(
       `
-        SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, company_id, payroll_group_id, start_time, work_minutes, lunch_minutes, is_active
+        SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, company_id, payroll_group_id, start_time, shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes, lunch_is_paid, lunch_deduction_mode, is_active
         FROM public.shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -443,7 +483,19 @@ router.post('/shift', async (req: Request, res: Response) => {
         ? null
         : String(payrollGroupIdRaw).trim();
 
-    const derived = deriveShiftFields(normalizedBlocks);
+    const lunchIsPaid = req.body?.lunch_is_paid === true || String(req.body?.lunch_is_paid || '').toLowerCase() === 'true';
+    const defaultLunchMinutes = normalizedBlocks
+      .filter((block: ReturnType<typeof normalizeBlock>) => block.block_type === 'LUNCH')
+      .reduce((sum: number, block: ReturnType<typeof normalizeBlock>) => sum + block.end_minutes - block.start_minutes, 0);
+    const requestedLunchMinutes = asInt(req.body?.lunch_minutes, defaultLunchMinutes);
+    const lunchDeductionMode = normalizeLunchDeductionMode(req.body?.lunch_deduction_mode);
+    if (req.body?.lunch_deduction_mode && !lunchDeductionMode) {
+      return res.status(400).json({ error: 'lunch_deduction_mode no es valido' });
+    }
+    const derived = deriveShiftFields(normalizedBlocks, requestedLunchMinutes, lunchIsPaid);
+    if (requestedLunchMinutes < 0 || requestedLunchMinutes > derived.lunchWindowMinutes) {
+      return res.status(400).json({ error: 'El tiempo efectivo de lunch debe estar entre 0 y la ventana de lunch configurada' });
+    }
     const entryGrace = asInt(req.body?.entry_grace_minutes, 0);
     const exitGrace = asInt(req.body?.exit_grace_minutes, 0);
 
@@ -453,14 +505,20 @@ router.post('/shift', async (req: Request, res: Response) => {
       `
         INSERT INTO public.shifts (
           id, tenant_id, company_id, payroll_group_id, shift_name, shift_short_name,
-          shift_icon_key, shift_bg_color, shift_text_color, start_time, work_minutes, lunch_minutes, entry_grace_minutes, exit_grace_minutes,
+          shift_icon_key, shift_bg_color, shift_text_color, start_time,
+          shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes,
+          lunch_is_paid, lunch_deduction_mode,
+          entry_grace_minutes, exit_grace_minutes,
           is_active, created_by
         )
         VALUES (
           gen_random_uuid(), $1, $2, $3, $4, $5,
-          $6, $7, $8, $9, $10, $11, $12, $13, true, $14
+          $6, $7, $8, $9,
+          $10, $11, $12, $13,
+          $14, $15,
+          $16, $17, true, $18
         )
-        RETURNING id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, work_minutes, lunch_minutes, start_time
+        RETURNING id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes, lunch_is_paid, lunch_deduction_mode, start_time
       `,
       [
         tenantId,
@@ -472,8 +530,12 @@ router.post('/shift', async (req: Request, res: Response) => {
         shiftBgColor,
         shiftTextColor,
         derived.startTime,
+        derived.shiftDurationMinutes,
         derived.totalWorkMinutes,
         derived.totalLunchMinutes,
+        derived.lunchWindowMinutes,
+        lunchIsPaid,
+        lunchDeductionMode,
         entryGrace,
         exitGrace,
         actor,
@@ -566,7 +628,7 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
 
     const shiftResult = await client.query(
       `
-        SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color
+        SELECT id, shift_name, shift_short_name, shift_icon_key, shift_bg_color, shift_text_color, lunch_minutes, lunch_is_paid, lunch_deduction_mode
         FROM public.shifts
         WHERE tenant_id = $1
           AND id = $2
@@ -598,7 +660,20 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
       normalizeHexColor(shift.shift_text_color, SHIFT_TEXT_BY_ICON[nextShiftIconKey] || DEFAULT_SHIFT_TEXT_COLOR)
     );
     const constructorName = String(req.body?.constructor_name || '').trim() || `Constructor ${nextShiftName}`;
-    const derived = deriveShiftFields(normalizedBlocks);
+    const lunchIsPaid = req.body?.lunch_is_paid === undefined
+      ? Boolean(shift.lunch_is_paid)
+      : req.body.lunch_is_paid === true || String(req.body.lunch_is_paid).toLowerCase() === 'true';
+    const requestedLunchMinutes = asInt(req.body?.lunch_minutes, Number(shift.lunch_minutes || 0));
+    const lunchDeductionMode = req.body?.lunch_deduction_mode === undefined
+      ? normalizeLunchDeductionMode(shift.lunch_deduction_mode)
+      : normalizeLunchDeductionMode(req.body.lunch_deduction_mode);
+    if (req.body?.lunch_deduction_mode && !lunchDeductionMode) {
+      return res.status(400).json({ error: 'lunch_deduction_mode no es valido' });
+    }
+    const derived = deriveShiftFields(normalizedBlocks, requestedLunchMinutes, lunchIsPaid);
+    if (requestedLunchMinutes < 0 || requestedLunchMinutes > derived.lunchWindowMinutes) {
+      return res.status(400).json({ error: 'El tiempo efectivo de lunch debe estar entre 0 y la ventana de lunch configurada' });
+    }
 
     await client.query('BEGIN');
 
@@ -611,10 +686,14 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
             shift_bg_color = $6,
             shift_text_color = $7,
             start_time = $8,
-            work_minutes = $9,
-            lunch_minutes = $10,
+            shift_duration_minutes = $9,
+            work_minutes = $10,
+            lunch_minutes = $11,
+            lunch_window_minutes = $12,
+            lunch_is_paid = $13,
+            lunch_deduction_mode = $14,
             is_active = true,
-            updated_by = $11,
+            updated_by = $15,
             updated_at = now()
         WHERE id = $1
           AND tenant_id = $2
@@ -628,8 +707,12 @@ router.put('/shift/:shiftId', async (req: Request, res: Response) => {
         nextShiftBgColor,
         nextShiftTextColor,
         derived.startTime,
+        derived.shiftDurationMinutes,
         derived.totalWorkMinutes,
         derived.totalLunchMinutes,
+        derived.lunchWindowMinutes,
+        lunchIsPaid,
+        lunchDeductionMode,
         actor,
       ]
     );

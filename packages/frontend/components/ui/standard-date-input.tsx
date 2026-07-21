@@ -140,6 +140,25 @@ function validTime(value: string): boolean {
   return Boolean(match && Number(match[1]) <= 23 && Number(match[2]) <= 59 && Number(match[3]) <= 59);
 }
 
+function timeToSeconds(value: string): number | null {
+  const match = String(value || '').match(/^(\d{2}):(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  if (hours > 23 || minutes > 59 || seconds > 59) return null;
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+function secondsToTime(value: number): string {
+  const secondsInDay = 24 * 60 * 60;
+  const normalized = ((Math.trunc(value) % secondsInDay) + secondsInDay) % secondsInDay;
+  const hours = Math.floor(normalized / 3600);
+  const minutes = Math.floor((normalized % 3600) / 60);
+  const seconds = normalized % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 function formatTypedTime(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 6);
   let formatted = digits.slice(0, 2);
@@ -148,7 +167,7 @@ function formatTypedTime(value: string): string {
   return formatted;
 }
 
-export function StandardTimeInput({ value, onValueChange, className, onBlur, title, ...props }: StandardInputProps) {
+export function StandardTimeInput({ value, onValueChange, className, onBlur, onKeyDown, title, ...props }: StandardInputProps) {
   const [displayValue, setDisplayValue] = useState(() => normalizeTimeDisplay(value));
 
   useEffect(() => setDisplayValue(normalizeTimeDisplay(value)), [value]);
@@ -168,6 +187,26 @@ export function StandardTimeInput({ value, onValueChange, className, onBlur, tit
         setDisplayValue(formatted);
         if (validTime(formatted)) onValueChange(formatted);
         if (!formatted) onValueChange('');
+      }}
+      onKeyDown={(event) => {
+        if (!props.readOnly && !props.disabled && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          const currentSeconds = timeToSeconds(displayValue) ?? timeToSeconds(normalizeTimeDisplay(value));
+          if (currentSeconds !== null) {
+            event.preventDefault();
+            const cursor = event.currentTarget.selectionStart ?? 0;
+            const unitSeconds = cursor <= 2 ? 3600 : cursor <= 5 ? 60 : 1;
+            const direction = event.key === 'ArrowUp' ? 1 : -1;
+            const nextValue = secondsToTime(currentSeconds + direction * unitSeconds);
+            const input = event.currentTarget;
+            setDisplayValue(nextValue);
+            onValueChange(nextValue);
+            requestAnimationFrame(() => {
+              const start = cursor <= 2 ? 0 : cursor <= 5 ? 3 : 6;
+              input.setSelectionRange(start, start + 2);
+            });
+          }
+        }
+        onKeyDown?.(event);
       }}
       onBlur={(event) => {
         if (!validTime(displayValue)) setDisplayValue(normalizeTimeDisplay(value));

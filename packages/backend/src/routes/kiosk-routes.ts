@@ -17,6 +17,7 @@ const REQUEST_STATUS_GROUP_KEY = 'REQUEST_STATUS';
 const ABSENCE_DISCOUNT_METHOD_GROUP_KEY = 'JUSTIFY_METHOD';
 const EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY = 'DEC';
 const EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS = ['INC', 'LFH', 'TNL'];
+const PUNCH_LINKED_ABSENCE_EVENT_KEYS = new Set(['ATR', 'SAN', 'LEX', 'LFH']);
 const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
@@ -31,6 +32,15 @@ const FIXED_NOTES = 'marcaci\u00f3n manual v\u00eda web';
 const MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY = 'MIN_MINUTES_BETWEEN_VALID_PUNCHES';
 const DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES = 5;
 const ROUTE_TRACKING_NOTES = 'marcacion de recorrido - fuera de recinto autorizado';
+
+function isPunchCompatibleWithAbsenceEvent(eventShortName: unknown, punchKey: unknown): boolean {
+  const eventKey = String(eventShortName || '').trim().toUpperCase();
+  const key = Number(punchKey);
+  if (eventKey === 'ATR') return key === 1;
+  if (eventKey === 'SAN') return key === 4;
+  if (eventKey === 'LEX' || eventKey === 'LFH') return key === 2 || key === 3;
+  return true;
+}
 
 type EmployeeContext = {
   user_id: string;
@@ -2296,7 +2306,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No existe empleado asociado al usuario autenticado' });
     }
 
-    const [justificationsResult, attendanceEventsResult, statusesResult, discountMethodsResult, discountMethodRulesResult] = await Promise.all([
+    const [justificationsResult, attendanceEventsResult, statusesResult, discountMethodsResult, discountMethodRulesResult, recentPunchesResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -2400,6 +2410,33 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
         `,
         [context.tenant_id]
       ),
+      pool.query(
+        `
+          SELECT
+            p.id,
+            p.punch_datetime,
+            p.punch_key,
+            movement.lookup_label AS movement_label
+          FROM public.employee_time_punches p
+          LEFT JOIN LATERAL (
+            SELECT lv.lookup_label
+            FROM public.lookup_values lv
+            WHERE lv.lookup_group_id = $3::uuid
+              AND lv.sort_order = p.punch_key
+              AND lv.is_active = true
+              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
+            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
+            LIMIT 1
+          ) movement ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.employee_id = $2::uuid
+            AND p.is_active = true
+            AND p.punch_datetime >= CURRENT_DATE - INTERVAL '90 days'
+          ORDER BY p.punch_datetime DESC, p.created_at DESC
+          LIMIT 300
+        `,
+        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID]
+      ),
     ]);
 
     return res.status(200).json({
@@ -2418,6 +2455,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
       discount_methods: discountMethodsResult.rows,
       transaction_types: discountMethodsResult.rows,
       discount_method_rules: discountMethodRulesResult.rows,
+      recent_punches: recentPunchesResult.rows,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -2472,6 +2510,9 @@ router.get('/requests', async (req: Request, res: Response) => {
           r.attendance_event_id,
           ae.event_name,
           ae.event_short_name,
+          r.target_punch_id,
+          target_punch.punch_datetime AS target_punch_datetime,
+          target_punch.punch_key AS target_punch_key,
           r.justify_method_id,
           trx.lookup_key AS justify_method_key,
           trx.lookup_label AS justify_method_label,
@@ -2502,6 +2543,9 @@ router.get('/requests', async (req: Request, res: Response) => {
           ON jt.id = r.justification_type_id
         LEFT JOIN public.attendance_events ae
           ON ae.id = r.attendance_event_id
+        LEFT JOIN public.employee_time_punches target_punch
+          ON target_punch.id = r.target_punch_id
+         AND target_punch.tenant_id = r.tenant_id
         LEFT JOIN public.lookup_values trx
           ON trx.id = r.justify_method_id
         LEFT JOIN public.lookup_values rs
@@ -2619,6 +2663,7 @@ router.post('/requests', async (req: Request, res: Response) => {
 
     const justificationTypeId = normalizeNullableText(req.body?.justification_type_id);
     const attendanceEventId = normalizeNullableText(req.body?.attendance_event_id);
+    const targetPunchId = normalizeNullableText(req.body?.target_punch_id);
     const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = normalizeNullableText(req.body?.start_datetime);
     const endDateTime = normalizeNullableText(req.body?.end_datetime);
@@ -2673,7 +2718,7 @@ router.post('/requests', async (req: Request, res: Response) => {
       ),
       pool.query(
         `
-          SELECT ae.id
+          SELECT ae.id, ae.event_short_name
           FROM public.attendance_events ae
           INNER JOIN public.lookup_values direction
             ON direction.id = ae.transaction_direction_id
@@ -2695,7 +2740,32 @@ router.post('/requests', async (req: Request, res: Response) => {
 
     const justification = justificationResult.rows[0];
     if (!justification) return res.status(400).json({ error: 'justification_type_id no valido' });
-    if (!eventResult.rows[0]) return res.status(400).json({ error: 'attendance_event_id no valido' });
+    const attendanceEvent = eventResult.rows[0];
+    if (!attendanceEvent) return res.status(400).json({ error: 'attendance_event_id no valido' });
+
+    const eventShortName = String(attendanceEvent.event_short_name || '').trim().toUpperCase();
+    if (PUNCH_LINKED_ABSENCE_EVENT_KEYS.has(eventShortName) && !targetPunchId) {
+      return res.status(400).json({ error: 'target_punch_id es obligatorio para justificar este evento' });
+    }
+    if (targetPunchId) {
+      const targetPunchResult = await pool.query(
+        `
+          SELECT id, punch_key
+          FROM public.employee_time_punches
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND employee_id = $3::uuid
+            AND is_active = true
+          LIMIT 1
+        `,
+        [targetPunchId, context.tenant_id, context.employee_id]
+      );
+      const targetPunch = targetPunchResult.rows[0];
+      if (!targetPunch) return res.status(400).json({ error: 'target_punch_id no corresponde al empleado' });
+      if (!isPunchCompatibleWithAbsenceEvent(eventShortName, targetPunch.punch_key)) {
+        return res.status(400).json({ error: 'La marcación seleccionada no corresponde al evento indicado' });
+      }
+    }
 
     if (justification.attendance_event_id && justification.attendance_event_id !== attendanceEventId) {
       return res.status(400).json({
@@ -2746,6 +2816,7 @@ router.post('/requests', async (req: Request, res: Response) => {
           employee_id,
           justification_type_id,
           attendance_event_id,
+          target_punch_id,
           justify_method_id,
           start_datetime,
           end_datetime,
@@ -2762,7 +2833,7 @@ router.post('/requests', async (req: Request, res: Response) => {
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true,$17
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,$18
         )
         RETURNING *
       `,
@@ -2772,6 +2843,7 @@ router.post('/requests', async (req: Request, res: Response) => {
         context.employee_id,
         justificationTypeId,
         attendanceEventId,
+        targetPunchId,
         justifyMethodId,
         startDateTime,
         endDateTime,
@@ -2861,6 +2933,7 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
           r.id,
           r.justification_type_id,
           r.attendance_event_id,
+          r.target_punch_id,
           r.justify_method_id,
           rs.lookup_key AS request_status_key
         FROM public.employee_absence_requests r
@@ -2883,6 +2956,7 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
 
     const justificationTypeId = req.body?.justification_type_id === undefined ? undefined : normalizeNullableText(req.body?.justification_type_id);
     const attendanceEventId = req.body?.attendance_event_id === undefined ? undefined : normalizeNullableText(req.body?.attendance_event_id);
+    const targetPunchId = req.body?.target_punch_id === undefined ? undefined : normalizeNullableText(req.body?.target_punch_id);
     const justifyMethodId =
       req.body?.justify_method_id === undefined ? undefined : normalizeNullableText(req.body?.justify_method_id);
     const startDateTime = req.body?.start_datetime === undefined ? undefined : normalizeNullableText(req.body?.start_datetime);
@@ -2912,10 +2986,11 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     }
 
     const effectiveAttendanceEventId = attendanceEventId ?? current.attendance_event_id;
+    let effectiveEventShortName = '';
     if (effectiveAttendanceEventId) {
       const validation = await pool.query(
         `
-          SELECT ae.id
+          SELECT ae.id, ae.event_short_name
           FROM public.attendance_events ae
           INNER JOIN public.lookup_values direction
             ON direction.id = ae.transaction_direction_id
@@ -2934,6 +3009,31 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
         [effectiveAttendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
       );
       if (!validation.rows[0]) return res.status(400).json({ error: 'attendance_event_id no valido' });
+      effectiveEventShortName = String(validation.rows[0].event_short_name || '').trim().toUpperCase();
+    }
+
+    const effectiveTargetPunchId = targetPunchId === undefined ? current.target_punch_id : targetPunchId;
+    if (PUNCH_LINKED_ABSENCE_EVENT_KEYS.has(effectiveEventShortName) && !effectiveTargetPunchId) {
+      return res.status(400).json({ error: 'target_punch_id es obligatorio para justificar este evento' });
+    }
+    if (effectiveTargetPunchId) {
+      const targetPunchResult = await pool.query(
+        `
+          SELECT id, punch_key
+          FROM public.employee_time_punches
+          WHERE id = $1::uuid
+            AND tenant_id = $2::uuid
+            AND employee_id = $3::uuid
+            AND is_active = true
+          LIMIT 1
+        `,
+        [effectiveTargetPunchId, context.tenant_id, context.employee_id]
+      );
+      const targetPunch = targetPunchResult.rows[0];
+      if (!targetPunch) return res.status(400).json({ error: 'target_punch_id no corresponde al empleado' });
+      if (!isPunchCompatibleWithAbsenceEvent(effectiveEventShortName, targetPunch.punch_key)) {
+        return res.status(400).json({ error: 'La marcación seleccionada no corresponde al evento indicado' });
+      }
     }
 
     const effectiveJustificationTypeId = justificationTypeId ?? current.justification_type_id;
@@ -3000,6 +3100,10 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     if (attendanceEventId !== undefined) {
       updates.push(`attendance_event_id = $${paramIndex++}`);
       params.push(attendanceEventId);
+    }
+    if (targetPunchId !== undefined) {
+      updates.push(`target_punch_id = $${paramIndex++}`);
+      params.push(targetPunchId);
     }
     if (justifyMethodId !== undefined) {
       updates.push(`justify_method_id = $${paramIndex++}`);

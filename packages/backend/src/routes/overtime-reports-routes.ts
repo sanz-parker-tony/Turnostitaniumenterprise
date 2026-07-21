@@ -61,7 +61,7 @@ function isUnrestricted(context: { role_keys: string[] }) {
   return context.role_keys.includes('TENANT_ADMIN') && !context.role_keys.some((roleKey) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
 }
 
-function buildAssignedEmployeesSql(unrestricted: boolean) {
+export function buildAssignedEmployeesSql(unrestricted: boolean) {
   if (unrestricted) {
     return `
       SELECT DISTINCT ON (e.id)
@@ -70,6 +70,7 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
         e.employee_name,
         e.employee_lastname,
         ec.company_id,
+        ec.employee_profile_id,
         c.company_name,
         c.logo AS company_logo,
         c.banner AS company_banner,
@@ -119,6 +120,7 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       e.employee_name,
       e.employee_lastname,
       scope.company_id,
+      ec.employee_profile_id,
       c.company_name,
       c.logo AS company_logo,
       c.banner AS company_banner,
@@ -177,7 +179,7 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
   `;
 }
 
-function buildOvertimeCtes(
+export function buildOvertimeCtes(
   assignedEmployeesSql: string,
   dateFromSql: string,
   dateToSql: string,
@@ -190,6 +192,46 @@ function buildOvertimeCtes(
 ) {
   return `
     WITH assigned_employees AS (${assignedEmployeesSql}),
+    effective_attendance_policies AS (
+      SELECT
+        ae.employee_id,
+        ae.company_id,
+        MAX(COALESCE(employee_setting.setting_value, profile_setting.setting_value, company_setting.setting_value, tenant_setting.setting_value, system_setting.default_value)) FILTER (WHERE system_setting.setting_key = 'ATTENDANCE_MAX_OVERTIME_MIN_DAY') AS max_overtime_min_day,
+        MAX(COALESCE(employee_setting.setting_value, profile_setting.setting_value, company_setting.setting_value, tenant_setting.setting_value, system_setting.default_value)) FILTER (WHERE system_setting.setting_key = 'ATTENDANCE_MAX_OVERTIME_MIN_WEEK') AS max_overtime_min_week,
+        MAX(COALESCE(employee_setting.setting_value, profile_setting.setting_value, company_setting.setting_value, tenant_setting.setting_value, system_setting.default_value)) FILTER (WHERE system_setting.setting_key = 'ATTENDANCE_WEEKLY_REGULAR_MINUTES') AS weekly_regular_minutes,
+        MAX(COALESCE(employee_setting.setting_value, profile_setting.setting_value, company_setting.setting_value, tenant_setting.setting_value, system_setting.default_value)) FILTER (WHERE system_setting.setting_key = 'ATTENDANCE_LUNCH_DEDUCTION_MODE') AS lunch_deduction_mode,
+        MAX(COALESCE(employee_setting.setting_value, profile_setting.setting_value, company_setting.setting_value, tenant_setting.setting_value, system_setting.default_value)) FILTER (WHERE system_setting.setting_key = 'ATTENDANCE_WEEK_START_DAY') AS week_start_day
+      FROM assigned_employees ae
+      CROSS JOIN public.system_settings system_setting
+      LEFT JOIN public.tenant_settings tenant_setting
+        ON tenant_setting.tenant_id = $1::uuid
+       AND tenant_setting.system_setting_id = system_setting.id
+       AND tenant_setting.is_active = true
+      LEFT JOIN public.company_settings company_setting
+        ON company_setting.tenant_id = $1::uuid
+       AND company_setting.company_id = ae.company_id
+       AND company_setting.system_setting_id = system_setting.id
+       AND company_setting.is_active = true
+      LEFT JOIN public.employee_profile_settings profile_setting
+        ON profile_setting.tenant_id = $1::uuid
+       AND profile_setting.employee_profile_id = ae.employee_profile_id
+       AND profile_setting.system_setting_id = system_setting.id
+       AND profile_setting.is_active = true
+      LEFT JOIN public.employee_settings employee_setting
+        ON employee_setting.tenant_id = $1::uuid
+       AND employee_setting.employee_id = ae.employee_id
+       AND employee_setting.system_setting_id = system_setting.id
+       AND employee_setting.is_active = true
+      WHERE system_setting.is_active = true
+        AND system_setting.setting_key IN (
+          'ATTENDANCE_MAX_OVERTIME_MIN_DAY',
+          'ATTENDANCE_MAX_OVERTIME_MIN_WEEK',
+          'ATTENDANCE_WEEKLY_REGULAR_MINUTES',
+          'ATTENDANCE_LUNCH_DEDUCTION_MODE',
+          'ATTENDANCE_WEEK_START_DAY'
+        )
+      GROUP BY ae.employee_id, ae.company_id
+    ),
     filters AS (
       SELECT
         ${dateFromSql}::date AS date_from,
@@ -203,6 +245,7 @@ function buildOvertimeCtes(
         ae.employee_name,
         CONCAT(ae.employee_lastname, ' ', ae.employee_name) AS employee_full_name,
         ae.company_id,
+        ae.employee_profile_id,
         ae.company_name,
         ae.company_logo,
         ae.company_banner,
@@ -223,6 +266,23 @@ function buildOvertimeCtes(
         s.shift_name,
         s.shift_short_name,
         s.start_time,
+        COALESCE(s.shift_duration_minutes, s.work_minutes + s.lunch_minutes, 0)::int AS shift_duration_minutes,
+        COALESCE(s.lunch_minutes, 0)::int AS lunch_minutes,
+        COALESCE(s.lunch_window_minutes, s.lunch_minutes, 0)::int AS lunch_window_minutes,
+        COALESCE(s.lunch_is_paid, false) AS lunch_is_paid,
+        CASE
+          WHEN COALESCE(s.lunch_is_paid, false) THEN 'NONE'
+          WHEN UPPER(COALESCE(s.lunch_deduction_mode, policy.lunch_deduction_mode, 'ACTUAL_OR_SCHEDULED')) IN ('ACTUAL_OR_SCHEDULED', 'ACTUAL', 'SCHEDULED', 'NONE')
+            THEN UPPER(COALESCE(s.lunch_deduction_mode, policy.lunch_deduction_mode, 'ACTUAL_OR_SCHEDULED'))
+          ELSE 'ACTUAL_OR_SCHEDULED'
+        END AS lunch_deduction_mode,
+        CASE WHEN COALESCE(policy.max_overtime_min_day, '') ~ '^\\d+$' THEN policy.max_overtime_min_day::int ELSE 240 END AS max_overtime_min_day,
+        CASE WHEN COALESCE(policy.max_overtime_min_week, '') ~ '^\\d+$' THEN policy.max_overtime_min_week::int ELSE 720 END AS max_overtime_min_week,
+        COALESCE(
+          work_pattern.weekly_work_minutes_target,
+          CASE WHEN COALESCE(policy.weekly_regular_minutes, '') ~ '^\\d+$' THEN policy.weekly_regular_minutes::int ELSE 2400 END
+        )::int AS weekly_regular_minutes,
+        LEAST(7, GREATEST(1, CASE WHEN COALESCE(policy.week_start_day, '') ~ '^\\d+$' THEN policy.week_start_day::int ELSE 1 END)) AS week_start_day,
         COALESCE(s.entry_grace_minutes, 0)::int AS entry_grace_minutes,
         COALESCE(s.exit_grace_minutes, 0)::int AS exit_grace_minutes,
         sc.id AS constructor_id,
@@ -250,6 +310,23 @@ function buildOvertimeCtes(
       INNER JOIN public.shifts s
         ON s.id = p.shift_id
        AND s.tenant_id = p.tenant_id
+      LEFT JOIN effective_attendance_policies policy
+        ON policy.employee_id = ae.employee_id
+       AND policy.company_id = ae.company_id
+      LEFT JOIN LATERAL (
+        SELECT pattern.weekly_work_minutes_target
+        FROM public.employee_profile_work_patterns assignment
+        INNER JOIN public.work_patterns pattern
+          ON pattern.id = assignment.work_pattern_id
+         AND pattern.tenant_id = assignment.tenant_id
+         AND pattern.is_active = true
+        WHERE assignment.tenant_id = p.tenant_id
+          AND assignment.employee_profile_id = ae.employee_profile_id
+          AND assignment.is_active = true
+          AND p.shift_date BETWEEN assignment.valid_from AND assignment.valid_to
+        ORDER BY assignment.valid_from DESC, assignment.created_at DESC
+        LIMIT 1
+      ) work_pattern ON true
       LEFT JOIN public.shift_constructors sc
         ON sc.shift_id = s.id
        AND sc.tenant_id = s.tenant_id
@@ -321,14 +398,16 @@ function buildOvertimeCtes(
           END::int AS work_start_minutes,
           CASE
             WHEN sc.id IS NOT NULL AND COALESCE(blocks.active_block_count, 0) > 0 THEN COALESCE(blocks.work_end_minutes, 0)
-            ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int + COALESCE(s.work_minutes, 0))
+            ELSE (EXTRACT(HOUR FROM s.start_time)::int * 60 + EXTRACT(MINUTE FROM s.start_time)::int + COALESCE(s.shift_duration_minutes, s.work_minutes + s.lunch_minutes, 0))
           END::int AS work_end_minutes,
           CASE
-            WHEN sc.id IS NOT NULL AND COALESCE(blocks.active_block_count, 0) > 0 THEN COALESCE(blocks.work_minutes, 0)
+            WHEN NOT COALESCE(s.lunch_is_paid, false)
+             AND UPPER(COALESCE(s.lunch_deduction_mode, policy.lunch_deduction_mode, 'ACTUAL_OR_SCHEDULED')) = 'NONE'
+              THEN COALESCE(s.work_minutes, 0) + COALESCE(s.lunch_minutes, 0)
             ELSE COALESCE(s.work_minutes, 0)
           END::int AS work_minutes
       ) sw ON true
-      WHERE p.shift_date BETWEEN filters.date_from AND filters.date_to
+      WHERE p.shift_date BETWEEN (filters.date_from - INTERVAL '6 days')::date AND filters.date_to
         AND (${employeeFilterSql} IS NULL OR ae.employee_id = ${employeeFilterSql})
         AND (${payrollGroupFilterSql} IS NULL OR ae.payroll_group_id = ${payrollGroupFilterSql})
         AND (${costCenterFilterSql} IS NULL OR ae.cost_center_id = ${costCenterFilterSql})
@@ -344,8 +423,10 @@ function buildOvertimeCtes(
         pl.shift_date,
         MIN(p.punch_datetime) AS first_punch,
         MAX(p.punch_datetime) AS last_punch,
-        MIN(p.punch_datetime) FILTER (WHERE p.punch_key IN (1, 5)) AS first_entry,
-        MAX(p.punch_datetime) FILTER (WHERE p.punch_key IN (4, 6)) AS last_exit
+        MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
+        MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit,
+        MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 2) AS lunch_out,
+        MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 3) AS lunch_in
       FROM plans pl
       LEFT JOIN public.employee_time_punches p
         ON p.employee_id = pl.employee_id
@@ -365,12 +446,19 @@ function buildOvertimeCtes(
        )
       GROUP BY pl.employee_id, pl.shift_date
     ),
-    attendance AS (
+    attendance_raw AS (
       SELECT
         pl.*,
         COALESCE(ps.first_entry, ps.first_punch) AS first_entry,
         COALESCE(ps.last_exit, ps.last_punch) AS last_exit,
-        GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int)::int AS worked_minutes,
+        ps.lunch_out,
+        ps.lunch_in,
+        GREATEST(0, COALESCE(EXTRACT(EPOCH FROM (COALESCE(ps.last_exit, ps.last_punch) - COALESCE(ps.first_entry, ps.first_punch))) / 60, 0)::int)::int AS gross_worked_minutes,
+        CASE
+          WHEN ps.lunch_out IS NOT NULL AND ps.lunch_in IS NOT NULL AND ps.lunch_in > ps.lunch_out
+            THEN GREATEST(0, EXTRACT(EPOCH FROM (ps.lunch_in - ps.lunch_out)) / 60)::int
+          ELSE NULL
+        END AS actual_lunch_minutes,
         CASE
           WHEN COALESCE(ps.first_entry, ps.first_punch) IS NULL
            AND pl.work_minutes > 0
@@ -397,6 +485,33 @@ function buildOvertimeCtes(
       LEFT JOIN punch_summary ps
         ON ps.employee_id = pl.employee_id
        AND ps.shift_date = pl.shift_date
+    ),
+    attendance AS (
+      SELECT
+        attendance_raw.*,
+        LEAST(
+          attendance_raw.gross_worked_minutes,
+          CASE attendance_raw.lunch_deduction_mode
+            WHEN 'NONE' THEN 0
+            WHEN 'ACTUAL' THEN COALESCE(attendance_raw.actual_lunch_minutes, 0)
+            WHEN 'SCHEDULED' THEN attendance_raw.lunch_minutes
+            ELSE COALESCE(attendance_raw.actual_lunch_minutes, attendance_raw.lunch_minutes)
+          END
+        )::int AS deducted_lunch_minutes,
+        GREATEST(
+          0,
+          attendance_raw.gross_worked_minutes - LEAST(
+            attendance_raw.gross_worked_minutes,
+            CASE attendance_raw.lunch_deduction_mode
+              WHEN 'NONE' THEN 0
+              WHEN 'ACTUAL' THEN COALESCE(attendance_raw.actual_lunch_minutes, 0)
+              WHEN 'SCHEDULED' THEN attendance_raw.lunch_minutes
+              ELSE COALESCE(attendance_raw.actual_lunch_minutes, attendance_raw.lunch_minutes)
+            END
+          )
+        )::int AS worked_minutes,
+        GREATEST(0, COALESCE(attendance_raw.actual_lunch_minutes, attendance_raw.lunch_minutes) - attendance_raw.lunch_minutes)::int AS lunch_excess_minutes
+      FROM attendance_raw
     ),
     approved_leave_by_day AS (
       SELECT
@@ -507,7 +622,7 @@ function buildOvertimeCtes(
       ) surcharges
       GROUP BY employee_id, shift_date
     ),
-    metrics_by_day AS (
+    metrics_uncapped AS (
       SELECT
         attendance.employee_id,
         attendance.employee_code,
@@ -535,22 +650,45 @@ function buildOvertimeCtes(
         attendance.first_entry,
         attendance.last_exit,
         attendance.worked_minutes,
-        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.ordinary_minutes, 0) END::int AS ordinary_minutes,
-        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.night_minutes, 0) END::int AS night_25_minutes,
-        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_50_minutes, 0) END::int AS extra_50_minutes,
-        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE COALESCE(surcharge_by_day.extra_100_minutes, 0) END::int AS extra_100_minutes,
+        attendance.max_overtime_min_day,
+        attendance.max_overtime_min_week,
+        attendance.weekly_regular_minutes,
+        attendance.week_start_day,
+        CASE
+          WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0
+          ELSE LEAST(
+            COALESCE(surcharge_by_day.ordinary_minutes, 0),
+            GREATEST(0, LEAST(attendance.worked_minutes, attendance.work_minutes) - LEAST(COALESCE(surcharge_by_day.night_minutes, 0), LEAST(attendance.worked_minutes, attendance.work_minutes)))
+          )
+        END::int AS raw_ordinary_minutes,
+        CASE WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0 ELSE LEAST(COALESCE(surcharge_by_day.night_minutes, 0), LEAST(attendance.worked_minutes, attendance.work_minutes)) END::int AS raw_night_25_minutes,
+        CASE
+          WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0
+          ELSE GREATEST(
+            0,
+            attendance.worked_minutes - attendance.work_minutes
+            - LEAST(COALESCE(surcharge_by_day.extra_100_minutes, 0), GREATEST(0, attendance.worked_minutes - attendance.work_minutes))
+          )
+        END::int AS raw_extra_50_minutes,
+        CASE
+          WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN 0
+          ELSE LEAST(COALESCE(surcharge_by_day.extra_100_minutes, 0), GREATEST(0, attendance.worked_minutes - attendance.work_minutes))
+        END::int AS raw_extra_100_minutes,
         CASE
           WHEN attendance.is_non_working_day OR attendance.work_minutes <= 0 THEN
             CASE
               WHEN attendance.constructor_id IS NOT NULL THEN
-                COALESCE(surcharge_by_day.ordinary_minutes, 0)
-                + COALESCE(surcharge_by_day.night_minutes, 0)
-                + COALESCE(surcharge_by_day.extra_50_minutes, 0)
-                + COALESCE(surcharge_by_day.extra_100_minutes, 0)
+                LEAST(
+                  attendance.worked_minutes,
+                  COALESCE(surcharge_by_day.ordinary_minutes, 0)
+                  + COALESCE(surcharge_by_day.night_minutes, 0)
+                  + COALESCE(surcharge_by_day.extra_50_minutes, 0)
+                  + COALESCE(surcharge_by_day.extra_100_minutes, 0)
+                )
               ELSE attendance.worked_minutes
             END
           ELSE 0
-        END::int AS non_working_100_minutes,
+        END::int AS raw_non_working_100_minutes,
         CASE
           WHEN attendance.is_non_working_day THEN 0
           ELSE GREATEST(attendance.absence_minutes, COALESCE(approved_leave_by_day.approved_absence_minutes, 0))
@@ -563,7 +701,7 @@ function buildOvertimeCtes(
           WHEN attendance.is_non_working_day THEN 0
           ELSE GREATEST(attendance.early_departure_minutes, COALESCE(approved_leave_by_day.approved_early_departure_minutes, 0))
         END::int AS early_departure_minutes,
-        0::int AS lunch_excess_minutes,
+        attendance.lunch_excess_minutes,
         0::int AS unjustified_incident_minutes,
         COALESCE(approved_leave_by_day.unpaid_leave_minutes, 0)::int AS unpaid_leave_minutes
       FROM attendance
@@ -573,6 +711,88 @@ function buildOvertimeCtes(
       LEFT JOIN approved_leave_by_day
         ON approved_leave_by_day.employee_id = attendance.employee_id
        AND approved_leave_by_day.shift_date = attendance.shift_date
+    ),
+    weekly_regular_buckets AS (
+      SELECT
+        metrics_uncapped.*,
+        (shift_date - (((EXTRACT(ISODOW FROM shift_date)::int - week_start_day + 7) % 7) * INTERVAL '1 day'))::date AS overtime_week_start
+      FROM metrics_uncapped
+    ),
+    weekly_regular_running AS (
+      SELECT
+        weekly_regular_buckets.*,
+        COALESCE(
+          SUM(raw_ordinary_minutes + raw_night_25_minutes) OVER (
+            PARTITION BY employee_id, overtime_week_start
+            ORDER BY shift_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ),
+          0
+        )::int AS prior_weekly_regular_minutes
+      FROM weekly_regular_buckets
+    ),
+    daily_overtime_limited AS (
+      SELECT
+        weekly_regular_running.*,
+        LEAST(
+          raw_ordinary_minutes + raw_night_25_minutes,
+          GREATEST(0, prior_weekly_regular_minutes + raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_minutes)
+        )::int AS weekly_regular_overflow_minutes,
+        (
+          raw_extra_50_minutes + raw_extra_100_minutes
+          + LEAST(
+              raw_ordinary_minutes + raw_night_25_minutes,
+              GREATEST(0, prior_weekly_regular_minutes + raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_minutes)
+            )
+        )::int AS overtime_candidate_minutes,
+        LEAST(
+          raw_extra_50_minutes + raw_extra_100_minutes
+            + LEAST(
+                raw_ordinary_minutes + raw_night_25_minutes,
+                GREATEST(0, prior_weekly_regular_minutes + raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_minutes)
+              ),
+          GREATEST(0, max_overtime_min_day)
+        )::int AS daily_overtime_allowed_minutes
+      FROM weekly_regular_running
+    ),
+    weekly_overtime_running AS (
+      SELECT
+        daily_overtime_limited.*,
+        COALESCE(
+          SUM(daily_overtime_allowed_minutes) OVER (
+            PARTITION BY employee_id, overtime_week_start
+            ORDER BY shift_date
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ),
+          0
+        )::int AS prior_weekly_overtime_minutes
+      FROM daily_overtime_limited
+    ),
+    overtime_limited AS (
+      SELECT
+        weekly_overtime_running.*,
+        LEAST(
+          daily_overtime_allowed_minutes,
+          GREATEST(0, max_overtime_min_week - prior_weekly_overtime_minutes)
+        )::int AS allowed_overtime_minutes
+      FROM weekly_overtime_running
+    ),
+    metrics_by_day AS (
+      SELECT
+        overtime_limited.*,
+        LEAST(raw_night_25_minutes, GREATEST(0, raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_overflow_minutes))::int AS night_25_minutes,
+        GREATEST(
+          0,
+          raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_overflow_minutes
+          - LEAST(raw_night_25_minutes, GREATEST(0, raw_ordinary_minutes + raw_night_25_minutes - weekly_regular_overflow_minutes))
+        )::int AS ordinary_minutes,
+        raw_non_working_100_minutes::int AS non_working_100_minutes,
+        LEAST(raw_extra_100_minutes, allowed_overtime_minutes)::int AS extra_100_minutes,
+        GREATEST(0, allowed_overtime_minutes - raw_extra_100_minutes)::int AS extra_50_minutes,
+        GREATEST(0, overtime_candidate_minutes - allowed_overtime_minutes)::int AS overtime_excess_minutes
+      FROM overtime_limited
+      CROSS JOIN filters
+      WHERE overtime_limited.shift_date BETWEEN filters.date_from AND filters.date_to
     )
   `;
 }
@@ -800,6 +1020,7 @@ router.get('/summary', async (req: Request, res: Response) => {
           SUM(night_25_minutes)::int AS night_25_minutes,
           SUM(extra_50_minutes)::int AS extra_50_minutes,
           SUM(extra_100_minutes)::int AS extra_100_minutes,
+          SUM(overtime_excess_minutes)::int AS overtime_excess_minutes,
           SUM(non_working_100_minutes)::int AS non_working_100_minutes,
           SUM(late_minutes)::int AS late_minutes,
           SUM(early_departure_minutes)::int AS early_departure_minutes,

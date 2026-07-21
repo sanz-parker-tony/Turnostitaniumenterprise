@@ -43,8 +43,12 @@ interface ShiftCatalogItem {
   shift_icon_key?: string | null;
   shift_bg_color?: string | null;
   shift_text_color?: string | null;
+  shift_duration_minutes: number;
   work_minutes: number;
   lunch_minutes: number;
+  lunch_window_minutes: number;
+  lunch_is_paid: boolean;
+  lunch_deduction_mode: string | null;
   is_active: boolean;
   constructor?: {
     id: string;
@@ -64,6 +68,13 @@ interface ShiftDetailResponse {
     total_break_minutes: number;
   } | null;
   blocks: ShiftBlockRow[];
+}
+
+interface LunchDeductionModeOption {
+  lookup_key: string;
+  lookup_label: string;
+  lookup_short_label: string;
+  sort_order: number;
 }
 
 interface ShiftBlockRow {
@@ -368,6 +379,10 @@ export function ShiftConstructorManagement() {
   const [shiftTextColor, setShiftTextColor] = useState(SHIFT_ICON_MAP.Sun.color);
   const [iconComboOpen, setIconComboOpen] = useState(false);
   const [constructorName, setConstructorName] = useState('');
+  const [lunchMinutes, setLunchMinutes] = useState('0');
+  const [lunchIsPaid, setLunchIsPaid] = useState(false);
+  const [lunchDeductionMode, setLunchDeductionMode] = useState('');
+  const [lunchDeductionModes, setLunchDeductionModes] = useState<LunchDeductionModeOption[]>([]);
   const [blocks, setBlocks] = useState<ShiftBlockRow[]>([]);
 
   const [showBlockModal, setShowBlockModal] = useState(false);
@@ -432,6 +447,7 @@ export function ShiftConstructorManagement() {
       const payload = await request('/shift-constructor/catalogs');
       const nextShifts = (payload?.shifts || []) as ShiftCatalogItem[];
       setShifts(nextShifts);
+      setLunchDeductionModes((payload?.lunch_deduction_modes || []) as LunchDeductionModeOption[]);
     } catch (err: any) {
       setError(err?.message || 'Error cargando turnos');
     } finally {
@@ -453,6 +469,9 @@ export function ShiftConstructorManagement() {
       setShiftBgColor(payload.shift?.shift_bg_color || SHIFT_ICON_MAP[payload.shift?.shift_icon_key || 'Sun']?.bg || SHIFT_ICON_MAP.Sun.bg);
       setShiftTextColor(payload.shift?.shift_text_color || SHIFT_ICON_MAP[payload.shift?.shift_icon_key || 'Sun']?.color || SHIFT_ICON_MAP.Sun.color);
       setConstructorName(payload.constructor?.constructor_name || `Constructor ${nextShiftName}`);
+      setLunchMinutes(String(payload.shift?.lunch_minutes || 0));
+      setLunchIsPaid(Boolean(payload.shift?.lunch_is_paid));
+      setLunchDeductionMode(payload.shift?.lunch_deduction_mode || '');
       setBlocks(normalizeBlocks(payload.blocks || []));
     } catch (err: any) {
       setError(err?.message || 'Error cargando constructor de turno');
@@ -494,6 +513,9 @@ export function ShiftConstructorManagement() {
     setShiftBgColor(SHIFT_ICON_MAP.Sun.bg);
     setShiftTextColor(SHIFT_ICON_MAP.Sun.color);
     setConstructorName('');
+    setLunchMinutes('0');
+    setLunchIsPaid(false);
+    setLunchDeductionMode('');
     setBlocks([]);
     setSelectedBlockIndex(null);
     setDragPreview(null);
@@ -512,6 +534,9 @@ export function ShiftConstructorManagement() {
     setShiftBgColor(shift.shift_bg_color || SHIFT_ICON_MAP[shift.shift_icon_key || 'Sun']?.bg || SHIFT_ICON_MAP.Sun.bg);
     setShiftTextColor(shift.shift_text_color || SHIFT_ICON_MAP[shift.shift_icon_key || 'Sun']?.color || SHIFT_ICON_MAP.Sun.color);
     setConstructorName(shift.constructor?.constructor_name || `Constructor ${shift.shift_name}`);
+    setLunchMinutes(String(shift.lunch_minutes || 0));
+    setLunchIsPaid(Boolean(shift.lunch_is_paid));
+    setLunchDeductionMode(shift.lunch_deduction_mode || '');
     setBlocks([]);
     setSelectedBlockIndex(null);
     setDragPreview(null);
@@ -731,6 +756,7 @@ export function ShiftConstructorManagement() {
     ];
 
     setBlocks(normalizeBlocks(template));
+    setLunchMinutes('60');
     setBuilderError(null);
   };
 
@@ -750,6 +776,15 @@ export function ShiftConstructorManagement() {
       return;
     }
 
+    const effectiveLunchMinutes = Math.trunc(Number(lunchMinutes || 0));
+    const lunchWindowMinutes = sortedBlocks
+      .filter((block) => block.block_type === 'LUNCH')
+      .reduce((sum, block) => sum + block.end_minutes - block.start_minutes, 0);
+    if (!Number.isFinite(effectiveLunchMinutes) || effectiveLunchMinutes < 0 || effectiveLunchMinutes > lunchWindowMinutes) {
+      setBuilderError(`El lunch efectivo debe estar entre 0 y ${lunchWindowMinutes} minutos, segun la ventana configurada.`);
+      return;
+    }
+
     setSaving(true);
     setBuilderError(null);
     setSuccessMessage(null);
@@ -762,6 +797,9 @@ export function ShiftConstructorManagement() {
         shift_bg_color: shiftBgColor,
         shift_text_color: shiftTextColor,
         constructor_name: finalConstructorName,
+        lunch_minutes: effectiveLunchMinutes,
+        lunch_is_paid: lunchIsPaid,
+        lunch_deduction_mode: lunchDeductionMode || null,
         blocks: sortedBlocks,
       };
 
@@ -1008,8 +1046,9 @@ export function ShiftConstructorManagement() {
                 <th className="text-center py-2 px-2">Código</th>
                 <th className="text-center py-2 px-2">Ícono</th>
                 <th className="text-center py-2 px-2">Color fondo</th>
-                <th className="text-center py-2 px-2">Horas Totales</th>
-                <th className="text-center py-2 px-2">Horas de almuerzo</th>
+                <th className="text-center py-2 px-2">Intervalo</th>
+                <th className="text-center py-2 px-2">Trabajo efectivo</th>
+                <th className="text-center py-2 px-2">Lunch efectivo/ventana</th>
                 <th className="text-center py-2 px-2">Estado</th>
                 <th className="text-center py-2 px-2">Acciones</th>
               </tr>
@@ -1017,11 +1056,11 @@ export function ShiftConstructorManagement() {
             <tbody>
               {loadingCatalogs ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">Cargando turnos...</td>
+                  <td colSpan={10} className="py-6 text-center text-gray-500">Cargando turnos...</td>
                 </tr>
               ) : pagedShifts.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-6 text-center text-gray-500">No existen turnos</td>
+                  <td colSpan={10} className="py-6 text-center text-gray-500">No existen turnos</td>
                 </tr>
               ) : (
                 pagedShifts.map((shift, index) => (
@@ -1062,8 +1101,9 @@ export function ShiftConstructorManagement() {
                         );
                       })()}
                     </td>
-                    <td className="py-3 px-2 text-center">{(shift.work_minutes / 60).toFixed(shift.work_minutes % 60 === 0 ? 0 : 1)}h</td>
-                    <td className="py-3 px-2 text-center">{(shift.lunch_minutes / 60).toFixed(shift.lunch_minutes % 60 === 0 ? 0 : 1)}h</td>
+                    <td className="py-3 px-2 text-center">{shift.shift_duration_minutes} min</td>
+                    <td className="py-3 px-2 text-center">{shift.work_minutes} min</td>
+                    <td className="py-3 px-2 text-center">{shift.lunch_minutes}/{shift.lunch_window_minutes} min</td>
                     <td className="py-3 px-2 text-center">
                       <span
                         className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
@@ -1154,8 +1194,8 @@ export function ShiftConstructorManagement() {
                   {builderError}
                 </div>
               )}
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                <div className="md:col-span-2">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                <div className="md:col-span-3">
                   <label className="text-sm font-medium">Nombre del Turno</label>
                   <input
                     value={shiftName}
@@ -1164,7 +1204,7 @@ export function ShiftConstructorManagement() {
                     placeholder="turno nocturno"
                   />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-sm font-medium">Código</label>
                   <input
                     value={shiftShortName}
@@ -1173,7 +1213,7 @@ export function ShiftConstructorManagement() {
                     placeholder="NOC"
                   />
                 </div>
-                <div className="md:col-span-2">
+                <div className="md:col-span-3">
                   <label className="text-sm font-medium">Ícono</label>
                   <div className="relative mt-1" ref={iconComboRef}>
                     {(() => {
@@ -1229,7 +1269,7 @@ export function ShiftConstructorManagement() {
                     })()}
                   </div>
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-sm font-medium">Color fondo</label>
                   <input
                     type="color"
@@ -1238,7 +1278,7 @@ export function ShiftConstructorManagement() {
                     className="mt-1 h-10 w-full rounded-md border px-1 py-1"
                   />
                 </div>
-                <div>
+                <div className="md:col-span-2">
                   <label className="text-sm font-medium">Color texto</label>
                   <input
                     type="color"
@@ -1247,6 +1287,45 @@ export function ShiftConstructorManagement() {
                     className="mt-1 h-10 w-full rounded-md border px-1 py-1"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-lg border bg-blue-50/40 p-3">
+                <div>
+                  <label className="text-sm font-medium">Tiempo efectivo de lunch (minutos)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={15}
+                    value={lunchMinutes}
+                    onChange={(event) => setLunchMinutes(event.target.value)}
+                    className="w-full border rounded-md px-3 py-2 text-sm mt-1 bg-white"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Es distinto de la ventana horaria dibujada en el bloque LUNCH.</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Política de descuento</label>
+                  <select
+                    value={lunchDeductionMode}
+                    onChange={(event) => setLunchDeductionMode(event.target.value)}
+                    disabled={lunchIsPaid}
+                    className="w-full border rounded-md px-3 py-2 text-sm mt-1 bg-white disabled:opacity-60"
+                  >
+                    <option value="">Heredar parámetro general/perfil</option>
+                    {lunchDeductionModes.map((option) => (
+                      <option key={option.lookup_key} value={option.lookup_key}>
+                        {option.lookup_label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 self-center rounded-md border bg-white px-3 py-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={lunchIsPaid}
+                    onChange={(event) => setLunchIsPaid(event.target.checked)}
+                  />
+                  Lunch pagado (no se descuenta)
+                </label>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -1483,7 +1562,7 @@ export function ShiftConstructorManagement() {
                   </div>
 
                   <div className="rounded-md border bg-gray-50 px-3 py-2 text-sm text-gray-700">
-                    Trabajo: <strong>{totals.work} min</strong> | Descansos: <strong>{totals.pause} min</strong>
+                    Bloques laborales brutos: <strong>{totals.work} min</strong> | Ventanas de descanso: <strong>{totals.pause} min</strong> | Lunch efectivo: <strong>{lunchMinutes || 0} min</strong>
                   </div>
                 </div>
               </div>

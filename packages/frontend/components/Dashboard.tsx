@@ -552,6 +552,7 @@ function EmployeeHome({
       if (incident?.attendance_event_id) params.set('attendance_event_id', String(incident.attendance_event_id));
       if (incident?.justification_type_id) params.set('justification_type_id', String(incident.justification_type_id));
       if (incident?.calculation_id) params.set('calculation_id', String(incident.calculation_id));
+      if (incident?.target_punch_id) params.set('context_punch_id', String(incident.target_punch_id));
       params.set('incident', String(incident?.event_name || 'Incidencia de asistencia'));
       if (Number(incident?.minutes || 0) > 0) params.set('minutes', String(incident.minutes));
       if (incident?.notes) params.set('detail', String(incident.notes));
@@ -990,11 +991,36 @@ function formatPunchTimeCompact(value: string | null | undefined): string {
 }
 
 function normalizeMovementLabel(row: any): string {
+  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
+  if (movementKey === 'ENTRY') return 'Entra a trabajo';
+  if (movementKey === 'LUNCH_OUT') return 'Inicio de lunch';
+  if (movementKey === 'LUNCH_IN') return 'Fin de lunch';
+  if (movementKey === 'EXIT') return 'Sale de trabajo';
+  if (movementKey === 'PERMISSION_OUT') return 'Sale de trabajo (permiso)';
+  if (movementKey === 'PERMISSION_IN') return 'Entra a trabajo (retorno de permiso)';
+
+  // Compatibilidad con marcaciones históricas si el catálogo aún no está disponible.
+  const punchKey = Number(row.punch_key);
+  if (punchKey === 1) return 'Entra a trabajo';
+  if (punchKey === 2) return 'Inicio de lunch';
+  if (punchKey === 3) return 'Fin de lunch';
+  if (punchKey === 4) return 'Sale de trabajo';
+  if (punchKey === 5) return 'Sale de trabajo (permiso)';
+  if (punchKey === 6) return 'Entra a trabajo (retorno de permiso)';
+
   const raw = String(row.movement_label || '').trim();
   const key = raw.toUpperCase();
   if (key === 'ENTRADA A TRABAJO' || key === 'ENTRADA TRABAJO') return 'Entrada de trabajo';
   if (key === 'SALIDA') return 'Salida de trabajo';
   return raw || `Movimiento ${row.punch_key}`;
+}
+
+function isLunchPunch(row: any): boolean {
+  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
+  return movementKey === 'LUNCH_OUT'
+    || movementKey === 'LUNCH_IN'
+    || Number(row?.punch_key) === 2
+    || Number(row?.punch_key) === 3;
 }
 
 function isLateEvent(eventKey: string | null | undefined): boolean {
@@ -1006,11 +1032,29 @@ function formatLatestPunchDescription(row: any): string {
     return `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)} | No aplica en turno`;
   }
 
+  const markingLocation = row.device_work_location_short_name || row.device_work_location_name || row.device_location || 'Sin localidad de marcación';
+  if (isLunchPunch(row)) {
+    const hasLunchWindow = Boolean(row.lunch_window_start_time && row.lunch_window_end_time);
+    const lunchWindow = hasLunchWindow
+      ? ` (ventana ${formatTimeOnly(row.lunch_window_start_time)} - ${formatTimeOnly(row.lunch_window_end_time)})`
+      : '';
+    return `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)}${lunchWindow} - ${markingLocation}`;
+  }
+
+  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
+  if (movementKey === 'PERMISSION_OUT'
+    || movementKey === 'PERMISSION_IN'
+    || Number(row.punch_key) === 5
+    || Number(row.punch_key) === 6) {
+    const parts = [`${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)}`, markingLocation];
+    if (row.has_approved_leave) parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
+    return `${parts.slice(0, 2).join(' - ')}${parts.length > 2 ? ` | ${parts.slice(2).join(' | ')}` : ''}`;
+  }
+
   const movementLabel = String(row.movement_label || '').trim().toUpperCase();
-  const isWorkdayExit = Number(row.punch_key) === 4 || movementLabel === 'SALIDA';
+  const isWorkdayExit = movementKey === 'EXIT' || Number(row.punch_key) === 4 || movementLabel === 'SALIDA';
   const shiftLabel = isWorkdayExit ? 'Salida turno' : 'Entrada turno';
   const shiftTime = isWorkdayExit ? row.shift_work_end_time : row.shift_start_time;
-  const markingLocation = row.device_work_location_short_name || row.device_work_location_name || row.device_location || 'Sin localidad de marcación';
   const parts = [
     `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)} (${formatTimeOnly(shiftTime)} ${shiftLabel})`,
     markingLocation,
@@ -1021,7 +1065,14 @@ function formatLatestPunchDescription(row: any): string {
   }
   if (isLateEvent(row.event_key)) {
     const statusKey = String(row.late_justification_status_key || '').toUpperCase();
-    parts.push(['APPROVED', 'APROBADO'].includes(statusKey) ? 'Justificado' : 'Por justificar');
+    const justificationName = String(row.late_justification_name || '').trim();
+    parts.push(
+      ['APPROVED', 'APROBADO'].includes(statusKey)
+        ? `Justificación: ${justificationName || 'Aprobada'}`
+        : justificationName
+          ? `Justificación pendiente: ${justificationName}`
+          : 'Por justificar'
+    );
   } else if (row.has_approved_leave) {
     parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
   }
@@ -1031,51 +1082,86 @@ function formatLatestPunchDescription(row: any): string {
 
 function eventLabel(eventKey: string | null | undefined, row?: any): string {
   const key = String(eventKey || '').toUpperCase();
+  if (key === 'NO_APLICA') return 'No aplica';
+  if (key === 'LUNCH_FUERA_HORARIO') return 'Fuera de horario';
   if (key === 'FALTA') return 'Falta';
   if (key.startsWith('ATRASO')) return 'Atraso';
   if (key === 'SALIDA_ANTICIPADA') return 'Salida anticipada';
   if (key === 'PERMISO_APROBADO') return 'Permiso aprobado';
   if (key === 'FERIADO') return 'Feriado';
-  if (key === 'NO_APLICA') return 'No aplica';
   if (key === 'NO_LABORAL') return 'No laboral';
   return row?.has_approved_punch_change ? 'Justificada' : 'Ok';
 }
 
+type AnomalyTrafficState = 'red' | 'yellow' | 'green' | null;
+
+function isTrackedSupervisorAnomaly(eventKey: string | null | undefined): boolean {
+  const key = String(eventKey || '').toUpperCase();
+  return key.startsWith('ATRASO')
+    || key === 'SALIDA_ANTICIPADA'
+    || key === 'LUNCH_FUERA_HORARIO';
+}
+
+function anomalyTrafficState(row: any): AnomalyTrafficState {
+  if (!isTrackedSupervisorAnomaly(row?.event_key)) return null;
+
+  const eventKey = String(row?.event_key || '').toUpperCase();
+  const statusKey = String(
+    row?.late_justification_status_key
+      || row?.early_departure_justification_status_key
+      || row?.anomaly_justification_status_key
+      || ''
+  ).toUpperCase();
+  const approvedStatuses = ['APPROVED', 'APROBADO'];
+  const pendingStatuses = ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN'];
+
+  if (eventKey === 'ATRASO_JUSTIFICADO'
+    || approvedStatuses.includes(statusKey)
+    || row?.has_approved_punch_change) return 'green';
+  if (eventKey === 'ATRASO_JUSTIFICACION_PENDIENTE'
+    || pendingStatuses.includes(statusKey)) return 'yellow';
+  return 'red';
+}
+
 function eventPillClass(eventKey: string | null | undefined, row?: any): string {
   const key = String(eventKey || '').toUpperCase();
-  if (key === 'FALTA') return 'bg-red-100 text-red-700';
-  if (key === 'ATRASO_JUSTIFICADO') return 'bg-emerald-100 text-emerald-700';
-  if (key === 'ATRASO_JUSTIFICACION_PENDIENTE') return 'bg-red-100 text-red-700';
-  if (key === 'ATRASO') return 'bg-red-100 text-red-700';
-  if (key === 'SALIDA_ANTICIPADA') {
-    const statusKey = String(row?.early_departure_justification_status_key || '').toUpperCase();
-    return ['APPROVED', 'APROBADO'].includes(statusKey) ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700';
-  }
+  const trafficState = anomalyTrafficState({ ...row, event_key: eventKey });
+  if (trafficState === 'red') return 'bg-red-100 text-red-700';
+  if (trafficState === 'yellow') return 'bg-amber-100 text-amber-800';
+  if (trafficState === 'green') return 'bg-emerald-100 text-emerald-700';
+  if (key === 'NO_APLICA') return 'bg-slate-100 text-slate-700';
   if (key === 'PERMISO_APROBADO') return 'bg-blue-100 text-blue-700';
   if (key === 'FERIADO') return 'bg-violet-100 text-violet-700';
-  if (key === 'NO_APLICA') return 'bg-slate-100 text-slate-700';
   if (key === 'NO_LABORAL') return 'bg-slate-100 text-slate-700';
   return 'bg-emerald-100 text-emerald-700';
 }
 
 function timeInputToMinutes(value: string): number | null {
-  const match = String(value || '').match(/^(\d{2}):(\d{2})$/);
+  const match = String(value || '').match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (!match) return null;
   const hours = Number(match[1]);
   const minutes = Number(match[2]);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  return hours * 60 + minutes;
+  const seconds = Number(match[3] || 0);
+  if (
+    !Number.isFinite(hours)
+    || !Number.isFinite(minutes)
+    || !Number.isFinite(seconds)
+    || hours > 23
+    || minutes > 59
+    || seconds > 59
+  ) return null;
+  return hours * 60 + minutes + seconds / 60;
 }
 
 function dateTimeToLocalMinutes(value: string | null | undefined): number | null {
   if (!value) return null;
   const date = new Date(value);
   if (!Number.isNaN(date.getTime())) {
-    return date.getHours() * 60 + date.getMinutes();
+    return date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
   }
-  const match = String(value).match(/(?:T|\s)(\d{2}):(\d{2})/);
+  const match = String(value).match(/(?:T|\s)(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
+  return Number(match[1]) * 60 + Number(match[2]) + Number(match[3] || 0) / 60;
 }
 
 function getDefaultLatestPunchesFromTime(): string {
@@ -1230,7 +1316,7 @@ function SupervisorSurchargePie({
         </ResponsiveContainer>
         <div className="text-center">
           <p className="text-2xl font-bold">{formatHours(totalMinutes / 60)}</p>
-          <p className="text-xs text-muted-foreground">Total horas laboradas</p>
+          <p className="text-xs text-muted-foreground">Total horas netas</p>
         </div>
       </div>
       <div className="grid content-center gap-2">
@@ -1380,6 +1466,7 @@ function SupervisorHome({
 }) {
   const [latestPunchesFromTime, setLatestPunchesFromTime] = useState(() => getDefaultLatestPunchesFromTime());
   const [latestPunchesLimit, setLatestPunchesLimit] = useState(10);
+  const [showOnlyAnomalies, setShowOnlyAnomalies] = useState(false);
   const todayIssues = Array.isArray(payload?.today_issues) ? payload.today_issues : [];
   const latestPunches = Array.isArray(payload?.latest_punches) ? payload.latest_punches : [];
   const periodAnalytics = payload?.period_analytics || {};
@@ -1415,13 +1502,24 @@ function SupervisorHome({
 
   const filteredLatestPunches = useMemo(() => {
     const fromMinutes = timeInputToMinutes(latestPunchesFromTime);
-    if (fromMinutes === null) return latestPunches;
+    const sourceRows = showOnlyAnomalies
+      ? latestPunches.filter((row: any) => {
+        const trafficState = anomalyTrafficState(row);
+        return trafficState === 'red' || trafficState === 'yellow';
+      })
+      : latestPunches;
 
-    return latestPunches.filter((row: any) => {
-      const punchMinutes = dateTimeToLocalMinutes(row?.punch_datetime);
-      return punchMinutes !== null && punchMinutes >= fromMinutes;
-    });
-  }, [latestPunches, latestPunchesFromTime]);
+    const timeFilteredRows = fromMinutes === null
+      ? sourceRows
+      : sourceRows.filter((row: any) => {
+        const punchMinutes = dateTimeToLocalMinutes(row?.punch_datetime);
+        return punchMinutes !== null && punchMinutes >= fromMinutes;
+      });
+
+    return [...timeFilteredRows].sort((left: any, right: any) => (
+      String(right?.punch_datetime || '').localeCompare(String(left?.punch_datetime || ''))
+    ));
+  }, [latestPunches, latestPunchesFromTime, showOnlyAnomalies]);
 
   const visibleLatestPunches = filteredLatestPunches.slice(0, latestPunchesLimit);
 
@@ -1469,8 +1567,8 @@ function SupervisorHome({
 
           <Card className="flex-1">
             <CardHeader>
-              <CardTitle>Horas con recargo</CardTitle>
-              <CardDescription>Jornada ordinaria, nocturna y horas extras registradas contra turnos del día.</CardDescription>
+              <CardTitle>Distribución de horas trabajadas</CardTitle>
+              <CardDescription>Horas netas después del lunch, clasificadas según el turno y las políticas vigentes.</CardDescription>
             </CardHeader>
             <CardContent>
               <SupervisorSurchargePie rows={surchargeRows} />
@@ -1484,6 +1582,15 @@ function SupervisorHome({
               <div>
                 <CardTitle>Últimas marcaciones del día</CardTitle>
                 <CardDescription>Se refresca automáticamente para reflejar nuevas marcaciones.</CardDescription>
+                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showOnlyAnomalies}
+                    onChange={(event) => setShowOnlyAnomalies(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Solo anomalías
+                </label>
               </div>
               <div className="grid shrink-0 grid-cols-2 gap-2">
                 <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
@@ -1512,12 +1619,25 @@ function SupervisorHome({
           <CardContent className="min-h-0 flex-1">
             {filteredLatestPunches.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                {latestPunchesFromTime ? `Sin marcaciones registradas desde ${latestPunchesFromTime}.` : 'Sin marcaciones registradas hoy.'}
+                {showOnlyAnomalies
+                  ? 'No hay anomalías rojas o pendientes de aprobación en el rango seleccionado.'
+                  : latestPunchesFromTime
+                    ? `Sin marcaciones registradas desde ${latestPunchesFromTime}.`
+                    : 'Sin marcaciones registradas hoy.'}
               </p>
             ) : (
               <div className="max-h-[760px] space-y-2 overflow-y-auto pr-1">
                 {visibleLatestPunches.map((row: any) => (
-                  <div key={row.id} className="flex items-center justify-between gap-3 rounded-lg border bg-white px-3 py-2 text-sm">
+                  <div
+                    key={row.id}
+                    className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm ${
+                      anomalyTrafficState(row) === 'red'
+                        ? 'border-red-200 bg-red-50/40'
+                        : anomalyTrafficState(row) === 'yellow'
+                          ? 'border-amber-200 bg-amber-50/50'
+                          : 'bg-white'
+                    }`}
+                  >
                     <div className="min-w-0">
                       <p className="truncate font-medium">{row.employee_name}</p>
                       <p className="text-xs text-muted-foreground">
@@ -1570,8 +1690,8 @@ function SupervisorHome({
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>Horas con recargo</CardTitle>
-            <CardDescription>{intervalLabel}: jornada ordinaria, nocturna y horas extra registradas.</CardDescription>
+            <CardTitle>Distribución de horas trabajadas</CardTitle>
+            <CardDescription>{intervalLabel}: horas netas clasificadas según el turno y las políticas vigentes.</CardDescription>
           </CardHeader>
           <CardContent>
             <SupervisorSurchargePie rows={periodSurchargeRows} />
@@ -1588,8 +1708,8 @@ function SupervisorHome({
           valueFormatter={formatMetric}
         />
         <SupervisorPeriodLineChart
-          title="Horas con recargo"
-          description={`${intervalLabel}: 0%, 25%, 50% y 100% de recargo.`}
+          title="Horas trabajadas por tipo"
+          description={`${intervalLabel}: horas netas ordinarias, nocturnas, extra 50% y extra 100%.`}
           rows={periodSeries.map((row: any) => ({
             ...row,
             ordinary_minutes: Number(row?.ordinary_minutes || 0) / 60,
@@ -1610,7 +1730,7 @@ function SupervisorHome({
           valueFormatter={formatMetric}
         />
         <SupervisorBreakdownRanking
-          title="Áreas con más recargo"
+          title="Áreas por horas trabajadas"
           rows={periodRankings.area_surcharge || []}
           segments={surchargeLines}
           valueFormatter={(value) => formatHours(Number(value || 0) / 60)}
@@ -1622,7 +1742,7 @@ function SupervisorHome({
           valueFormatter={formatMetric}
         />
         <SupervisorBreakdownRanking
-          title="Empleados con más recargo"
+          title="Empleados por horas trabajadas"
           rows={periodRankings.employee_surcharge || []}
           segments={surchargeLines}
           valueFormatter={(value) => formatHours(Number(value || 0) / 60)}

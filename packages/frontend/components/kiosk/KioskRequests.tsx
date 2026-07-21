@@ -23,6 +23,7 @@ interface CatalogItem {
   justification_name?: string;
   attendance_event_id?: string | null;
   event_name?: string;
+  event_short_name?: string | null;
   lookup_label?: string;
   lookup_key?: string;
 }
@@ -34,6 +35,10 @@ interface RequestRow {
   justification_name: string | null;
   attendance_event_id: string;
   event_name: string | null;
+  event_short_name: string | null;
+  target_punch_id: string | null;
+  target_punch_datetime: string | null;
+  target_punch_key: number | null;
   justify_method_id: string | null;
   justify_method_key: string | null;
   justify_method_label: string | null;
@@ -72,10 +77,18 @@ interface DiscountMethodRule {
   sort_order: number;
 }
 
+interface PunchOption {
+  id: string;
+  punch_datetime: string;
+  punch_key: number;
+  movement_label: string | null;
+}
+
 type PopupForm = {
   id: string | null;
   justification_type_id: string;
   attendance_event_id: string;
+  target_punch_id: string;
   justify_method_id: string;
   start_date: string;
   end_date: string;
@@ -188,6 +201,16 @@ function normalizeTimeForApi(value: string): string {
   return raw;
 }
 
+function punchMovementLabel(punch: Pick<PunchOption, 'punch_key' | 'movement_label'>): string {
+  if (Number(punch.punch_key) === 1) return 'Entra a trabajo';
+  if (Number(punch.punch_key) === 2) return 'Inicio de lunch';
+  if (Number(punch.punch_key) === 3) return 'Fin de lunch';
+  if (Number(punch.punch_key) === 4) return 'Sale de trabajo';
+  if (Number(punch.punch_key) === 5) return 'Sale de trabajo (permiso)';
+  if (Number(punch.punch_key) === 6) return 'Entra a trabajo (retorno de permiso)';
+  return punch.movement_label || `Movimiento ${punch.punch_key}`;
+}
+
 type KioskRequestsProps = {
   deepLinkSearch?: string;
   onPopupClose?: () => void;
@@ -205,6 +228,7 @@ export default function KioskRequests({
   const [events, setEvents] = useState<CatalogItem[]>([]);
   const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
   const [discountMethodRules, setDiscountMethodRules] = useState<DiscountMethodRule[]>([]);
+  const [recentPunches, setRecentPunches] = useState<PunchOption[]>([]);
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [employee, setEmployee] = useState<EmployeeContext | null>(null);
 
@@ -218,6 +242,7 @@ export default function KioskRequests({
     id: null,
     justification_type_id: '',
     attendance_event_id: '',
+    target_punch_id: '',
     justify_method_id: '',
     start_date: '',
     end_date: '',
@@ -316,6 +341,7 @@ export default function KioskRequests({
     setEvents(nextEvents);
     setDiscountMethods(nextDiscountMethods);
     setDiscountMethodRules((payload?.discount_method_rules || []) as DiscountMethodRule[]);
+    setRecentPunches((payload?.recent_punches || []) as PunchOption[]);
     setEmployee((payload?.employee || null) as EmployeeContext | null);
   };
 
@@ -368,6 +394,20 @@ export default function KioskRequests({
 
   const mobileHistoryRows = useMemo(() => rows.slice(0, 10), [rows]);
 
+  const selectedAttendanceEvent = useMemo(
+    () => events.find((item) => item.id === popupForm.attendance_event_id) || null,
+    [events, popupForm.attendance_event_id]
+  );
+  const selectedEventShortName = String(selectedAttendanceEvent?.event_short_name || '').trim().toUpperCase();
+  const requiresTargetPunch = ['ATR', 'SAN', 'LEX', 'LFH'].includes(selectedEventShortName);
+  const compatiblePunches = useMemo(() => recentPunches.filter((punch) => {
+    const key = Number(punch.punch_key);
+    if (selectedEventShortName === 'ATR') return key === 1;
+    if (selectedEventShortName === 'SAN') return key === 4;
+    if (selectedEventShortName === 'LEX' || selectedEventShortName === 'LFH') return key === 2 || key === 3;
+    return true;
+  }), [recentPunches, selectedEventShortName]);
+
   const allowedDiscountMethods = useMemo(() => {
     const justificationRules = discountMethodRules.filter(
       (rule) => rule.justification_type_id === popupForm.justification_type_id
@@ -406,6 +446,7 @@ export default function KioskRequests({
       id: null,
       justification_type_id: firstJustification,
       attendance_event_id: firstEvent,
+      target_punch_id: '',
       justify_method_id: firstDiscount,
       start_date: '',
       end_date: '',
@@ -425,6 +466,7 @@ export default function KioskRequests({
       id: row.id,
       justification_type_id: row.justification_type_id,
       attendance_event_id: row.attendance_event_id,
+      target_punch_id: row.target_punch_id || '',
       justify_method_id: row.justify_method_id || '',
       start_date: toDateOnly(row.start_datetime),
       end_date: toDateOnly(row.end_datetime),
@@ -444,6 +486,7 @@ export default function KioskRequests({
       id: row.id,
       justification_type_id: row.justification_type_id,
       attendance_event_id: row.attendance_event_id,
+      target_punch_id: row.target_punch_id || '',
       justify_method_id: row.justify_method_id || '',
       start_date: toDateOnly(row.start_datetime),
       end_date: toDateOnly(row.end_datetime),
@@ -483,6 +526,7 @@ export default function KioskRequests({
     const incidentStartTime = params.get('start_time') || '';
     const incidentEndTime = params.get('end_time') || '';
     const attendanceEventId = params.get('attendance_event_id') || '';
+    const targetPunchId = params.get('context_punch_id') || '';
     const requestedJustificationId = params.get('justification_type_id') || '';
     const incidentName = params.get('incident') || 'Incidencia de asistencia';
     const minutes = Number(params.get('minutes') || 0);
@@ -503,6 +547,7 @@ export default function KioskRequests({
       id: null,
       justification_type_id: selectedJustification?.id || '',
       attendance_event_id: selectedEventId,
+      target_punch_id: targetPunchId,
       justify_method_id: discountMethods[0]?.id || '',
       start_date: incidentStartDate,
       end_date: incidentEndDate,
@@ -533,12 +578,16 @@ export default function KioskRequests({
       ...prev,
       justification_type_id: value,
       attendance_event_id: found?.attendance_event_id || prev.attendance_event_id,
+      target_punch_id: found?.attendance_event_id && found.attendance_event_id !== prev.attendance_event_id
+        ? ''
+        : prev.target_punch_id,
     }));
   };
 
   const submitPopup = async () => {
     if (!popupForm.justification_type_id) return toast.error('Selecciona tipo de justificación');
     if (!popupForm.attendance_event_id) return toast.error('Selecciona evento de asistencia');
+    if (requiresTargetPunch && !popupForm.target_punch_id) return toast.error('Selecciona la marcación que estás justificando');
     if (!popupForm.justify_method_id) return toast.error('Selecciona método de descuento');
     if (!popupForm.start_date) return toast.error('Selecciona fecha de inicio');
     if (!popupForm.end_date) return toast.error('Selecciona fecha de fin');
@@ -559,6 +608,7 @@ export default function KioskRequests({
           body: JSON.stringify({
             justification_type_id: popupForm.justification_type_id,
             attendance_event_id: popupForm.attendance_event_id,
+            target_punch_id: popupForm.target_punch_id || null,
             justify_method_id: popupForm.justify_method_id,
             start_datetime: startDateTimeIso,
             end_datetime: endDateTimeIso,
@@ -578,6 +628,7 @@ export default function KioskRequests({
           body: JSON.stringify({
             justification_type_id: popupForm.justification_type_id,
             attendance_event_id: popupForm.attendance_event_id,
+            target_punch_id: popupForm.target_punch_id || null,
             justify_method_id: popupForm.justify_method_id,
             start_datetime: startDateTimeIso,
             end_datetime: endDateTimeIso,
@@ -861,6 +912,17 @@ export default function KioskRequests({
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Evento</dt>
                   <dd className="mt-0.5 break-words font-semibold text-slate-900">{editingRequestSnapshot.event_name || '-'}</dd>
                 </div>
+                {editingRequestSnapshot.target_punch_id ? (
+                  <div className="rounded-lg bg-white px-2.5 py-2 sm:col-span-4">
+                    <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Marcación asociada</dt>
+                    <dd className="mt-0.5 break-words font-semibold text-slate-900">
+                      {formatDateTime(editingRequestSnapshot.target_punch_datetime)} - {punchMovementLabel({
+                        punch_key: Number(editingRequestSnapshot.target_punch_key || 0),
+                        movement_label: null,
+                      })}
+                    </dd>
+                  </div>
+                ) : null}
                 <div className="rounded-lg bg-white px-2.5 py-2 sm:col-span-2">
                   <dt className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Desde</dt>
                   <dd className="mt-0.5 text-slate-800">{formatDateTime(editingRequestSnapshot.start_datetime)}</dd>
@@ -942,7 +1004,11 @@ export default function KioskRequests({
               <span className="block text-slate-700">Evento de asistencia</span>
               <select
                 value={popupForm.attendance_event_id}
-                onChange={(event) => setPopupForm((prev) => ({ ...prev, attendance_event_id: event.target.value }))}
+                onChange={(event) => setPopupForm((prev) => ({
+                  ...prev,
+                  attendance_event_id: event.target.value,
+                  target_punch_id: '',
+                }))}
                 className="h-10 w-full min-w-0 rounded-md border px-3"
                 disabled={saving}
               >
@@ -952,6 +1018,27 @@ export default function KioskRequests({
                 ))}
               </select>
             </label>
+
+            {requiresTargetPunch ? (
+              <label className="min-w-0 space-y-1 text-sm sm:col-span-2">
+                <span className="block text-slate-700">Marcación asociada</span>
+                <select
+                  value={popupForm.target_punch_id}
+                  onChange={(event) => setPopupForm((prev) => ({ ...prev, target_punch_id: event.target.value }))}
+                  className="h-10 w-full min-w-0 rounded-md border px-3"
+                  disabled={saving}
+                  required
+                >
+                  <option value="">Seleccionar la marcación exacta...</option>
+                  {compatiblePunches.map((punch) => (
+                    <option key={punch.id} value={punch.id}>
+                      {formatDateTime(punch.punch_datetime)} - {punchMovementLabel(punch)}
+                    </option>
+                  ))}
+                </select>
+                <span className="block text-xs text-slate-500">La justificación quedará vinculada al ID de esta marcación.</span>
+              </label>
+            ) : null}
 
             <label className="min-w-0 space-y-1 text-sm sm:col-span-2">
               <span className="block text-slate-700">Método de descuento</span>
