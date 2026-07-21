@@ -518,6 +518,14 @@ function EmployeeHome({
     params.set('source', 'my-incidents');
     if (incident?.incident_date) params.set('date', String(incident.incident_date));
 
+    if (incident?.request_target === 'PUNCH') {
+      window.history.pushState({}, '', '/dashboard/kiosk/timeclock');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+
+    if (incident?.request_target === 'INFORMATION') return;
+
     if (incident?.request_target === 'TIME_PUNCH_REQUEST') {
       if (incident?.request_id) {
         params.set('request_id', String(incident.request_id));
@@ -643,7 +651,7 @@ function EmployeeHome({
                     <span className="md:hidden">Mis incidencias pendientes</span>
                     <span className="hidden md:inline">Mis incidencias</span>
                   </CardTitle>
-                  <CardDescription className="mt-1 text-xs">Selecciona una fila para gestionar el requerimiento correspondiente.</CardDescription>
+                  <CardDescription className="mt-1 text-xs">Revisa cada incidencia y gestiona las que requieran una acción.</CardDescription>
                 </div>
                 <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-800">
                   <span className="md:hidden">{pendingIncidents.length}</span>
@@ -663,7 +671,8 @@ function EmployeeHome({
                       type="button"
                       key={incident.id || `${incident.incident_date}-${incident.event_short_name}-${index}`}
                       onClick={() => openIncidentJustification(incident)}
-                      className={`group w-full items-center gap-2 bg-white px-3 py-2.5 text-left hover:bg-amber-50 ${isPendingIncident(incident) ? 'flex' : 'hidden md:flex'}`}
+                      disabled={incident.request_target === 'INFORMATION'}
+                      className={`group w-full items-center gap-2 bg-white px-3 py-2.5 text-left ${incident.request_target === 'INFORMATION' ? 'cursor-default' : 'hover:bg-amber-50'} ${isPendingIncident(incident) ? 'flex' : 'hidden md:flex'}`}
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
@@ -676,14 +685,19 @@ function EmployeeHome({
                             <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-600">
                               {incident.request_target === 'TIME_PUNCH_REQUEST'
                                 ? 'Gestionar marcación'
+                                : incident.request_target === 'PUNCH'
+                                  ? 'Marcar ahora'
                                 : incident.request_target === 'SHIFT_CHANGE'
                                   ? 'Cambiar turno'
-                                  : 'Justificar'}
+                                  : incident.request_target === 'INFORMATION'
+                                    ? 'Revisar asignación'
+                                    : 'Justificar'}
                             </span>
                           )}
                         </div>
                         <p className="mt-0.5 truncate text-[10px] text-slate-500">
                           {formatDate(incident.incident_date)}
+                          {incident.event_short_name === 'MRQ' && incident.start_time ? ` · Inicio ${incident.start_time}` : ''}
                           {Number(incident.minutes || 0) > 0 ? ` · ${Number(incident.minutes).toFixed(0)} min` : ''}
                           {incident.punch_count ? ` · ${incident.punch_count} marcaciones` : ''}
                         </p>
@@ -691,7 +705,9 @@ function EmployeeHome({
                           <p className="mt-0.5 truncate text-[10px] text-slate-600" title={incident.notes}>{incident.notes}</p>
                         ) : null}
                       </div>
-                      {incident.request_id ? (
+                      {incident.request_target === 'INFORMATION' ? (
+                        <AlertCircle className="h-4 w-4 shrink-0 text-slate-500" aria-label="Incidencia informativa" />
+                      ) : incident.request_id ? (
                         <Eye className="h-4 w-4 shrink-0 text-blue-600" aria-label="Ver detalle de la solicitud" />
                       ) : (
                         <ArrowUpRight className="h-4 w-4 shrink-0 text-amber-600 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
@@ -2477,12 +2493,13 @@ export function Dashboard() {
 
   useEffect(() => {
     let mounted = true;
+    let refreshTimerId: number | undefined;
 
-    const loadEmployee = async () => {
+    const loadEmployee = async (showLoading = true) => {
       if (!isEmployee) return;
       if (!session?.access_token) return;
       try {
-        if (mounted) {
+        if (mounted && showLoading) {
           setEmployeeLoading(true);
           setEmployeeError(null);
         }
@@ -2496,13 +2513,17 @@ export function Dashboard() {
       } catch (e: any) {
         if (mounted) setEmployeeError(e?.message || 'Error cargando dashboard de empleado');
       } finally {
-        if (mounted) setEmployeeLoading(false);
+        if (mounted && showLoading) setEmployeeLoading(false);
       }
     };
 
     void loadEmployee();
+    refreshTimerId = window.setInterval(() => {
+      void loadEmployee(false);
+    }, 15_000);
     return () => {
       mounted = false;
+      if (refreshTimerId !== undefined) window.clearInterval(refreshTimerId);
     };
   }, [isEmployee, session?.access_token, employeeRange.from, employeeRange.to, employeeRefreshKey]);
 

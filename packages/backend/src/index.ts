@@ -3885,7 +3885,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isoWeek = Number(weekInfoResult.rows[0]?.iso_week || 0);
     const isoYear = Number(weekInfoResult.rows[0]?.iso_year || currentYear);
 
-    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthTimePunchChangeRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult, incidentsResult, oddPunchesResult, derivedIncidentsResult] = await Promise.all([
+    const [recentPunchesResult, monthPunchesResult, monthShiftsResult, monthAbsenceRequestsResult, monthTimePunchChangeRequestsResult, monthShiftChangeRequestsResult, holidaysRawResult, attendanceImpactResult, monthlyNoveltyResult, incidentsResult, oddPunchesResult, derivedIncidentsResult, shiftOperationalIncidentsResult] = await Promise.all([
       pool.query(
         `
           SELECT
@@ -4987,6 +4987,166 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           todayIso,
         ]
       ),
+      pool.query(
+        `
+          WITH evaluated_days AS (
+            SELECT day_value::date AS evaluated_date
+            FROM generate_series(
+              $3::date,
+              $4::date - INTERVAL '1 day',
+              INTERVAL '1 day'
+            ) day_value
+            WHERE ($5::date IS NULL OR day_value::date >= $5::date)
+              AND ($6::date IS NULL OR day_value::date <= $6::date)
+          ),
+          plans AS (
+            SELECT DISTINCT ON (plan.shift_date)
+              plan.id AS plan_id,
+              plan.shift_date,
+              plan.shift_id,
+              shift_row.id AS active_shift_id,
+              shift_row.shift_name,
+              shift_row.shift_short_name,
+              shift_row.start_time,
+              COALESCE(shift_row.work_minutes, 0)::int AS shift_work_minutes,
+              constructor.id AS constructor_id,
+              constructor.tenant_id AS constructor_tenant_id,
+              (EXTRACT(HOUR FROM shift_row.start_time)::int * 60 + EXTRACT(MINUTE FROM shift_row.start_time)::int) AS shift_start_minutes
+            FROM public.employee_shift_plans plan
+            LEFT JOIN public.shifts shift_row
+              ON shift_row.id = plan.shift_id
+             AND shift_row.tenant_id = plan.tenant_id
+             AND shift_row.is_active = true
+            LEFT JOIN public.shift_constructors constructor
+              ON constructor.shift_id = shift_row.id
+             AND constructor.tenant_id = shift_row.tenant_id
+             AND constructor.is_active = true
+            WHERE plan.tenant_id = $1::uuid
+              AND plan.employee_id = $2::uuid
+              AND plan.is_active = true
+              AND plan.shift_date >= $3::date
+              AND plan.shift_date < $4::date
+            ORDER BY plan.shift_date, plan.created_at DESC NULLS LAST, plan.id DESC
+          ),
+          plan_bounds AS (
+            SELECT
+              plan.*,
+              COALESCE(
+                MIN(block.start_minutes) FILTER (
+                  WHERE block.is_break = false
+                    AND block.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                plan.shift_start_minutes
+              )::int AS work_start_minutes,
+              COALESCE(
+                MAX(block.end_minutes) FILTER (
+                  WHERE block.is_break = false
+                    AND block.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                plan.shift_start_minutes + plan.shift_work_minutes
+              )::int AS work_end_minutes,
+              COALESCE(
+                SUM(block.end_minutes - block.start_minutes) FILTER (
+                  WHERE block.is_break = false
+                    AND block.block_type IN ('ORDINARIA', 'NOCTURNA')
+                ),
+                plan.shift_work_minutes
+              )::int AS planned_work_minutes
+            FROM plans plan
+            LEFT JOIN public.shift_constructor_blocks block
+              ON block.constructor_id = plan.constructor_id
+             AND block.tenant_id = plan.constructor_tenant_id
+             AND block.is_active = true
+            GROUP BY
+              plan.plan_id,
+              plan.shift_date,
+              plan.shift_id,
+              plan.active_shift_id,
+              plan.shift_name,
+              plan.shift_short_name,
+              plan.start_time,
+              plan.shift_work_minutes,
+              plan.constructor_id,
+              plan.constructor_tenant_id,
+              plan.shift_start_minutes
+          ),
+          work_entries AS (
+            SELECT
+              (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
+              MIN(punch.punch_datetime) FILTER (WHERE punch.punch_key = 1) AS work_entry
+            FROM public.employee_time_punches punch
+            WHERE punch.tenant_id = $1::uuid
+              AND punch.employee_id = $2::uuid
+              AND punch.is_active = true
+              AND (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date >= $3::date
+              AND (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date < $4::date
+            GROUP BY punch_date
+          ),
+          evaluated AS (
+            SELECT
+              day_row.evaluated_date AS incident_date,
+              bounds.plan_id,
+              bounds.shift_id,
+              bounds.active_shift_id,
+              bounds.shift_name,
+              bounds.shift_short_name,
+              CASE
+                WHEN bounds.work_start_minutes IS NOT NULL
+                  THEN (day_row.evaluated_date + (bounds.work_start_minutes || ' minutes')::interval)
+                ELSE NULL
+              END AS expected_entry_at,
+              CASE
+                WHEN bounds.work_end_minutes IS NOT NULL
+                  THEN (day_row.evaluated_date + (bounds.work_end_minutes || ' minutes')::interval)
+                ELSE NULL
+              END AS expected_exit_at,
+              entry.work_entry,
+              CASE
+                WHEN bounds.plan_id IS NULL OR bounds.shift_id IS NULL OR bounds.active_shift_id IS NULL
+                  THEN 'NO_SHIFT_ASSIGNED'
+                WHEN day_row.evaluated_date = $7::date
+                 AND COALESCE(bounds.planned_work_minutes, 0) > 0
+                 AND entry.work_entry IS NULL
+                 AND (now() AT TIME ZONE 'America/Guayaquil') >= (
+                   day_row.evaluated_date
+                   + (bounds.work_start_minutes || ' minutes')::interval
+                   - INTERVAL '1 minute'
+                 )
+                 AND (now() AT TIME ZONE 'America/Guayaquil') <= (
+                   day_row.evaluated_date + (bounds.work_end_minutes || ' minutes')::interval
+                 )
+                  THEN 'PUNCH_REQUIRED'
+                ELSE NULL
+              END AS incident_key
+            FROM evaluated_days day_row
+            LEFT JOIN plan_bounds bounds
+              ON bounds.shift_date = day_row.evaluated_date
+            LEFT JOIN work_entries entry
+              ON entry.punch_date = day_row.evaluated_date
+          )
+          SELECT
+            incident_date,
+            incident_key,
+            plan_id,
+            shift_id,
+            shift_name,
+            shift_short_name,
+            expected_entry_at,
+            TO_CHAR(expected_entry_at, 'HH24:MI:SS') AS shift_start_time
+          FROM evaluated
+          WHERE incident_key IS NOT NULL
+          ORDER BY incident_date DESC, incident_key
+        `,
+        [
+          tenantId,
+          employeeId,
+          rangeFromIso,
+          rangeEndExclusiveIso,
+          employeeHireDateIso,
+          employeeTerminationDateIso,
+          todayIso,
+        ]
+      ),
     ]);
 
     const holidaysCurrentMonth = (holidaysRawResult.rows || []).flatMap((row: any) => {
@@ -5241,7 +5401,43 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       calculationIncidentRows.map((row: any) => `${row.incident_date}|${row.event_short_name}`)
     );
 
+    const shiftOperationalIncidentRows = (shiftOperationalIncidentsResult.rows || []).map((row: any) => {
+      const incidentDate = normalizeDateOnly(row.incident_date);
+      const incidentKey = String(row.incident_key || '').toUpperCase();
+      const shiftStartTime = row.shift_start_time || null;
+      const isPunchRequired = incidentKey === 'PUNCH_REQUIRED';
+      return {
+        id: `SHIFT-${incidentDate}-${incidentKey}`,
+        calculation_id: null,
+        incident_date: incidentDate,
+        event_datetime: row.expected_entry_at || null,
+        attendance_event_id: null,
+        event_name: isPunchRequired ? 'Marcación requerida' : 'No hay turno asignado',
+        event_short_name: isPunchRequired ? 'MRQ' : 'NTA',
+        event_type_key: 'SHIFT_OPERATIONAL',
+        minutes: 0,
+        notes: isPunchRequired
+          ? `Debes registrar la entrada correspondiente al turno que inicia a las ${shiftStartTime || '--:--:--'}.`
+          : 'No existe un turno asignado para el día evaluado.',
+        start_date: incidentDate,
+        end_date: incidentDate,
+        start_time: shiftStartTime,
+        end_time: null,
+        target_punch_id: null,
+        is_approved: false,
+        justification_type_id: null,
+        request_id: null,
+        request_status_key: null,
+        request_status_label: null,
+        punch_count: null,
+        source: 'SHIFT_OPERATIONAL',
+        request_target: isPunchRequired ? 'PUNCH' : 'INFORMATION',
+        shift_id: row.shift_id || null,
+      };
+    });
+
     const incidents = [
+      ...shiftOperationalIncidentRows,
       ...calculationIncidentRows,
       ...derivedIncidentRows.filter((row: any) => !calculationKeys.has(`${row.incident_date}|${row.event_short_name}`)),
       ...(oddPunchesResult.rows || []).map((row: any) => ({
