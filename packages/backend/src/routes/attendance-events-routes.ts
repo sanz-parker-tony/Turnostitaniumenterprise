@@ -83,27 +83,16 @@ router.get('/', async (req: Request, res: Response) => {
 
 router.get('/catalogs/movements', async (req: Request, res: Response) => {
   try {
-    const Postgres = createDbClient(
-      process.env.Postgres_URL || '',
-      process.env.Postgres_SERVICE_ROLE_KEY || ''
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const { rows: movements } = await pool.query(
+      `SELECT id, tenant_id, movement_short_name, movement_name,
+              start_key, end_key, start_punch_key_id, end_punch_key_id, is_active
+       FROM public.attendance_movements
+       WHERE tenant_id = $1::uuid
+       ORDER BY movement_short_name`,
+      [tenantId]
     );
-
-    let query = Postgres
-      .from('attendance_movements')
-      .select('id, tenant_id, movement_short_name, movement_name, start_key, end_key, is_active')
-      .order('movement_short_name', { ascending: true });
-
-    const tenantId = req.query.tenant_id as string | undefined;
-    if (tenantId) {
-      query = query.eq('tenant_id', tenantId);
-    }
-
-    const { data: movements, error } = await query;
-
-    if (error) {
-      console.error('[ATTENDANCE-EVENTS] Error cargando catalogo de movements:', error);
-      return res.status(500).json({ error: error.message });
-    }
 
     return res.status(200).json({
       success: true,
@@ -113,6 +102,157 @@ router.get('/catalogs/movements', async (req: Request, res: Response) => {
   } catch (err) {
     console.error('[ATTENDANCE-EVENTS] Error en GET /catalogs/movements:', err);
     return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+router.get('/catalogs/punch-keys', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const { rows } = await pool.query(
+      `SELECT value.id, value.lookup_key, value.lookup_label,
+              (value.metadata->>'device_code')::integer AS device_code,
+              value.sort_order, value.is_active
+       FROM public.lookup_values AS value
+       JOIN public.lookup_groups AS group_row
+         ON group_row.id = value.lookup_group_id
+        AND group_row.lookup_group_key = 'PUNCH_KEY'
+        AND group_row.is_active = true
+       WHERE value.is_active = true
+         AND (value.tenant_id IS NULL OR value.tenant_id = $1::uuid)
+         AND COALESCE(value.metadata->>'device_code', '') ~ '^[0-9]+$'
+       ORDER BY CASE WHEN value.tenant_id = $1::uuid THEN 0 ELSE 1 END,
+                value.sort_order, value.lookup_label`,
+      [tenantId]
+    );
+    return res.status(200).json({ success: true, punch_keys: rows });
+  } catch (err) {
+    console.error('[ATTENDANCE-EVENTS] Error en GET /catalogs/punch-keys:', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+const movementSelectSql = `
+  SELECT movement.id, movement.tenant_id, movement.movement_name,
+         movement.movement_short_name, movement.start_key, movement.end_key,
+         movement.start_punch_key_id, movement.end_punch_key_id,
+         movement.is_active, movement.created_by, movement.created_at,
+         movement.updated_by, movement.updated_at,
+         start_value.lookup_key AS start_lookup_key,
+         start_value.lookup_label AS start_lookup_label,
+         end_value.lookup_key AS end_lookup_key,
+         end_value.lookup_label AS end_lookup_label
+  FROM public.attendance_movements AS movement
+  JOIN public.lookup_values AS start_value ON start_value.id = movement.start_punch_key_id
+  JOIN public.lookup_values AS end_value ON end_value.id = movement.end_punch_key_id
+`;
+
+router.get('/movements', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const { rows } = await pool.query(
+      `${movementSelectSql}
+       WHERE movement.tenant_id = $1::uuid
+       ORDER BY movement.movement_name, movement.movement_short_name`,
+      [tenantId]
+    );
+    return res.status(200).json({ success: true, movements: rows });
+  } catch (err) {
+    console.error('[ATTENDANCE-EVENTS] Error en GET /movements:', err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+router.post('/movements', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const name = String(req.body?.movement_name || '').trim();
+    const shortName = String(req.body?.movement_short_name || '').trim().toUpperCase();
+    const startId = String(req.body?.start_punch_key_id || '').trim();
+    const endId = String(req.body?.end_punch_key_id || '').trim();
+    const isActive = req.body?.is_active !== false;
+    if (!name || !shortName || !startId || !endId) {
+      return res.status(400).json({ error: 'Nombre, código, tecla inicial y tecla final son obligatorios' });
+    }
+    if (!/^[A-Z0-9_]{2,20}$/.test(shortName)) {
+      return res.status(400).json({ error: 'El código debe usar 2 a 20 caracteres A-Z, 0-9 o _' });
+    }
+    const actor = String((req as any)?.user?.id || 'SYSTEM');
+    const { rows } = await pool.query(
+      `INSERT INTO public.attendance_movements (
+         tenant_id, movement_name, movement_short_name,
+         start_key, end_key, start_punch_key_id, end_punch_key_id,
+         is_active, created_by
+       ) VALUES ($1::uuid, $2, $3, 0, 0, $4::uuid, $5::uuid, $6, $7)
+       RETURNING id`,
+      [tenantId, name, shortName, startId, endId, isActive, actor]
+    );
+    const result = await pool.query(
+      `${movementSelectSql} WHERE movement.id = $1::uuid AND movement.tenant_id = $2::uuid`,
+      [rows[0].id, tenantId]
+    );
+    return res.status(201).json({ success: true, movement: result.rows[0] });
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json({ error: 'Ya existe un movimiento con ese código o par de teclas' });
+    if (err?.code === '22P02' || err?.code === '23503') return res.status(400).json({ error: 'Las teclas seleccionadas no son válidas' });
+    console.error('[ATTENDANCE-EVENTS] Error en POST /movements:', err);
+    return res.status(500).json({ error: err?.message || 'Error interno del servidor' });
+  }
+});
+
+router.put('/movements/:id', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const name = String(req.body?.movement_name || '').trim();
+    const shortName = String(req.body?.movement_short_name || '').trim().toUpperCase();
+    const startId = String(req.body?.start_punch_key_id || '').trim();
+    const endId = String(req.body?.end_punch_key_id || '').trim();
+    if (!name || !shortName || !startId || !endId) {
+      return res.status(400).json({ error: 'Nombre, código, tecla inicial y tecla final son obligatorios' });
+    }
+    const actor = String((req as any)?.user?.id || 'SYSTEM');
+    const { rows } = await pool.query(
+      `UPDATE public.attendance_movements
+       SET movement_name = $3, movement_short_name = $4,
+           start_punch_key_id = $5::uuid, end_punch_key_id = $6::uuid,
+           is_active = $7, updated_by = $8, updated_at = now()
+       WHERE id = $1::uuid AND tenant_id = $2::uuid
+       RETURNING id`,
+      [req.params.id, tenantId, name, shortName, startId, endId, req.body?.is_active !== false, actor]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Movimiento no encontrado' });
+    const result = await pool.query(
+      `${movementSelectSql} WHERE movement.id = $1::uuid AND movement.tenant_id = $2::uuid`,
+      [rows[0].id, tenantId]
+    );
+    return res.status(200).json({ success: true, movement: result.rows[0] });
+  } catch (err: any) {
+    if (err?.code === '23505') return res.status(409).json({ error: 'Ya existe un movimiento con ese código o par de teclas' });
+    if (err?.code === '22P02' || err?.code === '23503') return res.status(400).json({ error: 'Las teclas seleccionadas no son válidas' });
+    console.error('[ATTENDANCE-EVENTS] Error en PUT /movements/:id:', err);
+    return res.status(500).json({ error: err?.message || 'Error interno del servidor' });
+  }
+});
+
+router.patch('/movements/:id/status', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(403).json({ error: 'Usuario sin tenant activo' });
+    const actor = String((req as any)?.user?.id || 'SYSTEM');
+    const { rows } = await pool.query(
+      `UPDATE public.attendance_movements
+       SET is_active = $3, updated_by = $4, updated_at = now()
+       WHERE id = $1::uuid AND tenant_id = $2::uuid
+       RETURNING id, is_active`,
+      [req.params.id, tenantId, Boolean(req.body?.is_active), actor]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Movimiento no encontrado' });
+    return res.status(200).json({ success: true, movement: rows[0] });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Error interno del servidor' });
   }
 });
 router.get('/:id', async (req: Request, res: Response) => {

@@ -134,6 +134,7 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
   'RPT_EXECUTIONS': '/dashboard/reports/executions',
   'ATTENDANCE_REPORTS': '/dashboard/reports/attendance',
   'OVERTIME_REPORTS': '/dashboard/reports/overtime',
+  'TIME_PUNCH_REPORTS': '/dashboard/reports/time-punches',
 
   // ========== KIOSK (fuera de dashboard) ==========
   'KIOSK_PUNCH': '/kiosk/punch',

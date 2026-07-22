@@ -111,7 +111,7 @@ const currentNotificationSql = `
         LEFT JOIN LATERAL (
           SELECT
             COUNT(*) FILTER (
-              WHERE candidate.punch_key = movement.start_key
+              WHERE candidate.punch_key_lookup_id = movement.start_punch_key_id
                 AND (
                   candidate.punch_datetime < referenced_punch.punch_datetime
                   OR (
@@ -121,7 +121,7 @@ const currentNotificationSql = `
                 )
             )::int AS referenced_start_rank,
             COUNT(*) FILTER (
-              WHERE candidate.punch_key = movement.end_key
+              WHERE candidate.punch_key_lookup_id = movement.end_punch_key_id
                 AND (
                   candidate.punch_datetime < referenced_punch.punch_datetime
                   OR (
@@ -130,22 +130,22 @@ const currentNotificationSql = `
                   )
                 )
             )::int AS referenced_end_rank,
-            COUNT(*) FILTER (WHERE candidate.punch_key = movement.start_key)::int AS start_count,
-            COUNT(*) FILTER (WHERE candidate.punch_key = movement.end_key)::int AS end_count
+            COUNT(*) FILTER (WHERE candidate.punch_key_lookup_id = movement.start_punch_key_id)::int AS start_count,
+            COUNT(*) FILTER (WHERE candidate.punch_key_lookup_id = movement.end_punch_key_id)::int AS end_count
           FROM public.employee_time_punches candidate
           WHERE candidate.tenant_id = referenced_punch.tenant_id
             AND candidate.company_id = referenced_punch.company_id
             AND candidate.employee_id = referenced_punch.employee_id
             AND candidate.is_active = true
-            AND candidate.punch_key IN (movement.start_key, movement.end_key)
+            AND candidate.punch_key_lookup_id IN (movement.start_punch_key_id, movement.end_punch_key_id)
             AND date_trunc('day', candidate.punch_datetime) = date_trunc('day', referenced_punch.punch_datetime)
         ) pairing ON true
         WHERE referenced_punch.id = n.ref_id
           AND referenced_punch.tenant_id = n.tenant_id
           AND referenced_punch.is_active = true
           AND (
-            (referenced_punch.punch_key = movement.start_key AND pairing.end_count < pairing.referenced_start_rank)
-            OR (referenced_punch.punch_key = movement.end_key AND pairing.start_count < pairing.referenced_end_rank)
+            (referenced_punch.punch_key_lookup_id = movement.start_punch_key_id AND pairing.end_count < pairing.referenced_start_rank)
+            OR (referenced_punch.punch_key_lookup_id = movement.end_punch_key_id AND pairing.start_count < pairing.referenced_end_rank)
           )
       )
     )

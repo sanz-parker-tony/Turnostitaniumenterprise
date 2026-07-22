@@ -7,9 +7,6 @@ import { randomUUID } from 'crypto';
 
 const router = Router();
 
-const PUNCH_KEY_GROUP_ID = 'a349d449-b3c1-475a-91bd-c687b49e97cc';
-const PUNCH_SOURCE_GROUP_ID = 'd0c3806b-de4b-a91d-13d6-bc565264c183';
-const TIME_PUNCH_STATUS_GROUP_ID = '0949d7d5-c2b1-56e9-6010-5909cc7af8b7';
 const PUNCH_KEY_GROUP_KEY = 'PUNCH_KEY';
 const PUNCH_SOURCE_GROUP_KEY = 'PUNCH_SOURCE';
 const TIME_PUNCH_STATUS_GROUP_KEY = 'TIME_PUNCH_STATUS';
@@ -22,7 +19,6 @@ const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
 const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
-const FIXED_PUNCH_SOURCE_ID = 'a54a5eb6-ad1f-8573-98d7-d62ff0c0861d';
 const FIXED_PUNCH_SOURCE_KEY = 'WEB';
 const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
 const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
@@ -934,7 +930,7 @@ async function normalizeTimePunchRequestedValues(params: {
   if (punchKeyLookupId) {
     const punchKeyLookupResult = await pool.query(
       `
-        SELECT lv.sort_order
+        SELECT (lv.metadata->>'device_code')::integer AS device_code
         FROM public.lookup_values lv
         INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
         WHERE lv.id = $1::uuid
@@ -942,15 +938,16 @@ async function normalizeTimePunchRequestedValues(params: {
           AND lg.is_active = true
           AND lv.is_active = true
           AND (lv.tenant_id IS NULL OR lv.tenant_id = $3::uuid)
+          AND COALESCE(lv.metadata->>'device_code', '') ~ '^[0-9]+$'
         LIMIT 1
       `,
       [punchKeyLookupId, PUNCH_KEY_GROUP_KEY, params.tenantId]
     );
     const row = punchKeyLookupResult.rows[0];
-    if (!row || !Number.isFinite(Number(row.sort_order))) {
+    if (!row || !Number.isFinite(Number(row.device_code))) {
       throw new Error('requested_values.punch_key_lookup_id no es valido');
     }
-    normalized.punch_key = Math.trunc(Number(row.sort_order));
+    normalized.punch_key = Math.trunc(Number(row.device_code));
   } else if (punchKeyRaw !== undefined && punchKeyRaw !== null && String(punchKeyRaw).trim() !== '') {
     const parsedPunchKey = Number(punchKeyRaw);
     if (!Number.isFinite(parsedPunchKey)) {
@@ -1508,7 +1505,12 @@ router.get('/mark/context', async (req: Request, res: Response) => {
             lv.sort_order,
             lv.lookup_group_id,
             lg.lookup_group_key,
-            lv.sort_order AS punch_key_value
+            CASE
+              WHEN lg.lookup_group_key = 'PUNCH_KEY'
+               AND COALESCE(lv.metadata->>'device_code', '') ~ '^[0-9]+$'
+                THEN (lv.metadata->>'device_code')::integer
+              ELSE NULL
+            END AS punch_key_value
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg
             ON lg.id = lv.lookup_group_id
@@ -1564,7 +1566,7 @@ router.get('/mark/history', async (req: Request, res: Response) => {
     const limitRaw = Number(req.query.limit ?? 200);
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.trunc(limitRaw))) : 200;
 
-    const params: any[] = [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID];
+    const params: any[] = [context.tenant_id, context.employee_id];
     let whereExtra = '';
 
     if (from) {
@@ -1612,16 +1614,8 @@ router.get('/mark/history', async (req: Request, res: Response) => {
           ON src.id = p.punch_source_id
         LEFT JOIN public.lookup_values st
           ON st.id = p.time_punch_status_id
-        LEFT JOIN LATERAL (
-          SELECT lv.id, lv.lookup_label
-          FROM public.lookup_values lv
-          WHERE lv.lookup_group_id = $3::uuid
-            AND lv.sort_order = p.punch_key
-            AND lv.is_active = true
-            AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-          ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
-          LIMIT 1
-        ) mv ON true
+        LEFT JOIN public.lookup_values mv
+          ON mv.id = p.punch_key_lookup_id
         WHERE p.tenant_id = $1
           AND p.employee_id = $2
           ${whereExtra}
@@ -1728,7 +1722,11 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         SELECT
           lv.id,
           lv.lookup_label,
-          lv.sort_order AS punch_key_value
+          CASE
+            WHEN COALESCE(lv.metadata->>'device_code', '') ~ '^[0-9]+$'
+              THEN (lv.metadata->>'device_code')::integer
+            ELSE NULL
+          END AS punch_key_value
         FROM public.lookup_values lv
         INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
         WHERE lv.id = $1
@@ -1937,6 +1935,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
           punch_datetime,
           punch_time_zone,
           punch_key,
+          punch_key_lookup_id,
           punch_source_id,
           time_punch_status_id,
           notes,
@@ -1954,7 +1953,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         )
         VALUES (
           gen_random_uuid(),
-          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,true,$20
+          $1,$2,$3,$4,$5::timestamptz,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,true,$21
         )
         RETURNING *
       `,
@@ -1966,6 +1965,7 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
         punchDateTime.toISOString(),
         effectivePunchTimeZone,
         punchKey,
+        punchKeyRow.id,
         normalizedSourceId,
         normalizedStatusId,
         notes,
@@ -2091,14 +2091,16 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       const sourceResult = await pool.query(
         `
           SELECT id
-          FROM public.lookup_values
-          WHERE id = $1
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          FROM public.lookup_values value
+          JOIN public.lookup_groups group_row
+            ON group_row.id = value.lookup_group_id
+           AND group_row.lookup_group_key = $2
+          WHERE value.id = $1
+            AND value.is_active = true
+            AND (value.tenant_id IS NULL OR value.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [punchSourceId, PUNCH_SOURCE_GROUP_ID, context.tenant_id]
+        [punchSourceId, PUNCH_SOURCE_GROUP_KEY, context.tenant_id]
       );
       if (!sourceResult.rows[0]) return res.status(400).json({ error: 'punch_source_id no valido' });
     }
@@ -2107,14 +2109,16 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       const statusResult = await pool.query(
         `
           SELECT id
-          FROM public.lookup_values
-          WHERE id = $1
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          FROM public.lookup_values value
+          JOIN public.lookup_groups group_row
+            ON group_row.id = value.lookup_group_id
+           AND group_row.lookup_group_key = $2
+          WHERE value.id = $1
+            AND value.is_active = true
+            AND (value.tenant_id IS NULL OR value.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [statusId, TIME_PUNCH_STATUS_GROUP_ID, context.tenant_id]
+        [statusId, TIME_PUNCH_STATUS_GROUP_KEY, context.tenant_id]
       );
       if (!statusResult.rows[0]) return res.status(400).json({ error: 'time_punch_status_id no valido' });
     }
@@ -2131,25 +2135,27 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'longitud fuera de rango (-180 a 180)' });
     }
 
-    let resolvedPunchKeyValue: number | null = null;
+    let resolvedPunchKeyId: string | null = null;
     if (punchKeyLookupId !== undefined && punchKeyLookupId !== null) {
       const movementResult = await pool.query(
         `
-          SELECT sort_order
-          FROM public.lookup_values
-          WHERE id = $1
-            AND lookup_group_id = $2::uuid
-            AND is_active = true
-            AND (tenant_id IS NULL OR tenant_id = $3::uuid)
+          SELECT value.id
+          FROM public.lookup_values value
+          JOIN public.lookup_groups group_row
+            ON group_row.id = value.lookup_group_id
+           AND group_row.lookup_group_key = $2
+          WHERE value.id = $1
+            AND value.is_active = true
+            AND (value.tenant_id IS NULL OR value.tenant_id = $3::uuid)
           LIMIT 1
         `,
-        [punchKeyLookupId, PUNCH_KEY_GROUP_ID, context.tenant_id]
+        [punchKeyLookupId, PUNCH_KEY_GROUP_KEY, context.tenant_id]
       );
       const movement = movementResult.rows[0];
-      if (!movement || !Number.isFinite(Number(movement.sort_order))) {
+      if (!movement?.id) {
         return res.status(400).json({ error: 'punch_key_lookup_id no valido' });
       }
-      resolvedPunchKeyValue = Math.trunc(Number(movement.sort_order));
+      resolvedPunchKeyId = String(movement.id);
     }
 
     const updates: string[] = [];
@@ -2176,9 +2182,9 @@ router.patch('/mark/history/:id', async (req: Request, res: Response) => {
       updates.push(`time_punch_status_id = $${paramIndex++}`);
       params.push(statusId);
     }
-    if (resolvedPunchKeyValue !== null) {
-      updates.push(`punch_key = $${paramIndex++}`);
-      params.push(resolvedPunchKeyValue);
+    if (resolvedPunchKeyId !== null) {
+      updates.push(`punch_key_lookup_id = $${paramIndex++}`);
+      params.push(resolvedPunchKeyId);
     }
     if (latitud !== undefined) {
       updates.push(`latitud = $${paramIndex++}`);
@@ -2418,16 +2424,8 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
             p.punch_key,
             movement.lookup_label AS movement_label
           FROM public.employee_time_punches p
-          LEFT JOIN LATERAL (
-            SELECT lv.lookup_label
-            FROM public.lookup_values lv
-            WHERE lv.lookup_group_id = $3::uuid
-              AND lv.sort_order = p.punch_key
-              AND lv.is_active = true
-              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
-            LIMIT 1
-          ) movement ON true
+          LEFT JOIN public.lookup_values movement
+            ON movement.id = p.punch_key_lookup_id
           WHERE p.tenant_id = $1::uuid
             AND p.employee_id = $2::uuid
             AND p.is_active = true
@@ -2435,7 +2433,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
           ORDER BY p.punch_datetime DESC, p.created_at DESC
           LIMIT 300
         `,
-        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID]
+        [context.tenant_id, context.employee_id]
       ),
     ]);
 
@@ -4922,7 +4920,8 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
       ),
       pool.query(
         `
-          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order,
+                 (lv.metadata->>'device_code')::integer AS device_code
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg
             ON lg.id = lv.lookup_group_id
@@ -4942,13 +4941,15 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
             AND lg.is_active = true
             AND lv.is_active = true
             AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+            AND COALESCE(lv.metadata->>'device_code', '') ~ '^[0-9]+$'
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
         [PUNCH_KEY_GROUP_KEY, context.tenant_id]
       ),
       pool.query(
         `
-          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order,
+                 (lv.metadata->>'device_code')::integer AS device_code
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
           WHERE lg.lookup_group_key = $1
@@ -4982,24 +4983,14 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
             ON d.id = p.time_clock_device_id
           LEFT JOIN public.lookup_values st
             ON st.id = p.time_punch_status_id
-          LEFT JOIN LATERAL (
-            SELECT lv.lookup_label
-            FROM public.lookup_values lv
-            INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
-            WHERE lg.lookup_group_key = $3
-              AND lg.is_active = true
-              AND lv.is_active = true
-              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-              AND lv.sort_order = p.punch_key
-            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
-            LIMIT 1
-          ) mv ON true
+          LEFT JOIN public.lookup_values mv
+            ON mv.id = p.punch_key_lookup_id
           WHERE p.tenant_id = $1::uuid
             AND p.employee_id = $2::uuid
           ORDER BY p.punch_datetime DESC
           LIMIT 180
         `,
-        [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_KEY]
+        [context.tenant_id, context.employee_id]
       ),
     ]);
 
@@ -5044,7 +5035,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
         ? ['CANCELLED', 'CANCELED', 'CANCELADO']
         : [];
 
-    const params: any[] = [context.tenant_id, context.employee_id, PUNCH_KEY_GROUP_ID];
+    const params: any[] = [context.tenant_id, context.employee_id];
     let whereExtra = '';
     if (requestId) {
       params.push(requestId);
@@ -5107,16 +5098,8 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
           ON au.id = r.approved_by
         LEFT JOIN public.employee_time_punches p
           ON p.id = r.target_punch_id
-        LEFT JOIN LATERAL (
-          SELECT lv.lookup_label
-          FROM public.lookup_values lv
-          WHERE lv.lookup_group_id = $3::uuid
-            AND lv.sort_order = p.punch_key
-            AND lv.is_active = true
-            AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-          ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
-          LIMIT 1
-        ) pm ON true
+        LEFT JOIN public.lookup_values pm
+          ON pm.id = p.punch_key_lookup_id
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = $2::uuid
           ${whereExtra}
@@ -5646,6 +5629,7 @@ router.get('/time-punch-requests/approvals/catalogs', async (req: Request, res: 
             AND lg.is_active = true
             AND lv.is_active = true
             AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+            AND COALESCE(lv.metadata->>'device_code', '') ~ '^[0-9]+$'
           ORDER BY lv.sort_order ASC, lv.lookup_label ASC
         `,
         [PUNCH_KEY_GROUP_KEY, approver.userContext.tenant_id]
@@ -5713,7 +5697,7 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
         : ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO'];
 
     const includeInactive = status === 'CANCELLED' || status === 'ALL';
-    const params: any[] = [PUNCH_KEY_GROUP_ID, approver.userContext.tenant_id, includeInactive, managedEmployeeIds];
+    const params: any[] = [approver.userContext.tenant_id, includeInactive, managedEmployeeIds];
     let whereStatus = '';
     if (statusKeys.length > 0) {
       params.push(statusKeys);
@@ -5774,19 +5758,11 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
           ON au.id = r.approved_by
         LEFT JOIN public.employee_time_punches p
           ON p.id = r.target_punch_id
-        LEFT JOIN LATERAL (
-          SELECT lv.lookup_label
-          FROM public.lookup_values lv
-          WHERE lv.lookup_group_id = $1::uuid
-            AND lv.sort_order = p.punch_key
-            AND lv.is_active = true
-            AND (lv.tenant_id IS NULL OR lv.tenant_id = r.tenant_id)
-          ORDER BY CASE WHEN lv.tenant_id = r.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
-          LIMIT 1
-        ) pm ON true
-        WHERE r.tenant_id = $2::uuid
-          AND ($3::boolean = true OR r.is_active = true)
-          AND r.employee_id = ANY($4::uuid[])
+        LEFT JOIN public.lookup_values pm
+          ON pm.id = p.punch_key_lookup_id
+        WHERE r.tenant_id = $1::uuid
+          AND ($2::boolean = true OR r.is_active = true)
+          AND r.employee_id = ANY($3::uuid[])
           ${whereStatus}
         ORDER BY r.created_at DESC
       `,

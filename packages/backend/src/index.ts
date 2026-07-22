@@ -1930,10 +1930,10 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.employee_id,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE p.punch_key = 1))[1] AS work_entry_punch_id,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE p.punch_key = 4))[1] AS work_exit_punch_id,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS work_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS work_exit
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY'))[1] AS work_entry_punch_id,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT'))[1] AS work_exit_punch_id,
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS work_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS work_exit
           FROM public.employee_time_punches p
           WHERE p.tenant_id = $1::uuid
             AND p.is_active = true
@@ -2097,7 +2097,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
               ON lg.id = lv.lookup_group_id
              AND lg.lookup_group_key = 'PUNCH_KEY'
              AND lg.is_active = true
-            WHERE lv.sort_order = p.punch_key
+            WHERE lv.id = p.punch_key_lookup_id
               AND lv.is_active = true
               AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
             ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
@@ -2109,13 +2109,13 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
               movement.movement_short_name,
               movement.movement_name,
               CASE
-                WHEN p.punch_key = movement.start_key THEN 'START'
-                WHEN p.punch_key = movement.end_key THEN 'END'
+                WHEN p.punch_key_lookup_id = movement.start_punch_key_id THEN 'START'
+                WHEN p.punch_key_lookup_id = movement.end_punch_key_id THEN 'END'
               END AS movement_direction
             FROM public.attendance_movements movement
             WHERE movement.tenant_id = p.tenant_id
               AND movement.is_active = true
-              AND p.punch_key IN (movement.start_key, movement.end_key)
+              AND p.punch_key_lookup_id IN (movement.start_punch_key_id, movement.end_punch_key_id)
             ORDER BY movement.movement_short_name ASC
             LIMIT 1
           ) am ON true
@@ -2169,10 +2169,10 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           approved_punch_change.id AS approved_punch_change_request_id,
           (approved_punch_change.id IS NOT NULL) AS has_approved_punch_change,
           CASE
-            WHEN l.punch_key IN (2, 3)
+            WHEN l.movement_key IN ('LUNCH_OUT', 'LUNCH_IN')
              AND COALESCE(sw.lunch_window_minutes, 0) <= 0
               THEN 'NO_APLICA'
-            WHEN l.punch_key IN (2, 3)
+            WHEN l.movement_key IN ('LUNCH_OUT', 'LUNCH_IN')
              AND sw.lunch_start_minutes IS NOT NULL
              AND sw.lunch_end_minutes IS NOT NULL
              AND (
@@ -2180,28 +2180,28 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
                OR l.punch_datetime > (p.shift_date + (sw.lunch_end_minutes || ' minutes')::interval)
              )
               THEN 'LUNCH_FUERA_HORARIO'
-            WHEN l.punch_key = 2
+            WHEN l.movement_key = 'LUNCH_OUT'
               THEN 'LUNCH_INICIO'
-            WHEN l.punch_key = 3
+            WHEN l.movement_key = 'LUNCH_IN'
               THEN 'LUNCH_FIN'
-            WHEN l.punch_key = 5
+            WHEN l.movement_key = 'PERMISSION_OUT'
               THEN 'PERMISO_SALIDA'
-            WHEN l.punch_key = 6
+            WHEN l.movement_key = 'PERMISSION_IN'
               THEN 'PERMISO_RETORNO'
-            WHEN l.punch_key = 1
+            WHEN l.movement_key = 'ENTRY'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
              AND late_justification.id IS NOT NULL
              AND UPPER(COALESCE(late_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
               THEN 'ATRASO_JUSTIFICADO'
-            WHEN l.punch_key = 1
+            WHEN l.movement_key = 'ENTRY'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
              AND late_justification.id IS NOT NULL
               THEN 'ATRASO_JUSTIFICACION_PENDIENTE'
-            WHEN l.punch_key = 4
+            WHEN l.movement_key = 'EXIT'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
@@ -2212,12 +2212,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
               THEN 'FERIADO'
             WHEN p.id IS NULL OR s.id IS NULL OR COALESCE(sw.work_minutes, 0) <= 0
               THEN 'NO_LABORAL'
-            WHEN l.punch_key = 1
+            WHEN l.movement_key = 'ENTRY'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
               THEN 'ATRASO'
-            WHEN l.punch_key = 4
+            WHEN l.movement_key = 'EXIT'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
@@ -2548,8 +2548,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -2725,8 +2725,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -2884,8 +2884,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -3049,8 +3049,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -3327,8 +3327,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS shift_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae ON ae.employee_id = p.employee_id
           CROSS JOIN bounds period
@@ -3964,6 +3964,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
             TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
             p.punch_key,
+            mv.lookup_key AS movement_key,
             mv.lookup_label AS movement_label,
             p.time_punch_status_id,
             st.lookup_key AS time_punch_status_key,
@@ -3973,16 +3974,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           FROM public.employee_time_punches p
           LEFT JOIN public.lookup_values st
             ON st.id = p.time_punch_status_id
-          LEFT JOIN LATERAL (
-            SELECT lv.lookup_label
-            FROM public.lookup_values lv
-            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
-              AND lv.sort_order = p.punch_key
-              AND lv.is_active = true
-              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
-            LIMIT 1
-          ) mv ON true
+          LEFT JOIN public.lookup_values mv
+            ON mv.id = p.punch_key_lookup_id
           WHERE p.tenant_id = $1::uuid
             AND p.employee_id = $2::uuid
           ORDER BY p.punch_datetime DESC, p.created_at DESC
@@ -3999,6 +3992,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
             TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
             p.punch_key,
+            mv.lookup_key AS movement_key,
             mv.lookup_label AS movement_label,
             p.time_punch_status_id,
             st.lookup_key AS time_punch_status_key,
@@ -4008,16 +4002,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           FROM public.employee_time_punches p
           LEFT JOIN public.lookup_values st
             ON st.id = p.time_punch_status_id
-          LEFT JOIN LATERAL (
-            SELECT lv.lookup_label
-            FROM public.lookup_values lv
-            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
-              AND lv.sort_order = p.punch_key
-              AND lv.is_active = true
-              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END
-            LIMIT 1
-          ) mv ON true
+          LEFT JOIN public.lookup_values mv
+            ON mv.id = p.punch_key_lookup_id
           WHERE p.tenant_id = $1::uuid
             AND p.employee_id = $2::uuid
             AND p.punch_datetime >= $3::date
@@ -4357,8 +4343,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
                 make_date(calc.year, calc.month, calc.day)
               )
               AND (
-                (UPPER(COALESCE(ae.event_short_name, '')) = 'ATR' AND punch.punch_key = 1)
-                OR (UPPER(COALESCE(ae.event_short_name, '')) = 'SAN' AND punch.punch_key = 4)
+                (UPPER(COALESCE(ae.event_short_name, '')) = 'ATR' AND public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'ENTRY')
+                OR (UPPER(COALESCE(ae.event_short_name, '')) = 'SAN' AND public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'EXIT')
               )
             ORDER BY
               CASE WHEN UPPER(COALESCE(ae.event_short_name, '')) = 'ATR' THEN punch.punch_datetime END ASC,
@@ -4448,7 +4434,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               COUNT(*)::int AS punch_count,
               (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC))[1] AS last_punch_id,
               (ARRAY_AGG(p.punch_datetime ORDER BY p.punch_datetime DESC))[1] AS last_punch_datetime,
-              (ARRAY_AGG(p.punch_key ORDER BY p.punch_datetime DESC))[1] AS last_punch_key
+              (ARRAY_AGG(p.punch_key ORDER BY p.punch_datetime DESC))[1] AS last_punch_key,
+              (ARRAY_AGG(p.punch_key_lookup_id ORDER BY p.punch_datetime DESC))[1] AS last_punch_key_lookup_id
             FROM public.employee_time_punches p
             WHERE p.tenant_id = $1::uuid
               AND p.employee_id = $2::uuid
@@ -4464,6 +4451,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             od.last_punch_id,
             od.last_punch_datetime,
             od.last_punch_key,
+            movement_suggestion.suggested_punch_key,
+            movement_suggestion.suggested_punch_key_lookup_id,
             ae.id AS attendance_event_id,
             COALESCE(ae.event_name, 'Marcaciones impares') AS catalog_event_name,
             ae.event_short_name,
@@ -4490,6 +4479,19 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             ORDER BY jt.created_at ASC NULLS LAST, jt.id
             LIMIT 1
           ) suggested ON true
+          LEFT JOIN LATERAL (
+            SELECT
+              end_value.id AS suggested_punch_key_lookup_id,
+              (end_value.metadata->>'device_code')::integer AS suggested_punch_key
+            FROM public.attendance_movements movement
+            JOIN public.lookup_values end_value ON end_value.id = movement.end_punch_key_id
+            WHERE movement.tenant_id = $1::uuid
+              AND movement.is_active = true
+              AND movement.start_punch_key_id = od.last_punch_key_lookup_id
+              AND COALESCE(end_value.metadata->>'device_code', '') ~ '^[0-9]+$'
+            ORDER BY movement.movement_short_name
+            LIMIT 1
+          ) movement_suggestion ON true
           LEFT JOIN LATERAL (
             SELECT
               r.id,
@@ -4603,12 +4605,12 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           punch_summary AS (
             SELECT
               (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS shift_date,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE p.punch_key = 1))[1] AS work_entry_punch_id,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE p.punch_key = 4))[1] AS work_exit_punch_id,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY'))[1] AS work_entry_punch_id,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT'))[1] AS work_exit_punch_id,
               MIN(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))
-                FILTER (WHERE p.punch_key = 1) AS work_entry,
+                FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS work_entry,
               MAX(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))
-                FILTER (WHERE p.punch_key = 4) AS work_exit
+                FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS work_exit
             FROM public.employee_time_punches p
             WHERE p.tenant_id = $1::uuid
               AND p.employee_id = $2::uuid
@@ -4844,7 +4846,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           work_entries AS (
             SELECT
               (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
-              MIN(punch.punch_datetime) FILTER (WHERE punch.punch_key = 1) AS work_entry
+              MIN(punch.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'ENTRY') AS work_entry
             FROM public.employee_time_punches punch
             WHERE punch.tenant_id = $1::uuid
               AND punch.employee_id = $2::uuid
@@ -5238,7 +5240,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         last_punch_datetime: row.last_punch_datetime || null,
         last_punch_key: Number(row.last_punch_key || 0) || null,
         suggested_request_type_key: 'CREATE_PUNCH',
-        suggested_punch_key: ({ 1: 4, 2: 3, 3: 4, 5: 6 } as Record<number, number>)[Number(row.last_punch_key)] || null,
+        suggested_punch_key: Number(row.suggested_punch_key || 0) || null,
+        suggested_punch_key_lookup_id: row.suggested_punch_key_lookup_id || null,
       })),
     ].sort((left: any, right: any) => {
       const byDate = String(right.incident_date || '').localeCompare(String(left.incident_date || ''));
@@ -5246,14 +5249,16 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       return String(left.event_name || '').localeCompare(String(right.event_name || ''));
     });
 
-    const iconFromPunch = (punchKey: any, movementLabel: string): string => {
-      const key = Number(punchKey);
-      if (key === 1) return 'DoorOpen';
-      if (key === 2) return 'Utensils';
-      if (key === 3) return 'UtensilsCrossed';
-      if (key === 4) return 'DoorClosed';
-      if (key === 5) return 'ArrowRightCircle';
-      if (key === 6) return 'ArrowLeftCircle';
+    const iconFromPunch = (movementKey: string, movementLabel: string): string => {
+      const icons: Record<string, string> = {
+        ENTRY: 'DoorOpen',
+        LUNCH_OUT: 'Utensils',
+        LUNCH_IN: 'UtensilsCrossed',
+        EXIT: 'DoorClosed',
+        PERMISSION_OUT: 'ArrowRightCircle',
+        PERMISSION_IN: 'ArrowLeftCircle',
+      };
+      if (icons[movementKey]) return icons[movementKey];
       const normalized = String(movementLabel || '').toLowerCase();
       if (normalized.includes('permiso') && (normalized.includes('retorno') || normalized.includes('regreso'))) return 'ArrowLeftCircle';
       if (normalized.includes('permiso') && normalized.includes('salida')) return 'ArrowRightCircle';
@@ -5265,10 +5270,9 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       if (normalized.includes('salida') || normalized.includes('fin')) return 'DoorClosed';
       return 'Fingerprint';
     };
-    const isStartPunch = (punchKey: any, movementLabel: string): boolean => {
-      const key = Number(punchKey);
-      if ([1, 2, 5].includes(key)) return true;
-      if ([3, 4, 6].includes(key)) return false;
+    const isStartPunch = (movementKey: string, movementLabel: string): boolean => {
+      if (['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT'].includes(movementKey)) return true;
+      if (['EXIT', 'LUNCH_IN', 'PERMISSION_IN'].includes(movementKey)) return false;
       const normalized = String(movementLabel || '').toLowerCase();
       if (normalized.includes('entrada') || normalized.includes('inicio')) return true;
       if (normalized.includes('salida') || normalized.includes('retorno') || normalized.includes('fin')) return false;
@@ -5288,10 +5292,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const calendarPunches = (monthPunchesResult.rows || []).flatMap((row: any) => {
       const dateKey = normalizeDateOnly(row?.punch_date || row?.punch_datetime);
       if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
-      const isStart = isStartPunch(row?.punch_key, String(row?.movement_label || ''));
+      const movementKey = String(row?.movement_key || '').toUpperCase();
+      const isStart = isStartPunch(movementKey, String(row?.movement_label || ''));
       return [{
         date: dateKey,
-        icon_key: iconFromPunch(row?.punch_key, String(row?.movement_label || '')),
+        icon_key: iconFromPunch(movementKey, String(row?.movement_label || '')),
         title: row?.movement_label || `Marcacion ${row?.punch_key ?? ''}`.trim(),
         subtitle: row?.punch_time_local || String(row?.punch_datetime || '').slice(11, 16),
         bg_color: isStart ? '#DCFCE7' : '#FEE2E2',

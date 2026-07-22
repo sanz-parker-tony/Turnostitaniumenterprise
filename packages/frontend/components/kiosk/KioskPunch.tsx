@@ -23,21 +23,13 @@ import { formatClientDate, formatClientDateTime, formatClientTime, getClientTime
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-const START_MOVEMENT_KEYS = new Set<number>([1, 2, 5]);
+const START_MOVEMENT_KEYS = new Set(['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT']);
 const LOCATION_CACHE_MAX_AGE_MS = 45_000;
 const LOCATION_REQUEST_TIMEOUT_MS = 6_000;
 const CLIENT_APP_INSTANCE_STORAGE_KEY = 'tt-client-app-instance-id';
-const KEY_LABEL_OVERRIDES: Record<number, string> = {
-  1: 'Entrada',
-  2: 'Inicio Lunch',
-  3: 'Retorno Lunch',
-  4: 'Salida',
-  5: 'Salida Permiso',
-  6: 'Retorno Permiso',
-};
-
 interface SelectOption {
   id: string;
+  lookup_key?: string;
   lookup_label?: string;
   lookup_short_label?: string;
   punch_key_value?: number;
@@ -419,14 +411,13 @@ export default function KioskPunch() {
     const items = context?.punch_keys || [];
     return [...items]
       .filter((item) => Number.isFinite(Number(item.punch_key_value)))
-      .sort((a, b) => Number(a.punch_key_value) - Number(b.punch_key_value))
-      .slice(0, 6);
+      .sort((a, b) => Number(a.punch_key_value) - Number(b.punch_key_value));
   }, [context]);
 
   const movementByKey = useMemo(() => {
-    const map = new Map<number, SelectOption>();
+    const map = new Map<string, SelectOption>();
     orderedPunchKeys.forEach((item) => {
-      map.set(Number(item.punch_key_value), item);
+      map.set(String(item.lookup_key || ''), item);
     });
     return map;
   }, [orderedPunchKeys]);
@@ -553,37 +544,35 @@ export default function KioskPunch() {
     }
   };
 
-  const renderKeyButton = (keyNumber: number, compact = false) => {
-    const item = movementByKey.get(keyNumber);
+  const renderKeyButton = (lookupKey: string, compact = false) => {
+    const item = movementByKey.get(lookupKey);
+    const keyNumber = Number(item?.punch_key_value);
     const isSaving = item?.id ? savingLookupId === item.id : false;
     const disabled = !item || !!savingLookupId;
 
-    const isStartKey = START_MOVEMENT_KEYS.has(keyNumber);
+    const isStartKey = START_MOVEMENT_KEYS.has(lookupKey);
     const toneClass = isStartKey
       ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
       : 'border-rose-400 bg-rose-50 hover:bg-rose-100';
     const bubbleClass = isStartKey
       ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
       : 'bg-rose-100 border-rose-300 text-rose-800';
-    const Icon =
-      keyNumber === 1
-        ? DoorOpen
-        : keyNumber === 2
-        ? Utensils
-        : keyNumber === 3
-        ? UtensilsCrossed
-        : keyNumber === 4
-        ? DoorClosed
-        : keyNumber === 5
-        ? ArrowRightCircle
-        : ArrowLeftCircle;
+    const iconByLookupKey: Record<string, ComponentType<{ className?: string }>> = {
+      ENTRY: DoorOpen,
+      LUNCH_OUT: Utensils,
+      LUNCH_IN: UtensilsCrossed,
+      EXIT: DoorClosed,
+      PERMISSION_OUT: ArrowRightCircle,
+      PERMISSION_IN: ArrowLeftCircle,
+    };
+    const Icon = iconByLookupKey[lookupKey] || MonitorSmartphone;
 
     return (
       <Button
-        key={keyNumber}
+        key={lookupKey}
         onClick={() => item?.id && void submitPunch(item.id)}
         disabled={disabled}
-        title={KEY_LABEL_OVERRIDES[keyNumber] || item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
+        title={item?.lookup_label || item?.lookup_short_label || lookupKey || `Tecla ${keyNumber}`}
         variant="outline"
         className={`w-full border-2 flex flex-col items-center justify-center text-center shadow-sm ${
           compact
@@ -601,7 +590,7 @@ export default function KioskPunch() {
           </span>
         )}
         <span className={compact ? 'sr-only' : 'text-sm font-medium leading-tight'}>
-          {KEY_LABEL_OVERRIDES[keyNumber] || item?.lookup_label || item?.lookup_short_label || `Tecla ${keyNumber}`}
+          {item?.lookup_label || item?.lookup_short_label || lookupKey || `Tecla ${keyNumber}`}
         </span>
       </Button>
     );
@@ -686,10 +675,10 @@ export default function KioskPunch() {
 
           <div className="timeclock-punch-layout grid grid-cols-2 items-start gap-2 sm:gap-4">
             <div className="timeclock-left-actions order-2 hidden space-y-3">
-              {renderKeyButton(1)}
-              {renderKeyButton(2)}
-              {renderKeyButton(3)}
-              {renderKeyButton(4)}
+              {renderKeyButton('ENTRY')}
+              {renderKeyButton('LUNCH_OUT')}
+              {renderKeyButton('LUNCH_IN')}
+              {renderKeyButton('EXIT')}
             </div>
 
             <div className="timeclock-camera-column order-1 col-span-2 space-y-2 sm:space-y-3">
@@ -704,10 +693,10 @@ export default function KioskPunch() {
               </div>
 
               <div className="timeclock-below-actions grid grid-cols-6 gap-1.5 sm:hidden">
-                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber, true))}
+                {orderedPunchKeys.map((item) => renderKeyButton(String(item.lookup_key || ''), true))}
               </div>
               <div className="timeclock-below-actions hidden grid-cols-6 gap-2 sm:grid">
-                {[1, 2, 3, 4, 5, 6].map((keyNumber) => renderKeyButton(keyNumber))}
+                {orderedPunchKeys.map((item) => renderKeyButton(String(item.lookup_key || '')))}
               </div>
 
               <div className="rounded-2xl border-2 border-slate-700 bg-slate-950 text-white h-14 sm:h-24 px-3 sm:px-5 py-2 sm:py-3 flex items-center justify-between shadow-inner">
@@ -735,8 +724,8 @@ export default function KioskPunch() {
             </div>
 
             <div className="timeclock-right-actions order-3 hidden space-y-3">
-              {renderKeyButton(5)}
-              {renderKeyButton(6)}
+              {renderKeyButton('PERMISSION_OUT')}
+              {renderKeyButton('PERMISSION_IN')}
               <div className="hidden h-[216px]" />
             </div>
           </div>

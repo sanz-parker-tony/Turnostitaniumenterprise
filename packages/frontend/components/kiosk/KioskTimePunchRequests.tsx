@@ -24,6 +24,7 @@ interface LookupItem {
   lookup_label: string;
   lookup_short_label?: string | null;
   sort_order?: number | null;
+  device_code?: number | null;
 }
 
 interface PunchRow {
@@ -318,8 +319,8 @@ export default function KioskTimePunchRequests({
   const punchKeyLabelByValue = useMemo(() => {
     const map = new Map<number, string>();
     for (const item of punchKeys) {
-      if (!Number.isFinite(Number(item.sort_order))) continue;
-      map.set(Math.trunc(Number(item.sort_order)), item.lookup_label || item.lookup_key);
+      if (!Number.isFinite(Number(item.device_code))) continue;
+      map.set(Math.trunc(Number(item.device_code)), item.lookup_label || item.lookup_key);
     }
     return map;
   }, [punchKeys]);
@@ -852,7 +853,7 @@ export default function KioskTimePunchRequests({
                   >
                     <option value="">Seleccione...</option>
                     {punchKeys.map((item) => (
-                      <option key={item.id} value={String(item.sort_order || '')}>
+                      <option key={item.id} value={String(item.device_code ?? '')}>
                         {item.lookup_label}
                       </option>
                     ))}

@@ -10,6 +10,7 @@ import { publicApiToken } from '../../../utils/backend/info';
 import { formatClientDateTime } from '../../../utils/date-time';
 import MapBaseLayers from '../../shared/MapBaseLayers';
 import { StandardDateInput } from '../../ui/standard-date-input';
+import ReportCompanyAsset from './ReportCompanyAsset';
 import {
   defaultSystemReportConfig,
   fetchSystemReportConfig,
@@ -24,7 +25,10 @@ interface EmployeeOption {
   employee_code: string | null;
   employee_name: string | null;
   employee_lastname: string | null;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
   work_location_name: string | null;
   department_name: string | null;
   area_name: string | null;
@@ -281,10 +285,21 @@ export default function EmployeeRouteTrackingReport() {
   );
   const routeTrackingCount = points.filter((point) => point.point_type === 'ROUTE_TRACKING').length;
   const attendanceCount = points.filter((point) => point.point_type === 'ATTENDANCE').length;
+  const screenAssetSource =
+    (employee?.company_id && employee.company_banner ? employee : null) ||
+    employees.find((row) => row.company_id && row.company_banner) ||
+    (employee?.company_id && employee.company_logo ? employee : null) ||
+    employees.find((row) => row.company_id && row.company_logo);
 
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <ReportCompanyAsset
+          companyId={screenAssetSource?.company_id}
+          banner={screenAssetSource?.company_banner}
+          logo={screenAssetSource?.company_logo}
+          className="mb-4"
+        />
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -459,9 +474,6 @@ export default function EmployeeRouteTrackingReport() {
         </div>
       </div>
 
-      <footer className="shrink-0 text-center text-sm text-slate-500">
-        Titanium Labs Corp.&trade; 2026 &copy; | Todos los derechos reservados
-      </footer>
     </div>
   );
 }

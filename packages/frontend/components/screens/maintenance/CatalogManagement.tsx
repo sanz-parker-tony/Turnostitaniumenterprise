@@ -42,6 +42,11 @@ interface LookupGroup {
   owner_tenant_id?: string | null;
   is_tenant_catalog?: boolean;
   can_edit_for_current_user?: boolean;
+  management_policy?: {
+    value_scope?: 'SYSTEM' | 'TENANT' | 'INHERIT';
+    value_permissions?: Partial<Record<'create' | 'update' | 'delete', string[]>>;
+    required_metadata?: Record<string, { type?: string; label?: string; unique_within_group?: boolean }>;
+  };
   lookup_group_translations?: LookupGroupTranslation[];
 }
 
@@ -62,6 +67,7 @@ interface LookupValue {
   lookup_scope: 'SYSTEM' | 'TENANT';
   sort_order: number;
   is_active: boolean;
+  metadata?: Record<string, unknown>;
   created_at: string;
   lookup_value_translations?: LookupValueTranslation[];
 }
@@ -124,6 +130,7 @@ export function CatalogManagement() {
     lookup_short_label: '',
     lookup_scope: 'SYSTEM' as 'SYSTEM' | 'TENANT',
     sort_order: 0,
+    metadata: {} as Record<string, unknown>,
     is_active: true,
   });
 
@@ -155,12 +162,20 @@ export function CatalogManagement() {
 
   const canCreateValueInGroup = (group: LookupGroup | null) => {
     if (!group) return false;
+    const configuredRoles = group.management_policy?.value_permissions?.create;
+    if (Array.isArray(configuredRoles) && configuredRoles.length > 0) {
+      return configuredRoles.some((role) => String(role).trim().toUpperCase() === roleKey);
+    }
     if (isSystemAdmin) return true;
     if (isTenantAdmin) return !!group.allows_tenant_items;
     return false;
   };
 
   const canEditValue = (value: LookupValue, group: LookupGroup | null) => {
+    const configuredRoles = group?.management_policy?.value_permissions?.update;
+    if (Array.isArray(configuredRoles) && configuredRoles.length > 0) {
+      return configuredRoles.some((role) => String(role).trim().toUpperCase() === roleKey);
+    }
     if (isSystemAdmin) return true;
     if (!isTenantAdmin) return false;
     if (String(value.lookup_scope || '').toUpperCase() === 'SYSTEM' || !value.tenant_id) {
@@ -398,6 +413,7 @@ export function CatalogManagement() {
             lookup_short_label: value.lookup_short_label,
             lookup_scope: isTenantAdmin ? 'TENANT' : value.lookup_scope,
             sort_order: value.sort_order,
+            metadata: value.metadata || {},
             is_active: !value.is_active,
             translations: value.lookup_value_translations || []
           })
@@ -588,6 +604,7 @@ export function CatalogManagement() {
         lookup_short_label: sourceValue.lookup_short_label,
         lookup_scope: isTenantAdmin ? 'TENANT' : sourceValue.lookup_scope,
         sort_order: sourceValue.sort_order,
+        metadata: sourceValue.metadata || {},
         is_active: sourceValue.is_active,
       });
       setValueTranslations(
@@ -604,6 +621,7 @@ export function CatalogManagement() {
         lookup_short_label: '',
         lookup_scope: isTenantAdmin ? 'TENANT' : 'SYSTEM',
         sort_order: maxOrder + 10,
+        metadata: {},
         is_active: true,
       });
       setValueTranslations([{ language_code: 'en', label: '', short_label: '' }]);
@@ -850,6 +868,11 @@ export function CatalogManagement() {
                       </div>
                       <p className="text-sm mt-1">{value.lookup_label}</p>
                       <p className="text-xs text-muted-foreground">{value.lookup_short_label}</p>
+                      {Object.keys(selectedGroup.management_policy?.required_metadata || {}).map((metadataKey) => (
+                        <p key={metadataKey} className="text-xs text-muted-foreground">
+                          {selectedGroup.management_policy?.required_metadata?.[metadataKey]?.label || metadataKey}: {String(value.metadata?.[metadataKey] ?? '-')}
+                        </p>
+                      ))}
                       {(() => {
                         const trEn = (value.lookup_value_translations || []).find(
                           (t) => String(t.language_code || '').toLowerCase() === 'en'
@@ -1106,7 +1129,7 @@ export function CatalogManagement() {
                 <select
                   value={valueForm.lookup_scope}
                   onChange={(e) => setValueForm({ ...valueForm, lookup_scope: e.target.value as 'SYSTEM' | 'TENANT' })}
-                  disabled={isTenantAdmin}
+                  disabled={isTenantAdmin || !!selectedGroup?.management_policy?.value_scope && selectedGroup.management_policy.value_scope !== 'INHERIT'}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mt-2"
                 >
                   <option value="SYSTEM">SYSTEM</option>
@@ -1116,6 +1139,31 @@ export function CatalogManagement() {
                   <p className="text-xs text-muted-foreground mt-1">TENANT_ADMIN registra items con alcance TENANT.</p>
                 )}
                 </div>
+
+                {Object.entries(selectedGroup?.management_policy?.required_metadata || {}).map(([metadataKey, rule]) => (
+                  <div key={metadataKey}>
+                    <label className="text-sm font-medium">{rule.label || metadataKey} *</label>
+                    <input
+                      type={rule.type === 'positive_integer' ? 'number' : 'text'}
+                      min={rule.type === 'positive_integer' ? 1 : undefined}
+                      step={rule.type === 'positive_integer' ? 1 : undefined}
+                      value={String(valueForm.metadata?.[metadataKey] ?? '')}
+                      onChange={(e) => setValueForm({
+                        ...valueForm,
+                        metadata: {
+                          ...valueForm.metadata,
+                          [metadataKey]: rule.type === 'positive_integer'
+                            ? (e.target.value === '' ? '' : Number(e.target.value))
+                            : e.target.value
+                        }
+                      })}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring mt-2"
+                    />
+                    {rule.unique_within_group && (
+                      <p className="text-xs text-muted-foreground mt-1">Debe ser único dentro del catálogo.</p>
+                    )}
+                  </div>
+                ))}
 
                 <div>
                 <label className="text-sm font-medium">Orden</label>

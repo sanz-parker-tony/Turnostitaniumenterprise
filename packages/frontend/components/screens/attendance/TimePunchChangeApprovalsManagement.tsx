@@ -14,6 +14,7 @@ interface LookupItem {
   lookup_key: string;
   lookup_label: string;
   sort_order?: number | null;
+  device_code?: number | null;
 }
 
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | 'ALL';
@@ -163,8 +164,8 @@ export default function TimePunchChangeApprovalsManagement() {
   const punchLabelByValue = useMemo(() => {
     const map = new Map<number, string>();
     for (const row of punchKeys) {
-      if (!Number.isFinite(Number(row.sort_order))) continue;
-      map.set(Math.trunc(Number(row.sort_order)), row.lookup_label || row.lookup_key);
+      if (!Number.isFinite(Number(row.device_code))) continue;
+      map.set(Math.trunc(Number(row.device_code)), row.lookup_label || row.lookup_key);
     }
     return map;
   }, [punchKeys]);

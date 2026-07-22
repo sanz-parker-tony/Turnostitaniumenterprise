@@ -9,6 +9,7 @@ import { publicApiToken } from '../../../utils/backend/info';
 import { useAuth } from '../../../contexts/AuthContext';
 import { formatClientDateTime, formatClientTime24, formatStandardDate } from '../../../utils/date-time';
 import { StandardDateInput } from '../../ui/standard-date-input';
+import ReportCompanyAsset from './ReportCompanyAsset';
 import {
   defaultSystemReportConfig,
   fetchSystemReportConfig,
@@ -23,7 +24,10 @@ interface EmployeeOption {
   employee_code: string | null;
   employee_name: string | null;
   employee_lastname: string | null;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
 }
 
 interface ReportFilterOption {
@@ -268,6 +272,11 @@ export default function EmployeeAnomalyReports() {
     rows.forEach((row) => counts.set(row.anomaly_label, (counts.get(row.anomaly_label) || 0) + 1));
     return Array.from(counts.entries()).sort((left, right) => right[1] - left[1]);
   }, [rows]);
+  const screenAssetSource =
+    rows.find((row) => row.company_id && row.company_banner) ||
+    rows.find((row) => row.company_id && row.company_logo) ||
+    employees.find((row) => row.company_id && row.company_banner) ||
+    employees.find((row) => row.company_id && row.company_logo);
 
   const getFilterLabel = (options: ReportFilterOption[], selectedId: string, emptyLabel = 'Todos') => {
     if (!selectedId) return emptyLabel;
@@ -369,49 +378,51 @@ export default function EmployeeAnomalyReports() {
   const exportXls = async () => {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('RPT_ANOMALIAS_ASISTENCIA');
-    worksheet.columns = [32, 16, 16, 16, 16, 16, 14, 46, 60, 14, 16, 16, 24].map((width) => ({ width }));
-    applyReportHeader(worksheet, 'RPT_ANOMALIAS_ASISTENCIA');
-
-    worksheet.getRow(7).values = [
+    worksheet.columns = [32, 16, 24, 18, 18, 18, 18, 18, 14, 20, 46, 60, 14, 16, 16].map((width) => ({ width }));
+    worksheet.getRow(1).values = [
       'Empleado',
+      'Código',
+      'Empresa',
       'Departamento',
       'Área',
       'Rol pago',
       'Centro costo',
       'Grupo trabajo',
       'Fecha',
+      'Clave anomalía',
       'Anomalía',
       'Detalle',
       'Marcaciones',
       'Primera marca',
       'Última marca',
-      'Empresa',
     ];
-    styleHeaderRow(worksheet.getRow(7));
+    styleHeaderRow(worksheet.getRow(1));
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    let rowNumber = 8;
+    let rowNumber = 2;
     rows.forEach((row) => {
       worksheet.getRow(rowNumber).values = [
-        `${row.employee_code || row.employee_id} - ${row.employee_full_name}`,
+        row.employee_full_name,
+        row.employee_code || row.employee_id,
+        row.company_name || '-',
         row.department_name || '-',
         row.area_name || '-',
         row.payroll_group_name || '-',
         row.cost_center_name || '-',
         row.work_group_name || '-',
         formatDateShort(row.issue_date),
+        row.anomaly_key,
         row.anomaly_label,
         row.anomaly_detail,
         row.punch_count,
         formatTime24(row.first_punch),
         formatTime24(row.last_punch),
-        row.company_name || '-',
       ];
-      worksheet.getRow(rowNumber).getCell(10).alignment = { horizontal: 'center' };
+      worksheet.getRow(rowNumber).getCell(13).alignment = { horizontal: 'center' };
       rowNumber += 1;
     });
 
-    worksheet.getCell(`A${rowNumber}`).value = `Total anomalías: ${rows.length}`;
-    worksheet.getCell(`A${rowNumber}`).font = { bold: true };
+    worksheet.autoFilter = `A1:O${Math.max(rows.length + 1, 1)}`;
     await writeXlsxWorkbook(workbook, `rpt_anomalias_asistencia_${dateFrom}_${dateTo}.xlsx`);
   };
 
@@ -470,8 +481,8 @@ export default function EmployeeAnomalyReports() {
           th { background: #d9d9d9; font-weight: 700; text-align: center; }
           .criteria { margin-bottom: 12px; }
           .criteria td { border: 0; padding: 2px 5px; }
-          .label, .total { font-weight: 700; }
-          .total { background: #d9d9d9; }
+          .label, .group, .total { font-weight: 700; }
+          .group, .total { background: #d9d9d9; }
           .number { text-align: center; }
           .nowrap { white-space: nowrap; }
         </style>
@@ -493,25 +504,41 @@ export default function EmployeeAnomalyReports() {
       setError('El navegador bloqueó la ventana de impresión PDF.');
       return;
     }
-    const headers = ['Empleado', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo', 'Fecha', 'Anomalía', 'Detalle', 'Marcaciones', 'Primera marca', 'Última marca', 'Empresa'];
-    const bodyRows = rows.map((row) => `
-      <tr>
-        <td>${htmlEscape(`${row.employee_code || row.employee_id} - ${row.employee_full_name}`)}</td>
-        <td>${htmlEscape(row.department_name || '-')}</td>
-        <td>${htmlEscape(row.area_name || '-')}</td>
-        <td>${htmlEscape(row.payroll_group_name || '-')}</td>
-        <td>${htmlEscape(row.cost_center_name || '-')}</td>
-        <td>${htmlEscape(row.work_group_name || '-')}</td>
-        <td class="nowrap">${htmlEscape(formatDateShort(row.issue_date))}</td>
-        <td>${htmlEscape(row.anomaly_label)}</td>
-        <td>${htmlEscape(row.anomaly_detail)}</td>
-        <td class="number">${htmlEscape(row.punch_count)}</td>
-        <td class="nowrap">${htmlEscape(formatTime24(row.first_punch))}</td>
-        <td class="nowrap">${htmlEscape(formatTime24(row.last_punch))}</td>
-        <td>${htmlEscape(row.company_name || '-')}</td>
-      </tr>
-    `).join('');
-    const tableHtml = `<table><tr>${headers.map((header) => `<th>${htmlEscape(header)}</th>`).join('')}</tr>${bodyRows}<tr class="total"><td colspan="13">Total anomalías: ${rows.length}</td></tr></table>`;
+    const headers = ['Fecha', 'Anomalía', 'Detalle', 'Marcaciones', 'Primera marca', 'Última marca'];
+    const rowsByEmployee = new Map<string, OvertimeAnomalyRow[]>();
+    rows.forEach((row) => {
+      const key = `${row.company_id || '__NO_COMPANY__'}:${row.employee_id}`;
+      const employeeRows = rowsByEmployee.get(key) || [];
+      employeeRows.push(row);
+      rowsByEmployee.set(key, employeeRows);
+    });
+    const bodyRows = Array.from(rowsByEmployee.values()).map((employeeRows) => {
+      const employee = employeeRows[0];
+      const organization = [
+        employee.company_name,
+        employee.department_name,
+        employee.area_name,
+        employee.payroll_group_name,
+        employee.cost_center_name,
+        employee.work_group_name,
+      ].filter(Boolean).join(' / ') || '-';
+      const detailRows = employeeRows.map((row) => `
+        <tr>
+          <td class="nowrap">${htmlEscape(formatDateShort(row.issue_date))}</td>
+          <td>${htmlEscape(row.anomaly_label)}</td>
+          <td>${htmlEscape(row.anomaly_detail)}</td>
+          <td class="number">${htmlEscape(row.punch_count)}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.first_punch))}</td>
+          <td class="nowrap">${htmlEscape(formatTime24(row.last_punch))}</td>
+        </tr>
+      `).join('');
+      return `
+        <tr class="group"><td colspan="6">Empleado: ${htmlEscape(employee.employee_full_name)} (${htmlEscape(employee.employee_code || employee.employee_id)}) · ${htmlEscape(organization)}</td></tr>
+        <tr>${headers.map((header) => `<th>${htmlEscape(header)}</th>`).join('')}</tr>
+        ${detailRows}
+      `;
+    }).join('');
+    const tableHtml = `<table>${bodyRows}<tr class="total"><td colspan="6">Total anomalías: ${rows.length}</td></tr></table>`;
     const bannerDataUrl = await fetchReportAssetDataUrl();
     printWindow.document.open();
     printWindow.document.write(printableDocument(bannerDataUrl, tableHtml));
@@ -520,6 +547,12 @@ export default function EmployeeAnomalyReports() {
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <ReportCompanyAsset
+          companyId={screenAssetSource?.company_id}
+          banner={screenAssetSource?.company_banner}
+          logo={screenAssetSource?.company_logo}
+          className="mb-4"
+        />
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex items-center gap-3">
             <span className="inline-flex size-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
@@ -708,9 +741,6 @@ export default function EmployeeAnomalyReports() {
         </table>
       </div>
 
-      <footer className="shrink-0 text-center text-sm text-slate-500">
-        Titanium Labs Corp.&trade; 2026 &copy; | Todos los derechos reservados
-      </footer>
     </div>
   );
 }

@@ -63,6 +63,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
         e.employee_lastname,
         ec.company_id,
         c.company_name,
+        c.logo AS company_logo,
+        c.banner AS company_banner,
         ec.work_location_id,
         wl.work_location_name,
         ec.department_id,
@@ -95,6 +97,8 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       e.employee_lastname,
       scope.company_id,
       c.company_name,
+      c.logo AS company_logo,
+      c.banner AS company_banner,
       scope.work_location_id,
       wl.work_location_name,
       scope.department_id,
@@ -226,16 +230,8 @@ router.get('/employee-route', async (req: Request, res: Response) => {
            AND wl.company_id = se.company_id
           LEFT JOIN public.lookup_values st
             ON st.id = p.time_punch_status_id
-          LEFT JOIN LATERAL (
-            SELECT lv.lookup_label
-            FROM public.lookup_values lv
-            WHERE lv.lookup_group_id = 'a349d449-b3c1-475a-91bd-c687b49e97cc'::uuid
-              AND lv.sort_order = p.punch_key
-              AND lv.is_active = true
-              AND (lv.tenant_id IS NULL OR lv.tenant_id = p.tenant_id)
-            ORDER BY CASE WHEN lv.tenant_id = p.tenant_id THEN 0 ELSE 1 END, lv.sort_order ASC
-            LIMIT 1
-          ) mv ON true
+          LEFT JOIN public.lookup_values mv
+            ON mv.id = p.punch_key_lookup_id
           WHERE p.tenant_id = $1::uuid
             AND p.company_id = se.company_id
             AND p.is_active = true

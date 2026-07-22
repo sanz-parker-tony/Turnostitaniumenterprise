@@ -9,6 +9,7 @@ import { publicApiToken } from '../../../utils/backend/info';
 import { useAuth } from '../../../contexts/AuthContext';
 import { formatClientDateTime, formatClientTime24, formatStandardDate } from '../../../utils/date-time';
 import { StandardDateInput } from '../../ui/standard-date-input';
+import ReportCompanyAsset from './ReportCompanyAsset';
 import {
   defaultSystemReportConfig,
   fetchSystemReportConfig,
@@ -23,7 +24,10 @@ interface EmployeeOption {
   employee_code: string | null;
   employee_name: string | null;
   employee_lastname: string | null;
+  company_id: string | null;
   company_name: string | null;
+  company_logo: string | null;
+  company_banner: string | null;
 }
 
 interface ReportFilterOption {
@@ -491,6 +495,14 @@ export default function EmployeeOvertimeReports() {
       { worked: 0, night25: 0, extra50: 0, extra100: 0, discounts: 0 }
     );
   }, [summaryDisplayRows]);
+  const reportAssetRows: Array<OvertimeDetailRow | OvertimeSummaryRow | EmployeeOption> = [
+    ...detailRows,
+    ...summaryDisplayRows,
+    ...employees,
+  ];
+  const screenAssetSource =
+    reportAssetRows.find((row) => row.company_id && row.company_banner) ||
+    reportAssetRows.find((row) => row.company_id && row.company_logo);
 
   const getFilterLabel = (options: ReportFilterOption[], selectedId: string, emptyLabel = 'Todos') => {
     if (!selectedId) return emptyLabel;
@@ -624,8 +636,16 @@ export default function EmployeeOvertimeReports() {
 
   const detailEmployeeLabel = (row: OvertimeDetailRow) => `${row.employee_code || row.employee_id} - ${row.employee_full_name}`;
   const summaryEmployeeLabel = (row: OvertimeSummaryRow) => `${row.employee_code || row.employee_id} - ${row.employee_full_name}`;
-  const discountMinutes = (row: Pick<OvertimeDetailRow | OvertimeSummaryRow, 'late_minutes' | 'early_departure_minutes' | 'absence_minutes'>) =>
-    asNumber(row.late_minutes) + asNumber(row.early_departure_minutes) + asNumber(row.absence_minutes);
+  const discountMinutes = (row: Pick<OvertimeDetailRow | OvertimeSummaryRow,
+    'late_minutes' | 'early_departure_minutes' | 'absence_minutes' |
+    'lunch_excess_minutes' | 'unjustified_incident_minutes' | 'unpaid_leave_minutes'
+  >) =>
+    asNumber(row.late_minutes) +
+    asNumber(row.early_departure_minutes) +
+    asNumber(row.absence_minutes) +
+    asNumber(row.lunch_excess_minutes) +
+    asNumber(row.unjustified_incident_minutes) +
+    asNumber(row.unpaid_leave_minutes);
   const positionCells = (row: Pick<OvertimeSummaryRow, 'department_name' | 'area_name' | 'payroll_group_name' | 'cost_center_name' | 'work_group_name'>) => [
     row.department_name || '-',
     row.area_name || '-',
@@ -900,124 +920,36 @@ export default function EmployeeOvertimeReports() {
   };
 
   const exportDetailXlsV2 = async () => {
-    const columnCount = 16;
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('RPT_HORA_EXTRA_DETA');
-    setSheetColumns(worksheet, [14, 13, 14, 14, 14, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 16]);
-    applyReportHeader(worksheet, 'RPT_HORA_EXTRA_DETA');
-    const rowsByEmployee = new Map<string, OvertimeDetailRow[]>();
-
-    detailRows.forEach((row) => {
-      const employeeRows = rowsByEmployee.get(row.employee_id) || [];
-      employeeRows.push(row);
-      rowsByEmployee.set(row.employee_id, employeeRows);
-    });
-
-    let rowNumber = 7;
-    const headers = ['Fecha', 'Turno', 'Inicio turno', 'Fin turno', 'Entrada', 'Salida', 'Trab.', '0%', '25%', '50%', '100%', '100%\nNo Laboral', 'Atraso', 'SAnt.', 'Falta', 'Todos los\ndescuentos'];
-
-    rowsByEmployee.forEach((employeeRows) => {
-      const firstRow = employeeRows[0];
-      worksheet.getRow(rowNumber).values = [
-        `Empleado : ${detailEmployeeLabel(firstRow)} | ${firstRow.department_name || '-'} / ${firstRow.area_name || '-'} / ${firstRow.payroll_group_name || '-'} / ${firstRow.cost_center_name || '-'} / ${firstRow.work_group_name || '-'}`,
-      ];
-      styleGroupRow(worksheet, rowNumber, columnCount);
-      rowNumber += 1;
-
-      worksheet.getRow(rowNumber).values = headers;
-      styleHeaderRow(worksheet.getRow(rowNumber));
-      rowNumber += 1;
-
-      employeeRows.forEach((row) => {
-        const excelRow = worksheet.getRow(rowNumber);
-        excelRow.values = [
-          formatDateShort(row.shift_date),
-          row.shift_short_name || row.shift_name || '',
-          formatTime24(row.shift_work_start),
-          formatTime24(row.shift_work_end),
-          formatTime24(row.first_entry),
-          formatTime24(row.last_exit),
-          decimalHours(row.worked_minutes),
-          decimalHours(row.ordinary_minutes),
-          decimalHours(row.night_25_minutes),
-          decimalHours(row.extra_50_minutes),
-          decimalHours(row.extra_100_minutes),
-          decimalHours(row.non_working_100_minutes),
-          decimalHours(row.late_minutes),
-          decimalHours(row.early_departure_minutes),
-          decimalHours(row.absence_minutes),
-          decimalHours(discountMinutes(row)),
-        ];
-        setNumberCells(excelRow, 7, 16);
-        rowNumber += 1;
-      });
-
-      const subtotalRow = worksheet.getRow(rowNumber);
-      subtotalRow.values = [
-        'Subtotal empleado',
-        '',
-        '',
-        '',
-        '',
-        '',
-        decimalHours(sumMinutes(employeeRows, (row) => row.worked_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.ordinary_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.night_25_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.extra_50_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.extra_100_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.non_working_100_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.late_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.early_departure_minutes)),
-        decimalHours(sumMinutes(employeeRows, (row) => row.absence_minutes)),
-        decimalHours(sumMinutes(employeeRows, discountMinutes)),
-      ];
-      worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
-      styleTotalRow(subtotalRow);
-      setNumberCells(subtotalRow, 7, 16);
-      rowNumber += 2;
-    });
-
-    const totalRow = worksheet.getRow(rowNumber);
-    totalRow.values = [
-      'Total global',
-      '',
-      '',
-      '',
-      '',
-      '',
-      decimalHours(sumMinutes(detailRows, (row) => row.worked_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.ordinary_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.night_25_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.extra_50_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.extra_100_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.non_working_100_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.late_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.early_departure_minutes)),
-      decimalHours(sumMinutes(detailRows, (row) => row.absence_minutes)),
-      decimalHours(sumMinutes(detailRows, discountMinutes)),
+    setSheetColumns(worksheet, [30, 16, 24, 20, 18, 18, 18, 18, 18, 14, 18, 14, 14, 14, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 14, 16, 18, 16]);
+    worksheet.getRow(1).values = [
+      'Empleado', 'Código', 'Empresa', 'Localidad', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo',
+      'Fecha', 'Turno', 'Inicio turno', 'Fin turno', 'Entrada', 'Salida',
+      'Trab.', '0%', '25%', '50%', '100%', '100% No Laboral', 'Atraso', 'SAnt.', 'Falta',
+      'Exceso lunch', 'Incidencia no justificada', 'Permiso no remunerado', 'Todos los descuentos',
     ];
-    worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
-    styleTotalRow(totalRow);
-    setNumberCells(totalRow, 7, 16);
+    styleHeaderRow(worksheet.getRow(1));
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    await writeXlsxWorkbook(workbook, `rpt_hora_extra_deta_${dateFrom}_${dateTo}.xlsx`);
-  };
-
-  const exportSummaryXlsV2 = async () => {
-    const columnCount = 16;
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('RPT_HORA_EXTRA_RESU');
-    setSheetColumns(worksheet, [36, 16, 16, 16, 16, 16, 12, 12, 12, 12, 12, 14, 12, 12, 12, 16]);
-    applyReportHeader(worksheet, 'RPT_HORA_EXTRA_RESU');
-    worksheet.getRow(7).values = ['Empleado', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo', ...headersFromValueCells()];
-    styleHeaderRow(worksheet.getRow(7));
-
-    let rowNumber = 8;
-    summaryDisplayRows.forEach((row) => {
-      const excelRow = worksheet.getRow(rowNumber);
+    detailRows.forEach((row, index) => {
+      const excelRow = worksheet.getRow(index + 2);
       excelRow.values = [
-        summaryEmployeeLabel(row),
-        ...positionCells(row),
+        row.employee_full_name,
+        row.employee_code || row.employee_id,
+        row.company_name || '-',
+        row.work_location_name || '-',
+        row.department_name || '-',
+        row.area_name || '-',
+        row.payroll_group_name || '-',
+        row.cost_center_name || '-',
+        row.work_group_name || '-',
+        formatDateShort(row.shift_date),
+        row.shift_short_name || row.shift_name || '',
+        formatTime24(row.shift_work_start),
+        formatTime24(row.shift_work_end),
+        formatTime24(row.first_entry),
+        formatTime24(row.last_exit),
         decimalHours(row.worked_minutes),
         decimalHours(row.ordinary_minutes),
         decimalHours(row.night_25_minutes),
@@ -1027,34 +959,63 @@ export default function EmployeeOvertimeReports() {
         decimalHours(row.late_minutes),
         decimalHours(row.early_departure_minutes),
         decimalHours(row.absence_minutes),
+        decimalHours(row.lunch_excess_minutes),
+        decimalHours(row.unjustified_incident_minutes),
+        decimalHours(row.unpaid_leave_minutes),
         decimalHours(discountMinutes(row)),
       ];
-      setNumberCells(excelRow, 7, 16);
-      rowNumber += 1;
+      setNumberCells(excelRow, 16, 28);
     });
+    worksheet.autoFilter = `A1:AB${Math.max(detailRows.length + 1, 1)}`;
 
-    const totalRow = worksheet.getRow(rowNumber);
-    totalRow.values = [
-      'Total global',
-      '',
-      '',
-      '',
-      '',
-      '',
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.worked_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.ordinary_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.night_25_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.extra_50_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.extra_100_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.non_working_100_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.late_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.early_departure_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, (row) => row.absence_minutes)),
-      decimalHours(sumMinutes(summaryDisplayRows, discountMinutes)),
+    await writeXlsxWorkbook(workbook, `rpt_hora_extra_deta_${dateFrom}_${dateTo}.xlsx`);
+  };
+
+  const exportSummaryXlsV2 = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('RPT_HORA_EXTRA_RESU');
+    setSheetColumns(worksheet, [30, 16, 24, 20, 18, 18, 18, 18, 18, 16, 16, 12, 12, 12, 12, 12, 14, 12, 12, 12, 14, 16, 18, 16, 14]);
+    worksheet.getRow(1).values = [
+      'Empleado', 'Código', 'Empresa', 'Localidad', 'Departamento', 'Área', 'Rol pago', 'Centro costo', 'Grupo trabajo',
+      'Días planificados', 'Días trabajados', 'Trab.', '0%', '25%', '50%', '100%', '100% No Laboral',
+      'Atraso', 'SAnt.', 'Falta', 'Exceso lunch', 'Incidencia no justificada', 'Permiso no remunerado',
+      'Todos los descuentos', 'Neto 100%',
     ];
-    worksheet.mergeCells(rowNumber, 1, rowNumber, 6);
-    styleTotalRow(totalRow);
-    setNumberCells(totalRow, 7, 16);
+    styleHeaderRow(worksheet.getRow(1));
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    summaryDisplayRows.forEach((row, index) => {
+      const excelRow = worksheet.getRow(index + 2);
+      excelRow.values = [
+        row.employee_full_name,
+        row.employee_code || row.employee_id,
+        row.company_name || '-',
+        row.work_location_name || '-',
+        row.department_name || '-',
+        row.area_name || '-',
+        row.payroll_group_name || '-',
+        row.cost_center_name || '-',
+        row.work_group_name || '-',
+        row.planned_days,
+        row.worked_days,
+        decimalHours(row.worked_minutes),
+        decimalHours(row.ordinary_minutes),
+        decimalHours(row.night_25_minutes),
+        decimalHours(row.extra_50_minutes),
+        decimalHours(row.extra_100_minutes),
+        decimalHours(row.non_working_100_minutes),
+        decimalHours(row.late_minutes),
+        decimalHours(row.early_departure_minutes),
+        decimalHours(row.absence_minutes),
+        decimalHours(row.lunch_excess_minutes),
+        decimalHours(row.unjustified_incident_minutes),
+        decimalHours(row.unpaid_leave_minutes),
+        decimalHours(row.discount_minutes),
+        decimalHours(row.net_extra_100_minutes),
+      ];
+      setNumberCells(excelRow, 12, 25);
+    });
+    worksheet.autoFilter = `A1:Y${Math.max(summaryDisplayRows.length + 1, 1)}`;
 
     await writeXlsxWorkbook(workbook, `rpt_hora_extra_resu_${dateFrom}_${dateTo}.xlsx`);
   };
@@ -1248,6 +1209,12 @@ export default function EmployeeOvertimeReports() {
   return (
     <div className="flex h-[calc(100vh-120px)] min-h-0 flex-col gap-4 overflow-hidden">
       <div className="rounded-xl border bg-white p-5 shadow-sm">
+        <ReportCompanyAsset
+          companyId={screenAssetSource?.company_id}
+          banner={screenAssetSource?.company_banner}
+          logo={screenAssetSource?.company_logo}
+          className="mb-4"
+        />
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex items-center gap-3">
             <span className="inline-flex size-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700">
@@ -1637,9 +1604,6 @@ export default function EmployeeOvertimeReports() {
         </div>
       </div>
 
-      <footer className="shrink-0 text-center text-sm text-slate-500">
-        Titanium Labs Corp.&trade; 2026 &copy; | Todos los derechos reservados
-      </footer>
     </div>
   );
 }

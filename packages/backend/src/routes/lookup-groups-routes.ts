@@ -280,6 +280,7 @@ router.post('/', async (req: Request, res: Response) => {
       lookup_group_label,
       lookup_group_short_label,
       allows_tenant_items,
+      management_policy,
       is_active,
       translations
     } = body;
@@ -330,6 +331,7 @@ router.post('/', async (req: Request, res: Response) => {
         lookup_group_label: lookup_group_label.trim(),
         lookup_group_short_label: lookup_group_short_label.trim(),
         allows_tenant_items: isSystemAdmin ? (allows_tenant_items ?? false) : true,
+        management_policy: isSystemAdmin ? (management_policy || {}) : {},
         is_active: is_active ?? true,
         created_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`
       })
@@ -398,6 +400,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       lookup_group_label,
       lookup_group_short_label,
       allows_tenant_items,
+      management_policy,
       is_active,
       translations
     } = body;
@@ -418,7 +421,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     const { data: existingGroup, error: existingGroupError } = await Postgres
       .from('lookup_groups')
-      .select('id, created_by, allows_tenant_items')
+      .select('id, lookup_group_key, created_by, allows_tenant_items')
       .eq('id', id)
       .maybeSingle();
 
@@ -445,6 +448,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         lookup_group_label: lookup_group_label.trim(),
         lookup_group_short_label: lookup_group_short_label.trim(),
         allows_tenant_items: isSystemAdmin ? (allows_tenant_items ?? false) : true,
+        ...(isSystemAdmin && management_policy !== undefined ? { management_policy } : {}),
         is_active: is_active ?? true,
         updated_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`,
         updated_at: new Date().toISOString()

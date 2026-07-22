@@ -14,6 +14,7 @@ import { Construction, Wrench, ArrowLeft } from 'lucide-react';
 // Importar todas las pantallas
 import { CatalogManagement } from './screens/maintenance/CatalogManagement';
 import { AttendanceEventsManagement } from './screens/maintenance/AttendanceEventsManagement';
+import { AttendanceMovementsManagement } from './screens/maintenance/AttendanceMovementsManagement';
 import { SystemSettingsManagement } from './screens/maintenance/SystemSettingsManagement';
 import { RolesManagement } from './screens/maintenance/RolesManagement';
 import { ScopeTypesManagement } from './screens/maintenance/ScopeTypesManagement';
@@ -57,6 +58,7 @@ import TimePunchChangeApprovalsManagement from './screens/attendance/TimePunchCh
 import EmployeeRouteTrackingReport from './screens/reports/EmployeeRouteTrackingReport';
 import EmployeeOvertimeReports from './screens/reports/EmployeeOvertimeReports';
 import EmployeeAnomalyReports from './screens/reports/EmployeeAnomalyReports';
+import EmployeeTimePunchReports from './screens/reports/EmployeeTimePunchReports';
 
 function InvalidRouteFallback({ path }: { path: string }) {
   return (
@@ -157,6 +159,7 @@ export function Router() {
     '/dashboard/maintenance/parameters':      <SystemSettingsManagement />,
     '/dashboard/maintenance/catalogs':        <CatalogManagement />,
     '/dashboard/maintenance/attendance-events': <AttendanceEventsManagement />,
+    '/dashboard/maintenance/attendance-movements': <AttendanceMovementsManagement />,
     '/dashboard/maintenance/roles':           <RolesManagement />,
     '/dashboard/maintenance/scopes':          <ScopeTypesManagement />,
     '/dashboard/maintenance/users':           <UsersManagement />,
@@ -199,6 +202,7 @@ export function Router() {
     '/dashboard/reports/route-tracking': <EmployeeRouteTrackingReport />,
     '/dashboard/reports/overtime': <EmployeeOvertimeReports />,
     '/dashboard/reports/anomalies': <EmployeeAnomalyReports />,
+    '/dashboard/reports/time-punches': <EmployeeTimePunchReports />,
 
     // ── Kiosko ───────────────────────────────────────────────────────────────
     '/dashboard/kiosk/timeclock': <KioskPunch />,
@@ -241,6 +245,7 @@ export function Router() {
     OVERTIME_REPORTS: <EmployeeOvertimeReports />,
     ATTENDANCE_ANOMALY_REPORTS: <EmployeeAnomalyReports />,
     ROUTE_TRACKING_REPORT: <EmployeeRouteTrackingReport />,
+    TIME_PUNCH_REPORTS: <EmployeeTimePunchReports />,
   };
 
   const menuScreen = menuScreens.find((screen) => normalizePath(screen.route_path) === currentPath);

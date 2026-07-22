@@ -292,7 +292,9 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
           am.movement_short_name,
           am.movement_name,
           am.start_key,
-          am.end_key
+          am.end_key,
+          am.start_punch_key_id,
+          am.end_punch_key_id
         FROM public.attendance_movements am
         WHERE am.tenant_id = $1
           AND am.is_active = true
@@ -312,6 +314,7 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
           p.punch_datetime,
           p.punch_time_zone,
           p.punch_key,
+          p.punch_key_lookup_id,
           ec_scope.work_location_id,
           wl.work_location_name,
           ec_scope.payroll_group_id,
@@ -354,14 +357,16 @@ async function queryUnpairedInconsistencies(args: UnpairedQueryArgs) {
           mk.movement_name,
           mk.start_key,
           mk.end_key,
+          mk.start_punch_key_id,
+          mk.end_punch_key_id,
           CASE
-            WHEN b.punch_key = mk.start_key THEN 'START'
-            WHEN b.punch_key = mk.end_key THEN 'END'
+            WHEN b.punch_key_lookup_id = mk.start_punch_key_id THEN 'START'
+            WHEN b.punch_key_lookup_id = mk.end_punch_key_id THEN 'END'
             ELSE NULL
           END AS side
         FROM base_punches b
         JOIN movement_keys mk
-          ON b.punch_key IN (mk.start_key, mk.end_key)
+          ON b.punch_key_lookup_id IN (mk.start_punch_key_id, mk.end_punch_key_id)
       ),
       starts AS (
         SELECT

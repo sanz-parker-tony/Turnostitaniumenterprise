@@ -16,7 +16,7 @@ function parseBool(value: any): boolean {
   return ['1', 'true', 'yes', 'si', 'sÃƒÂ­'].includes(String(value ?? '').trim().toLowerCase());
 }
 
-async function resolveViewerContext(req: Request) {
+async function resolveUserContext(req: Request) {
   const user = (req as any).user;
   const authUserId = user?.id;
   if (!authUserId) return null;
@@ -47,8 +47,6 @@ async function resolveViewerContext(req: Request) {
   const context = result.rows[0];
   if (!context?.tenant_id || !context?.user_id) return null;
   const roleKeys = (context.role_keys || []).map((roleKey: string) => String(roleKey || '').trim().toUpperCase());
-  const canView = roleKeys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(roleKey));
-  if (!canView) return null;
 
   return {
     tenant_id: String(context.tenant_id),
@@ -57,8 +55,45 @@ async function resolveViewerContext(req: Request) {
   };
 }
 
+async function resolveViewerContext(req: Request) {
+  const context = await resolveUserContext(req);
+  if (!context) return null;
+  const canView = context.role_keys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(roleKey));
+  return canView ? context : null;
+}
+
 function isUnrestricted(context: { role_keys: string[] }) {
   return context.role_keys.includes('TENANT_ADMIN') && !context.role_keys.some((roleKey) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
+}
+
+async function hasSystemReportPermission(
+  context: { tenant_id: string; user_id: string },
+  reportCode: string
+) {
+  const result = await pool.query(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM public.system_reports report
+        INNER JOIN public.report_permissions permission
+          ON permission.system_report_id = report.id
+         AND permission.tenant_id = $1::uuid
+         AND permission.is_active = true
+         AND permission.can_view = true
+        INNER JOIN public.user_roles user_role
+          ON user_role.role_id = permission.role_id
+         AND user_role.tenant_id = permission.tenant_id
+         AND user_role.user_id = $2::uuid
+         AND user_role.is_active = true
+         AND (user_role.valid_from IS NULL OR user_role.valid_from <= now())
+         AND (user_role.valid_to IS NULL OR user_role.valid_to >= now())
+        WHERE report.report_code = $3
+          AND report.is_active = true
+      ) AS allowed
+    `,
+    [context.tenant_id, context.user_id, reportCode]
+  );
+  return result.rows[0]?.allowed === true;
 }
 
 export function buildAssignedEmployeesSql(unrestricted: boolean) {
@@ -174,7 +209,6 @@ export function buildAssignedEmployeesSql(unrestricted: boolean) {
       AND ur.is_active = true
       AND (ur.valid_from IS NULL OR ur.valid_from <= now())
       AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-      AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
     ORDER BY e.id, c.company_name NULLS LAST, e.employee_lastname, e.employee_name
   `;
 }
@@ -359,20 +393,17 @@ export function buildOvertimeCtes(
         FROM public.employee_absence_requests request
         INNER JOIN public.lookup_values request_status
           ON request_status.id = request.request_status_id
-        LEFT JOIN public.lookup_values justify_method
-          ON justify_method.id = request.justify_method_id
         LEFT JOIN public.justification_types justification_type
           ON justification_type.id = request.justification_type_id
         WHERE request.tenant_id = p.tenant_id
           AND request.employee_id = ae.employee_id
           AND request.is_active = true
           AND UPPER(COALESCE(request_status.lookup_key, request_status.lookup_label, '')) IN ('APPROVED', 'APROBADO', 'APROBADA')
-          AND p.shift_date BETWEEN request.start_datetime::date
-              AND COALESCE(request.end_datetime, request.start_datetime)::date
-          AND (
-            UPPER(COALESCE(justify_method.lookup_key, '')) IN ('VACACIONES', 'VACATION')
-            OR UPPER(COALESCE(justification_type.justification_name, '')) LIKE '%VACAC%'
-          )
+          AND UPPER(COALESCE(justification_type.justification_name, '')) LIKE '%VACAC%'
+          AND request.start_datetime <= p.shift_date::timestamp + s.start_time
+          AND COALESCE(request.end_datetime, request.start_datetime) >=
+              p.shift_date::timestamp + s.start_time
+              + (COALESCE(s.shift_duration_minutes, s.work_minutes + s.lunch_minutes, 0) || ' minutes')::interval
         LIMIT 1
       ) vacation ON true
       LEFT JOIN LATERAL (
@@ -423,10 +454,10 @@ export function buildOvertimeCtes(
         pl.shift_date,
         MIN(p.punch_datetime) AS first_punch,
         MAX(p.punch_datetime) AS last_punch,
-        MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 1) AS first_entry,
-        MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 4) AS last_exit,
-        MIN(p.punch_datetime) FILTER (WHERE p.punch_key = 2) AS lunch_out,
-        MAX(p.punch_datetime) FILTER (WHERE p.punch_key = 3) AS lunch_in
+        MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
+        MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit,
+        MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'LUNCH_OUT') AS lunch_out,
+        MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'LUNCH_IN') AS lunch_in
       FROM plans pl
       LEFT JOIN public.employee_time_punches p
         ON p.employee_id = pl.employee_id
@@ -874,8 +905,12 @@ function buildReportQueryParts(
 
 router.get('/employees', async (req: Request, res: Response) => {
   try {
-    const context = await resolveViewerContext(req);
-    if (!context) return res.status(403).json({ error: 'Reporte disponible para Supervisor/RRHH' });
+    const reportCode = normalizeNullableText(req.query.report_code);
+    const context = reportCode ? await resolveUserContext(req) : await resolveViewerContext(req);
+    if (!context) return res.status(403).json({ error: 'Usuario no autorizado para consultar reportes' });
+    if (reportCode && !await hasSystemReportPermission(context, reportCode)) {
+      return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
+    }
 
     const unrestricted = isUnrestricted(context);
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
@@ -907,8 +942,12 @@ router.get('/employees', async (req: Request, res: Response) => {
 
 router.get('/filters', async (req: Request, res: Response) => {
   try {
-    const context = await resolveViewerContext(req);
-    if (!context) return res.status(403).json({ error: 'Reporte disponible para Supervisor/RRHH' });
+    const reportCode = normalizeNullableText(req.query.report_code);
+    const context = reportCode ? await resolveUserContext(req) : await resolveViewerContext(req);
+    if (!context) return res.status(403).json({ error: 'Usuario no autorizado para consultar reportes' });
+    if (reportCode && !await hasSystemReportPermission(context, reportCode)) {
+      return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
+    }
 
     const unrestricted = isUnrestricted(context);
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
@@ -963,6 +1002,167 @@ router.get('/filters', async (req: Request, res: Response) => {
     );
 
     return res.status(200).json({ success: true, filters: result.rows[0]?.filters || {} });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Internal server error' });
+  }
+});
+
+router.get('/punches', async (req: Request, res: Response) => {
+  try {
+    const context = await resolveUserContext(req);
+    if (!context) return res.status(403).json({ error: 'Usuario no disponible para consultar reportes' });
+    if (!await hasSystemReportPermission(context, 'RPT_MARCACIONES_REALIZADAS')) {
+      return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
+    }
+
+    const unrestricted = isUnrestricted(context);
+    const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
+    const params: any[] = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
+    const dateFrom = normalizeNullableText(req.query.date_from);
+    const dateTo = normalizeNullableText(req.query.date_to);
+    if (!dateFrom || !isIsoDate(dateFrom)) return res.status(400).json({ error: 'date_from debe tener formato YYYY-MM-DD' });
+    if (!dateTo || !isIsoDate(dateTo)) return res.status(400).json({ error: 'date_to debe tener formato YYYY-MM-DD' });
+
+    params.push(dateFrom, dateTo);
+    const dateFromSql = `$${params.length - 1}`;
+    const dateToSql = `$${params.length}`;
+    const employeeIdSql = addUuidSql(params, normalizeNullableText(req.query.employee_id));
+    const payrollGroupIdSql = addUuidSql(params, normalizeNullableText(req.query.payroll_group_id));
+    const costCenterIdSql = addUuidSql(params, normalizeNullableText(req.query.cost_center_id));
+    const departmentIdSql = addUuidSql(params, normalizeNullableText(req.query.department_id));
+    const areaIdSql = addUuidSql(params, normalizeNullableText(req.query.area_id));
+    const workGroupIdSql = addUuidSql(params, normalizeNullableText(req.query.work_group_id));
+    const shiftStatus = String(req.query.shift_status || 'all').trim().toLowerCase();
+    if (!['all', 'assigned', 'unassigned'].includes(shiftStatus)) {
+      return res.status(400).json({ error: 'shift_status debe ser all, assigned o unassigned' });
+    }
+    params.push(shiftStatus);
+    const shiftStatusSql = `$${params.length}`;
+
+    const result = await pool.query(
+      `
+        WITH assigned_employees AS (${assignedEmployeesSql}),
+        scoped_punches AS (
+          SELECT
+            p.id,
+            p.employee_id,
+            ae.employee_code,
+            CONCAT_WS(' ', NULLIF(ae.employee_lastname, ''), NULLIF(ae.employee_name, '')) AS employee_full_name,
+            ae.company_id,
+            ae.company_name,
+            ae.company_logo,
+            ae.company_banner,
+            ae.department_id,
+            ae.department_name,
+            ae.area_id,
+            ae.area_name,
+            ae.payroll_group_name,
+            ae.cost_center_id,
+            ae.cost_center_name,
+            ae.work_group_name,
+            p.punch_datetime,
+            p.punch_time_zone,
+            p.punch_key,
+            COALESCE(punch_type.lookup_label, CONCAT('Marcacion ', p.punch_key)) AS punch_label,
+            src.lookup_key AS punch_source_key,
+            src.lookup_label AS punch_source_label,
+            st.lookup_key AS punch_status_key,
+            st.lookup_label AS punch_status_label,
+            p.time_clock_device_id,
+            d.device_name,
+            d.device_serial_number,
+            d.device_model,
+            dt.lookup_label AS device_type_label,
+            p.latitud AS punch_latitude,
+            p.longitud AS punch_longitude,
+            p.location_accuracy_meters,
+            d.latitude AS device_latitude,
+            d.longitude AS device_longitude,
+            p.client_ip,
+            p.client_device_type,
+            p.client_platform,
+            p.client_app_instance_id,
+            p.notes,
+            shift_plan.shift_plan_id,
+            shift_plan.shift_name,
+            shift_plan.shift_short_name,
+            shift_plan.shift_start_time,
+            shift_plan.shift_end_time,
+            (shift_plan.shift_plan_id IS NOT NULL) AS has_assigned_shift,
+            CASE
+              WHEN d.id IS NOT NULL THEN COALESCE(NULLIF(d.device_name, ''), NULLIF(d.device_serial_number, ''), 'Dispositivo registrado')
+              WHEN NULLIF(p.client_device_type, '') IS NOT NULL OR NULLIF(p.client_platform, '') IS NOT NULL
+                THEN CONCAT_WS(' / ', NULLIF(p.client_device_type, ''), NULLIF(p.client_platform, ''))
+              ELSE COALESCE(NULLIF(src.lookup_label, ''), 'No identificado')
+            END AS origin_device
+          FROM public.employee_time_punches p
+          INNER JOIN assigned_employees ae
+            ON ae.employee_id = p.employee_id
+           AND ae.company_id = p.company_id
+          LEFT JOIN public.lookup_values src ON src.id = p.punch_source_id
+          LEFT JOIN public.lookup_values st ON st.id = p.time_punch_status_id
+          LEFT JOIN public.lookup_values punch_type ON punch_type.id = p.punch_key_lookup_id
+          LEFT JOIN public.time_clock_devices d
+            ON d.id = p.time_clock_device_id
+           AND d.tenant_id = p.tenant_id
+           AND d.company_id = p.company_id
+          LEFT JOIN public.lookup_values dt ON dt.id = d.device_type_id
+          LEFT JOIN LATERAL (
+            SELECT
+              esp.id AS shift_plan_id,
+              s.shift_name,
+              s.shift_short_name,
+              s.start_time AS shift_start_time,
+              (s.start_time + (s.shift_duration_minutes * INTERVAL '1 minute'))::time AS shift_end_time
+            FROM public.employee_shift_plans esp
+            INNER JOIN public.shifts s
+              ON s.id = esp.shift_id
+             AND s.tenant_id = esp.tenant_id
+             AND s.company_id = esp.company_id
+            WHERE esp.tenant_id = p.tenant_id
+              AND esp.company_id = p.company_id
+              AND esp.employee_id = p.employee_id
+              AND esp.is_active = true
+              AND esp.shift_date = (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date
+            ORDER BY esp.created_at DESC
+            LIMIT 1
+          ) shift_plan ON true
+          WHERE p.tenant_id = $1::uuid
+            AND p.is_active = true
+            AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date
+                BETWEEN ${dateFromSql}::date AND ${dateToSql}::date
+            AND (${employeeIdSql} IS NULL OR ae.employee_id = ${employeeIdSql})
+            AND (${payrollGroupIdSql} IS NULL OR ae.payroll_group_id = ${payrollGroupIdSql})
+            AND (${costCenterIdSql} IS NULL OR ae.cost_center_id = ${costCenterIdSql})
+            AND (${departmentIdSql} IS NULL OR ae.department_id = ${departmentIdSql})
+            AND (${areaIdSql} IS NULL OR ae.area_id = ${areaIdSql})
+            AND (${workGroupIdSql} IS NULL OR ae.work_group_id = ${workGroupIdSql})
+        )
+        SELECT *
+        FROM scoped_punches
+        WHERE ${shiftStatusSql}::text = 'all'
+           OR (${shiftStatusSql}::text = 'assigned' AND has_assigned_shift)
+           OR (${shiftStatusSql}::text = 'unassigned' AND NOT has_assigned_shift)
+        ORDER BY
+          company_name ASC NULLS LAST,
+          department_name ASC NULLS LAST,
+          area_name ASC NULLS LAST,
+          cost_center_name ASC NULLS LAST,
+          employee_full_name ASC,
+          punch_datetime ASC
+      `,
+      params
+    );
+
+    return res.status(200).json({
+      success: true,
+      rows: result.rows,
+      filters: {
+        date_from: dateFrom,
+        date_to: dateTo,
+        shift_status: shiftStatus,
+      },
+    });
   } catch (error: any) {
     return res.status(500).json({ error: error?.message || 'Internal server error' });
   }

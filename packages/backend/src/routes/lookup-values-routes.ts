@@ -17,6 +17,50 @@ type AuthContext = {
   authUserId: string;
 };
 
+type CatalogManagementPolicy = {
+  value_scope?: 'SYSTEM' | 'TENANT' | 'INHERIT';
+  value_permissions?: Partial<Record<'create' | 'update' | 'delete', string[]>>;
+  required_metadata?: Record<string, { type?: string; unique_within_group?: boolean }>;
+};
+
+async function getRoleKeys(ctx: AuthContext): Promise<string[]> {
+  const result = await pool.query(
+    `SELECT DISTINCT r.role_key
+       FROM user_roles ur
+       JOIN roles r ON r.id = ur.role_id AND r.is_active = true
+      WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND ur.is_active = true`,
+    [ctx.userId, ctx.tenantId]
+  );
+  return result.rows.map((row) => String(row.role_key || '').trim().toUpperCase()).filter(Boolean);
+}
+
+function policyAllows(
+  policy: CatalogManagementPolicy | null | undefined,
+  action: 'create' | 'update' | 'delete',
+  roleKeys: string[]
+): boolean | null {
+  const configuredRoles = policy?.value_permissions?.[action];
+  if (!Array.isArray(configuredRoles) || configuredRoles.length === 0) return null;
+  const allowed = new Set(configuredRoles.map((role) => String(role).trim().toUpperCase()));
+  return roleKeys.some((role) => allowed.has(role));
+}
+
+function validateConfiguredMetadata(
+  policy: CatalogManagementPolicy | null | undefined,
+  metadata: Record<string, unknown>
+): string | null {
+  for (const [key, rule] of Object.entries(policy?.required_metadata || {})) {
+    const value = metadata?.[key];
+    if (rule?.type === 'positive_integer' && (!Number.isInteger(Number(value)) || Number(value) <= 0)) {
+      return `El metadato ${key} debe ser un entero positivo`;
+    }
+    if (value === undefined || value === null || value === '') {
+      return `El metadato ${key} es obligatorio`;
+    }
+  }
+  return null;
+}
+
 async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
   const authUserId = String((req as any)?.user?.id || '').trim();
   if (!authUserId) return null;
@@ -346,6 +390,7 @@ router.post('/', async (req: Request, res: Response) => {
       hasRole(ctx, 'SYSTEM_ADMIN'),
       hasRole(ctx, 'TENANT_ADMIN'),
     ]);
+    const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
       return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede crear valores de catalogo' });
@@ -361,6 +406,7 @@ router.post('/', async (req: Request, res: Response) => {
       tenant_id,
       sort_order,
       is_active,
+      metadata,
       translations
     } = body;
 
@@ -393,7 +439,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     const { data: groupData, error: groupError } = await Postgres
       .from('lookup_groups')
-      .select('id, allows_tenant_items')
+      .select('id, allows_tenant_items, management_policy')
       .eq('id', lookup_group_id)
       .maybeSingle();
 
@@ -404,13 +450,35 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Grupo de catalogo no encontrado' });
     }
 
+    const managementPolicy = (groupData.management_policy || {}) as CatalogManagementPolicy;
+    const configuredCreatePermission = policyAllows(managementPolicy, 'create', roleKeys);
+    if (configuredCreatePermission === false) {
+      return res.status(403).json({
+        error: 'Sus roles no permiten crear valores en este catalogo'
+      });
+    }
+
+    const effectiveMetadata = { ...(metadata || {}) } as Record<string, unknown>;
+    for (const [key, rule] of Object.entries(managementPolicy.required_metadata || {})) {
+      if (rule?.type === 'positive_integer' && effectiveMetadata[key] !== undefined) {
+        effectiveMetadata[key] = Number(effectiveMetadata[key]);
+      }
+    }
+    const metadataError = validateConfiguredMetadata(managementPolicy, effectiveMetadata);
+    if (metadataError) return res.status(400).json({ error: metadataError });
+
     const isTenantScopedInsert = isTenantAdmin && !isSystemAdmin;
     if (isTenantScopedInsert && !groupData.allows_tenant_items) {
       return res.status(403).json({ error: 'Este grupo no permite items de tenant (allows_tenant_items=false)' });
     }
 
-    const effectiveTenantId = isTenantScopedInsert ? ctx.tenantId : (tenant_id ? String(tenant_id) : null);
-    const effectiveLookupScope = isTenantScopedInsert
+    const isSystemScopedCatalog = managementPolicy.value_scope === 'SYSTEM';
+    const effectiveTenantId = isSystemScopedCatalog
+      ? null
+      : (isTenantScopedInsert ? ctx.tenantId : (tenant_id ? String(tenant_id) : null));
+    const effectiveLookupScope = isSystemScopedCatalog
+      ? 'SYSTEM'
+      : isTenantScopedInsert
       ? 'TENANT'
       : (lookup_scope && ['SYSTEM', 'TENANT'].includes(lookup_scope) ? lookup_scope : 'SYSTEM');
 
@@ -443,6 +511,7 @@ router.post('/', async (req: Request, res: Response) => {
         lookup_scope: effectiveLookupScope,
         sort_order: sort_order ?? 0,
         is_active: is_active ?? true,
+        metadata: effectiveMetadata,
         created_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`
       })
       .select()
@@ -498,6 +567,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       hasRole(ctx, 'SYSTEM_ADMIN'),
       hasRole(ctx, 'TENANT_ADMIN'),
     ]);
+    const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
       return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede actualizar valores de catalogo' });
@@ -511,6 +581,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       lookup_scope,
       sort_order,
       is_active,
+      metadata,
       translations
     } = body;
 
@@ -533,7 +604,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     const { data: existingValue, error: existingValueError } = await Postgres
       .from('lookup_values')
-      .select('id, tenant_id, lookup_group_id')
+      .select('id, tenant_id, lookup_group_id, metadata')
       .eq('id', id)
       .maybeSingle();
 
@@ -544,18 +615,28 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Valor no encontrado' });
     }
 
+    const { data: groupData, error: groupErr } = await Postgres
+      .from('lookup_groups')
+      .select('allows_tenant_items, management_policy')
+      .eq('id', existingValue.lookup_group_id)
+      .maybeSingle();
+
+    if (groupErr) return res.status(500).json({ error: groupErr.message });
+    if (!groupData) return res.status(404).json({ error: 'Grupo de catalogo no encontrado' });
+
+    const managementPolicy = (groupData.management_policy || {}) as CatalogManagementPolicy;
+    const configuredUpdatePermission = policyAllows(managementPolicy, 'update', roleKeys);
+    if (configuredUpdatePermission === false) {
+      return res.status(403).json({
+        error: 'Sus roles no permiten modificar valores en este catalogo'
+      });
+    }
+
     if (!isSystemAdmin) {
       if (existingValue.tenant_id !== ctx.tenantId) {
         return res.status(403).json({ error: 'TENANT_ADMIN solo puede editar valores de su tenant' });
       }
 
-      const { data: groupData, error: groupErr } = await Postgres
-        .from('lookup_groups')
-        .select('allows_tenant_items')
-        .eq('id', existingValue.lookup_group_id)
-        .maybeSingle();
-
-      if (groupErr) return res.status(500).json({ error: groupErr.message });
       if (!groupData?.allows_tenant_items) {
         return res.status(403).json({ error: 'Este grupo no permite items de tenant (allows_tenant_items=false)' });
       }
@@ -571,6 +652,22 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     if (sort_order !== undefined) {
       updateData.sort_order = sort_order;
+    }
+
+    if (managementPolicy.value_scope === 'SYSTEM') {
+      const mergedMetadata = { ...(existingValue.metadata || {}), ...(metadata || {}) };
+      for (const [key, rule] of Object.entries(managementPolicy.required_metadata || {})) {
+        if (rule?.type === 'positive_integer' && mergedMetadata[key] !== undefined) {
+          mergedMetadata[key] = Number(mergedMetadata[key]);
+        }
+      }
+      const metadataError = validateConfiguredMetadata(managementPolicy, mergedMetadata);
+      if (metadataError) return res.status(400).json({ error: metadataError });
+      updateData.metadata = mergedMetadata;
+      updateData.lookup_scope = 'SYSTEM';
+      updateData.tenant_id = null;
+    } else if (metadata !== undefined) {
+      updateData.metadata = metadata;
     }
 
     if (isSystemAdmin) {
@@ -641,6 +738,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
       hasRole(ctx, 'SYSTEM_ADMIN'),
       hasRole(ctx, 'TENANT_ADMIN'),
     ]);
+    const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
       return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede eliminar valores de catalogo' });
@@ -663,18 +761,28 @@ router.delete('/:id', async (req: Request, res: Response) => {
     if (existingErr) return res.status(500).json({ error: existingErr.message });
     if (!existingValue) return res.status(404).json({ error: 'Valor no encontrado' });
 
+    const { data: groupData, error: groupErr } = await Postgres
+      .from('lookup_groups')
+      .select('allows_tenant_items, management_policy')
+      .eq('id', existingValue.lookup_group_id)
+      .maybeSingle();
+
+    if (groupErr) return res.status(500).json({ error: groupErr.message });
+    if (!groupData) return res.status(404).json({ error: 'Grupo de catalogo no encontrado' });
+
+    const managementPolicy = (groupData.management_policy || {}) as CatalogManagementPolicy;
+    const configuredDeletePermission = policyAllows(managementPolicy, 'delete', roleKeys);
+    if (configuredDeletePermission === false) {
+      return res.status(403).json({
+        error: 'Sus roles no permiten eliminar valores en este catalogo'
+      });
+    }
+
     if (!isSystemAdmin) {
       if (!existingValue.tenant_id || existingValue.tenant_id !== ctx.tenantId) {
         return res.status(403).json({ error: 'TENANT_ADMIN solo puede eliminar valores de su tenant' });
       }
 
-      const { data: groupData, error: groupErr } = await Postgres
-        .from('lookup_groups')
-        .select('allows_tenant_items')
-        .eq('id', existingValue.lookup_group_id)
-        .maybeSingle();
-
-      if (groupErr) return res.status(500).json({ error: groupErr.message });
       if (!groupData?.allows_tenant_items) {
         return res.status(403).json({ error: 'Este grupo no permite items de tenant (allows_tenant_items=false)' });
       }

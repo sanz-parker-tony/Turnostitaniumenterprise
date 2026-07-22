@@ -402,20 +402,22 @@ function EmployeeHome({
     : recentPunches.flatMap((row: any) => {
       const date = toDateKey(row?.punch_datetime);
       if (!date) return [];
-      const key = Number(row?.punch_key);
-      const icon_key =
-        key === 1 ? 'DoorOpen'
-          : key === 2 ? 'Utensils'
-            : key === 3 ? 'UtensilsCrossed'
-              : key === 4 ? 'DoorClosed'
-                : key === 5 ? 'ArrowRightCircle'
-                  : key === 6 ? 'ArrowLeftCircle'
-                    : 'Fingerprint';
+      const movementKey = String(row?.movement_key || '').toUpperCase();
+      const icons: Record<string, string> = {
+        ENTRY: 'DoorOpen',
+        LUNCH_OUT: 'Utensils',
+        LUNCH_IN: 'UtensilsCrossed',
+        EXIT: 'DoorClosed',
+        PERMISSION_OUT: 'ArrowRightCircle',
+        PERMISSION_IN: 'ArrowLeftCircle',
+      };
+      const icon_key = icons[movementKey] || 'Fingerprint';
+      const isStart = ['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT'].includes(movementKey);
       return [{
         date,
         icon_key,
-        bg_color: [1, 2, 5].includes(key) ? '#DCFCE7' : '#FEE2E2',
-        text_color: [1, 2, 5].includes(key) ? '#166534' : '#991B1B',
+        bg_color: isStart ? '#DCFCE7' : '#FEE2E2',
+        text_color: isStart ? '#166534' : '#991B1B',
         title: row?.movement_label || 'Marcacion',
         subtitle: String(row?.punch_datetime || '').slice(11, 16),
         sort_datetime: String(row?.punch_datetime || ''),
@@ -1016,14 +1018,6 @@ function normalizeMovementLabel(row: any): string {
   if (movementKey === 'PERMISSION_IN') return 'Entra a trabajo (retorno de permiso)';
 
   // Compatibilidad con marcaciones históricas si el catálogo aún no está disponible.
-  const punchKey = Number(row.punch_key);
-  if (punchKey === 1) return 'Entra a trabajo';
-  if (punchKey === 2) return 'Inicio de lunch';
-  if (punchKey === 3) return 'Fin de lunch';
-  if (punchKey === 4) return 'Sale de trabajo';
-  if (punchKey === 5) return 'Sale de trabajo (permiso)';
-  if (punchKey === 6) return 'Entra a trabajo (retorno de permiso)';
-
   const raw = String(row.movement_label || '').trim();
   const key = raw.toUpperCase();
   if (key === 'ENTRADA A TRABAJO' || key === 'ENTRADA TRABAJO') return 'Entrada de trabajo';
@@ -1033,10 +1027,7 @@ function normalizeMovementLabel(row: any): string {
 
 function isLunchPunch(row: any): boolean {
   const movementKey = String(row?.movement_key || '').trim().toUpperCase();
-  return movementKey === 'LUNCH_OUT'
-    || movementKey === 'LUNCH_IN'
-    || Number(row?.punch_key) === 2
-    || Number(row?.punch_key) === 3;
+  return movementKey === 'LUNCH_OUT' || movementKey === 'LUNCH_IN';
 }
 
 function isLateEvent(eventKey: string | null | undefined): boolean {
@@ -1058,17 +1049,14 @@ function formatLatestPunchDescription(row: any): string {
   }
 
   const movementKey = String(row?.movement_key || '').trim().toUpperCase();
-  if (movementKey === 'PERMISSION_OUT'
-    || movementKey === 'PERMISSION_IN'
-    || Number(row.punch_key) === 5
-    || Number(row.punch_key) === 6) {
+  if (movementKey === 'PERMISSION_OUT' || movementKey === 'PERMISSION_IN') {
     const parts = [`${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)}`, markingLocation];
     if (row.has_approved_leave) parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
     return `${parts.slice(0, 2).join(' - ')}${parts.length > 2 ? ` | ${parts.slice(2).join(' | ')}` : ''}`;
   }
 
   const movementLabel = String(row.movement_label || '').trim().toUpperCase();
-  const isWorkdayExit = movementKey === 'EXIT' || Number(row.punch_key) === 4 || movementLabel === 'SALIDA';
+  const isWorkdayExit = movementKey === 'EXIT' || movementLabel === 'SALIDA';
   const shiftLabel = isWorkdayExit ? 'Salida turno' : 'Entrada turno';
   const shiftTime = isWorkdayExit ? row.shift_work_end_time : row.shift_start_time;
   const parts = [
@@ -1594,21 +1582,10 @@ function SupervisorHome({
 
         <Card className="flex h-full flex-col">
           <CardHeader>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <CardTitle>Últimas marcaciones del día</CardTitle>
-                <CardDescription>Se refresca automáticamente para reflejar nuevas marcaciones.</CardDescription>
-                <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={showOnlyAnomalies}
-                    onChange={(event) => setShowOnlyAnomalies(event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  Solo anomalías
-                </label>
-              </div>
-              <div className="grid shrink-0 grid-cols-2 gap-2">
+            <div className="space-y-2">
+              <CardTitle>Últimas marcaciones del día</CardTitle>
+              <CardDescription>Se refresca automáticamente para reflejar nuevas marcaciones.</CardDescription>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
                 <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
                   Mostrar
                   <select
@@ -1628,6 +1605,15 @@ function SupervisorHome({
                     onValueChange={setLatestPunchesFromTime}
                     className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-900 shadow-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
                   />
+                </label>
+                <label className="inline-flex h-9 cursor-pointer items-center gap-2 text-xs font-medium text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={showOnlyAnomalies}
+                    onChange={(event) => setShowOnlyAnomalies(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  Solo anomalías
                 </label>
               </div>
             </div>
