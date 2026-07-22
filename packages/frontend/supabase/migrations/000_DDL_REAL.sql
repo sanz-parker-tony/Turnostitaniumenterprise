@@ -6786,6 +6786,394 @@ CREATE TRIGGER trg_time_punch_change_requests_requester_status_notification
 AFTER INSERT OR UPDATE OF request_status_id ON public.employee_time_punch_change_requests
 FOR EACH ROW EXECUTE FUNCTION public.sync_requester_status_notification();
 
+-- ============================================================================
+-- CONTROL DINAMICO DE PLANIFICACION Y COBERTURA
+-- ============================================================================
+
+ALTER TABLE public.justification_types
+  ADD COLUMN planning_policy_id uuid REFERENCES public.lookup_values(id);
+
+CREATE TABLE public.shift_coverage_requirements (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES public.tenants(id),
+  company_id uuid NULL REFERENCES public.companies(id),
+  work_location_id uuid NULL REFERENCES public.work_locations(id),
+  department_id uuid NULL REFERENCES public.departments(id),
+  area_id uuid NULL REFERENCES public.areas(id),
+  cost_center_id uuid NULL REFERENCES public.cost_centers(id),
+  work_group_id uuid NULL REFERENCES public.work_groups(id),
+  shift_id uuid NULL REFERENCES public.shifts(id),
+  day_of_week smallint NULL CHECK (day_of_week BETWEEN 0 AND 6),
+  effective_from date NOT NULL DEFAULT CURRENT_DATE,
+  effective_to date NULL,
+  minimum_staff integer NOT NULL CHECK (minimum_staff >= 0),
+  optimal_staff integer NULL CHECK (optimal_staff IS NULL OR optimal_staff >= minimum_staff),
+  priority integer NOT NULL DEFAULT 0,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by character varying NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_by character varying NULL,
+  updated_at timestamptz NULL,
+  CONSTRAINT shift_coverage_effective_range_check CHECK (effective_to IS NULL OR effective_to >= effective_from)
+);
+
+CREATE INDEX idx_shift_coverage_requirements_resolution
+  ON public.shift_coverage_requirements
+  (tenant_id, effective_from, effective_to, day_of_week, shift_id)
+  WHERE is_active;
+
+CREATE TABLE public.shift_planning_impacts (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES public.tenants(id),
+  company_id uuid NULL REFERENCES public.companies(id),
+  employee_id uuid NULL REFERENCES public.employees(id),
+  absence_request_id uuid NULL REFERENCES public.employee_absence_requests(id),
+  source_table character varying NOT NULL,
+  source_id uuid NOT NULL,
+  impact_status_id uuid NOT NULL REFERENCES public.lookup_values(id),
+  date_from date NOT NULL,
+  date_to date NOT NULL,
+  assessment_key character varying NOT NULL,
+  assessment_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  affected_plan_count integer NOT NULL DEFAULT 0,
+  resolution_mode character varying NULL,
+  resolution_notes text NULL,
+  resolved_by uuid NULL REFERENCES public.users(id),
+  resolved_at timestamptz NULL,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by character varying NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_by character varying NULL,
+  updated_at timestamptz NULL,
+  CONSTRAINT shift_planning_impacts_date_range_check CHECK (date_to >= date_from)
+);
+
+CREATE UNIQUE INDEX ux_shift_planning_impacts_open_source
+  ON public.shift_planning_impacts (tenant_id, source_table, source_id)
+  WHERE is_active AND resolved_at IS NULL;
+
+CREATE TABLE public.shift_planning_recalculation_queue (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES public.tenants(id),
+  impact_id uuid NOT NULL REFERENCES public.shift_planning_impacts(id),
+  queue_status_id uuid NOT NULL REFERENCES public.lookup_values(id),
+  attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  available_at timestamptz NOT NULL DEFAULT now(),
+  locked_at timestamptz NULL,
+  locked_by character varying NULL,
+  last_error text NULL,
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by character varying NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_by character varying NULL,
+  updated_at timestamptz NULL
+);
+
+CREATE UNIQUE INDEX ux_shift_planning_recalculation_queue_active_impact
+  ON public.shift_planning_recalculation_queue (impact_id)
+  WHERE is_active;
+
+CREATE OR REPLACE FUNCTION public.enqueue_dynamic_shift_planning_impact()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  source_row jsonb := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  previous_row jsonb := CASE WHEN TG_OP = 'INSERT' THEN NULL ELSE to_jsonb(OLD) END;
+  tenant_uuid uuid := NULLIF(source_row->>'tenant_id', '')::uuid;
+  source_uuid uuid := NULLIF(source_row->>'id', '')::uuid;
+  company_uuid uuid := NULLIF(source_row->>'company_id', '')::uuid;
+  employee_uuid uuid := NULLIF(source_row->>'employee_id', '')::uuid;
+  date_from_value date;
+  date_to_value date;
+  affected_count integer := 0;
+  should_enqueue boolean := false;
+  impact_status_uuid uuid;
+  queue_status_uuid uuid;
+  impact_uuid uuid;
+  actor_value text := COALESCE(NULLIF(source_row->>'updated_by', ''), NULLIF(source_row->>'created_by', ''), 'DATABASE');
+  source_payload jsonb;
+  timezone_value text;
+BEGIN
+  IF tenant_uuid IS NULL OR source_uuid IS NULL THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+
+  IF TG_TABLE_NAME = 'employee_absence_requests' THEN
+    SELECT public.resolve_attendance_timezone(tenant_uuid, company_uuid, assignment.work_location_id, NULL)
+      INTO timezone_value
+    FROM public.employee_companies assignment
+    WHERE assignment.tenant_id = tenant_uuid
+      AND assignment.company_id = company_uuid
+      AND assignment.employee_id = employee_uuid
+      AND assignment.is_active
+    ORDER BY assignment.created_at DESC
+    LIMIT 1;
+    timezone_value := COALESCE(timezone_value, public.resolve_attendance_timezone(tenant_uuid, company_uuid, NULL, NULL));
+    date_from_value := (NULLIF(source_row->>'start_datetime', '')::timestamptz AT TIME ZONE timezone_value)::date;
+    date_to_value := (NULLIF(source_row->>'end_datetime', '')::timestamptz AT TIME ZONE timezone_value)::date;
+    IF previous_row IS NOT NULL THEN
+      date_from_value := least(
+        date_from_value,
+        (NULLIF(previous_row->>'start_datetime', '')::timestamptz AT TIME ZONE timezone_value)::date
+      );
+      date_to_value := greatest(
+        date_to_value,
+        (NULLIF(previous_row->>'end_datetime', '')::timestamptz AT TIME ZONE timezone_value)::date
+      );
+    END IF;
+
+    SELECT COALESCE((policy.metadata->>'blocks_assignment')::boolean, false)
+           AND status.metadata->>'notification_status_key' = 'APPROVED'
+      INTO should_enqueue
+    FROM public.justification_types justification
+    JOIN public.lookup_values policy ON policy.id = justification.planning_policy_id AND policy.is_active
+    JOIN public.lookup_values status ON status.id = NULLIF(source_row->>'request_status_id', '')::uuid
+    WHERE justification.id = NULLIF(source_row->>'justification_type_id', '')::uuid;
+
+    IF previous_row IS NOT NULL AND NOT should_enqueue THEN
+      SELECT COALESCE((policy.metadata->>'blocks_assignment')::boolean, false)
+             AND status.metadata->>'notification_status_key' = 'APPROVED'
+        INTO should_enqueue
+      FROM public.justification_types justification
+      JOIN public.lookup_values policy ON policy.id = justification.planning_policy_id AND policy.is_active
+      JOIN public.lookup_values status ON status.id = NULLIF(previous_row->>'request_status_id', '')::uuid
+      WHERE justification.id = NULLIF(previous_row->>'justification_type_id', '')::uuid;
+    END IF;
+
+    SELECT count(*)::integer INTO affected_count
+    FROM public.employee_shift_plans plan
+    JOIN public.shifts shift ON shift.id = plan.shift_id AND shift.work_minutes > 0
+    WHERE plan.tenant_id = tenant_uuid
+      AND plan.employee_id = employee_uuid
+      AND plan.shift_date BETWEEN date_from_value AND date_to_value
+      AND plan.is_active;
+  ELSIF TG_TABLE_NAME = 'holidays' THEN
+    should_enqueue := true;
+
+    SELECT min(plan.shift_date), max(plan.shift_date), count(*)::integer
+      INTO date_from_value, date_to_value, affected_count
+    FROM public.employee_shift_plans plan
+    JOIN public.shifts shift ON shift.id = plan.shift_id AND shift.work_minutes > 0
+    JOIN public.employee_companies assignment
+      ON assignment.tenant_id = plan.tenant_id
+     AND assignment.company_id = plan.company_id
+     AND assignment.employee_id = plan.employee_id
+     AND assignment.is_active
+     AND assignment.work_on_holidays = false
+    LEFT JOIN public.work_locations location ON location.id = assignment.work_location_id
+    WHERE plan.tenant_id = tenant_uuid
+      AND plan.is_active
+      AND (
+        (
+          (
+            (COALESCE(NULLIF(source_row->>'is_recurring', '')::boolean, false)
+              AND to_char(plan.shift_date, 'MM-DD') = to_char(NULLIF(source_row->>'holiday_date', '')::date, 'MM-DD'))
+            OR
+            (NOT COALESCE(NULLIF(source_row->>'is_recurring', '')::boolean, false)
+              AND plan.shift_date = NULLIF(source_row->>'holiday_date', '')::date)
+          )
+          AND (NULLIF(source_row->>'company_id', '') IS NULL OR plan.company_id = NULLIF(source_row->>'company_id', '')::uuid)
+          AND (NULLIF(source_row->>'work_location_id', '') IS NULL OR assignment.work_location_id = NULLIF(source_row->>'work_location_id', '')::uuid)
+          AND (NULLIF(source_row->>'country_id', '') IS NULL OR location.country_id = NULLIF(source_row->>'country_id', '')::uuid)
+          AND (NULLIF(source_row->>'state_id', '') IS NULL OR location.state_id = NULLIF(source_row->>'state_id', '')::uuid)
+          AND (NULLIF(source_row->>'city_id', '') IS NULL OR location.city_id = NULLIF(source_row->>'city_id', '')::uuid)
+        )
+        OR
+        (
+          previous_row IS NOT NULL
+          AND (
+            (COALESCE(NULLIF(previous_row->>'is_recurring', '')::boolean, false)
+              AND to_char(plan.shift_date, 'MM-DD') = to_char(NULLIF(previous_row->>'holiday_date', '')::date, 'MM-DD'))
+            OR
+            (NOT COALESCE(NULLIF(previous_row->>'is_recurring', '')::boolean, false)
+              AND plan.shift_date = NULLIF(previous_row->>'holiday_date', '')::date)
+          )
+          AND (NULLIF(previous_row->>'company_id', '') IS NULL OR plan.company_id = NULLIF(previous_row->>'company_id', '')::uuid)
+          AND (NULLIF(previous_row->>'work_location_id', '') IS NULL OR assignment.work_location_id = NULLIF(previous_row->>'work_location_id', '')::uuid)
+          AND (NULLIF(previous_row->>'country_id', '') IS NULL OR location.country_id = NULLIF(previous_row->>'country_id', '')::uuid)
+          AND (NULLIF(previous_row->>'state_id', '') IS NULL OR location.state_id = NULLIF(previous_row->>'state_id', '')::uuid)
+          AND (NULLIF(previous_row->>'city_id', '') IS NULL OR location.city_id = NULLIF(previous_row->>'city_id', '')::uuid)
+        )
+      );
+  ELSIF TG_TABLE_NAME = 'employee_companies' THEN
+    SELECT min(plan.shift_date), max(plan.shift_date), count(*)::integer
+      INTO date_from_value, date_to_value, affected_count
+    FROM public.employee_shift_plans plan
+    JOIN public.shifts shift ON shift.id = plan.shift_id AND shift.work_minutes > 0
+    JOIN public.holidays holiday
+      ON holiday.tenant_id = plan.tenant_id
+     AND holiday.is_active
+     AND NOT holiday.is_working_day
+     AND (holiday.company_id IS NULL OR holiday.company_id = plan.company_id)
+     AND (
+       (NOT holiday.is_recurring AND holiday.holiday_date = plan.shift_date)
+       OR (holiday.is_recurring AND to_char(holiday.holiday_date, 'MM-DD') = to_char(plan.shift_date, 'MM-DD'))
+     )
+    WHERE plan.tenant_id = tenant_uuid
+      AND plan.company_id = company_uuid
+      AND plan.employee_id = employee_uuid
+      AND plan.shift_date >= CURRENT_DATE
+      AND plan.is_active;
+    should_enqueue := affected_count > 0;
+  END IF;
+
+  IF NOT should_enqueue OR affected_count = 0 OR date_from_value IS NULL OR date_to_value IS NULL THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+
+  SELECT value.id INTO impact_status_uuid
+  FROM public.lookup_values value
+  JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+  WHERE group_row.lookup_group_key = 'SHIFT_PLANNING_IMPACT_STATUS'
+    AND value.lookup_key = 'QUEUED' AND value.tenant_id IS NULL AND value.is_active
+  LIMIT 1;
+  SELECT value.id INTO queue_status_uuid
+  FROM public.lookup_values value
+  JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+  WHERE group_row.lookup_group_key = 'SHIFT_PLANNING_QUEUE_STATUS'
+    AND value.lookup_key = 'PENDING' AND value.tenant_id IS NULL AND value.is_active
+  LIMIT 1;
+  IF impact_status_uuid IS NULL OR queue_status_uuid IS NULL THEN
+    RAISE EXCEPTION 'Catalogos de impacto de planificacion incompletos';
+  END IF;
+
+  source_payload := jsonb_build_object(
+    'source_table', TG_TABLE_NAME, 'source_id', source_uuid, 'operation', TG_OP,
+    'date_from', date_from_value, 'date_to', date_to_value,
+    'affected_plan_count', affected_count, 'detected_at', clock_timestamp()
+  );
+
+  UPDATE public.shift_planning_impacts impact
+  SET company_id = company_uuid, employee_id = employee_uuid,
+      absence_request_id = CASE WHEN TG_TABLE_NAME = 'employee_absence_requests' AND TG_OP <> 'DELETE' THEN source_uuid ELSE NULL END,
+      impact_status_id = impact_status_uuid, date_from = date_from_value, date_to = date_to_value,
+      assessment_key = 'PENDING_REVIEW', assessment_snapshot = source_payload,
+      affected_plan_count = affected_count, resolution_mode = NULL, resolution_notes = NULL,
+      resolved_by = NULL, resolved_at = NULL, updated_by = actor_value, updated_at = now()
+  WHERE impact.tenant_id = tenant_uuid AND impact.source_table = TG_TABLE_NAME
+    AND impact.source_id = source_uuid AND impact.is_active AND impact.resolved_at IS NULL
+  RETURNING impact.id INTO impact_uuid;
+
+  IF impact_uuid IS NULL THEN
+    INSERT INTO public.shift_planning_impacts (
+      tenant_id, company_id, employee_id, absence_request_id, source_table, source_id,
+      impact_status_id, date_from, date_to, assessment_key, assessment_snapshot,
+      affected_plan_count, created_by
+    ) VALUES (
+      tenant_uuid, company_uuid, employee_uuid,
+      CASE WHEN TG_TABLE_NAME = 'employee_absence_requests' AND TG_OP <> 'DELETE' THEN source_uuid ELSE NULL END,
+      TG_TABLE_NAME, source_uuid, impact_status_uuid, date_from_value, date_to_value,
+      'PENDING_REVIEW', source_payload, affected_count, actor_value
+    ) RETURNING id INTO impact_uuid;
+  END IF;
+
+  UPDATE public.shift_planning_recalculation_queue queue
+  SET queue_status_id = queue_status_uuid, attempts = 0, available_at = now(),
+      locked_at = NULL, locked_by = NULL, last_error = NULL, payload = source_payload,
+      updated_by = actor_value, updated_at = now()
+  WHERE queue.impact_id = impact_uuid AND queue.is_active;
+  IF NOT FOUND THEN
+    INSERT INTO public.shift_planning_recalculation_queue (
+      tenant_id, impact_id, queue_status_id, payload, created_by
+    ) VALUES (tenant_uuid, impact_uuid, queue_status_uuid, source_payload, actor_value);
+  END IF;
+
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+
+CREATE TRIGGER trg_absence_requests_shift_planning_impact
+AFTER INSERT OR UPDATE OF request_status_id, start_datetime, end_datetime, justification_type_id OR DELETE
+ON public.employee_absence_requests
+FOR EACH ROW EXECUTE FUNCTION public.enqueue_dynamic_shift_planning_impact();
+
+CREATE TRIGGER trg_holidays_shift_planning_impact
+AFTER INSERT OR UPDATE OR DELETE ON public.holidays
+FOR EACH ROW EXECUTE FUNCTION public.enqueue_dynamic_shift_planning_impact();
+
+CREATE TRIGGER trg_employee_companies_holiday_planning_impact
+AFTER UPDATE OF work_on_holidays ON public.employee_companies
+FOR EACH ROW
+WHEN (OLD.work_on_holidays IS DISTINCT FROM NEW.work_on_holidays)
+EXECUTE FUNCTION public.enqueue_dynamic_shift_planning_impact();
+
+CREATE TABLE public.shift_planning_realtime_state (
+  tenant_id uuid PRIMARY KEY REFERENCES public.tenants(id) ON DELETE CASCADE,
+  event_version bigint NOT NULL DEFAULT 0 CHECK (event_version >= 0),
+  source_table varchar(120),
+  operation varchar(20),
+  employee_id uuid REFERENCES public.employees(id) ON DELETE SET NULL,
+  company_id uuid REFERENCES public.companies(id) ON DELETE SET NULL,
+  emitted_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now()
+);
+
+CREATE OR REPLACE FUNCTION public.notify_shift_planning_changed()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  source_row jsonb := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  tenant_uuid uuid := NULLIF(source_row->>'tenant_id', '')::uuid;
+  employee_uuid uuid := NULLIF(source_row->>'employee_id', '')::uuid;
+  company_uuid uuid := NULLIF(source_row->>'company_id', '')::uuid;
+  next_version bigint;
+  event_time timestamp with time zone := clock_timestamp();
+  event_payload jsonb;
+BEGIN
+  IF tenant_uuid IS NULL THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+
+  INSERT INTO public.shift_planning_realtime_state (
+    tenant_id, event_version, source_table, operation,
+    employee_id, company_id, emitted_at, updated_at
+  ) VALUES (
+    tenant_uuid, 1, TG_TABLE_NAME, TG_OP,
+    employee_uuid, company_uuid, event_time, event_time
+  )
+  ON CONFLICT (tenant_id) DO UPDATE
+  SET event_version = public.shift_planning_realtime_state.event_version + 1,
+      source_table = EXCLUDED.source_table,
+      operation = EXCLUDED.operation,
+      employee_id = EXCLUDED.employee_id,
+      company_id = EXCLUDED.company_id,
+      emitted_at = EXCLUDED.emitted_at,
+      updated_at = EXCLUDED.updated_at
+  RETURNING event_version INTO next_version;
+
+  event_payload := jsonb_build_object(
+    'tenant_id', tenant_uuid, 'version', next_version,
+    'source_table', TG_TABLE_NAME, 'operation', TG_OP,
+    'employee_id', employee_uuid, 'company_id', company_uuid,
+    'emitted_at', event_time
+  );
+  PERFORM pg_notify('shift_planning_changed', event_payload::text);
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+
+CREATE TRIGGER trg_absence_requests_shift_planning_realtime
+AFTER INSERT OR UPDATE OF request_status_id, start_datetime, end_datetime, justification_type_id, is_active OR DELETE
+ON public.employee_absence_requests
+FOR EACH ROW EXECUTE FUNCTION public.notify_shift_planning_changed();
+
+CREATE TRIGGER trg_holidays_shift_planning_realtime
+AFTER INSERT OR UPDATE OR DELETE ON public.holidays
+FOR EACH ROW EXECUTE FUNCTION public.notify_shift_planning_changed();
+
+CREATE TRIGGER trg_employee_companies_shift_planning_realtime
+AFTER UPDATE OF work_on_holidays ON public.employee_companies
+FOR EACH ROW
+WHEN (OLD.work_on_holidays IS DISTINCT FROM NEW.work_on_holidays)
+EXECUTE FUNCTION public.notify_shift_planning_changed();
+
+CREATE TRIGGER trg_employee_shift_plans_realtime
+AFTER INSERT OR UPDATE OR DELETE ON public.employee_shift_plans
+FOR EACH ROW EXECUTE FUNCTION public.notify_shift_planning_changed();
+
 COMMIT;
 
 

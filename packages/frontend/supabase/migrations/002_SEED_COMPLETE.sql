@@ -173,7 +173,7 @@ ON CONFLICT (message_key, language_code) DO UPDATE SET
 
 -- KV store
 INSERT INTO public.kv_store_e19f2094 (key, value)
-VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V14'))
+VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V16'))
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- ============================================================================
@@ -24786,6 +24786,187 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- ============================================================================
+-- POLITICAS Y COBERTURA PARA PLANIFICACION DINAMICA
+-- ============================================================================
+
+INSERT INTO public.lookup_groups (
+  id, lookup_group_key, lookup_group_label, lookup_group_short_label,
+  allows_tenant_items, management_policy, is_active, created_by
+)
+SELECT gen_random_uuid(), seed.group_key, seed.label, seed.short_label, false,
+       '{"owner_scope":"SYSTEM","tenant_can_create":false,"tenant_can_update":false,"tenant_can_delete":false}'::jsonb,
+       true, 'SYSTEM'
+FROM (VALUES
+  ('SHIFT_PLANNING_ABSENCE_POLICY', 'Politica de ausencia en planificacion', 'Politica ausencia'),
+  ('SHIFT_PLANNING_IMPACT_STATUS', 'Estado de impacto de planificacion', 'Estado impacto'),
+  ('SHIFT_PLANNING_QUEUE_STATUS', 'Estado de cola de replanificacion', 'Estado cola')
+) AS seed(group_key, label, short_label)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.lookup_groups existing WHERE existing.lookup_group_key = seed.group_key
+);
+
+WITH values_seed(group_key, value_key, label, short_label, sort_order, metadata) AS (
+  VALUES
+    ('SHIFT_PLANNING_ABSENCE_POLICY','NO_IMPACT','Sin impacto en planificacion','Sin impacto',10,'{"blocks_assignment":false,"blocking_scope":"NONE","approval_control":"ALLOW"}'::jsonb),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','TIME_OVERLAP_BLOCK','Bloqueo durante el intervalo autorizado','Bloqueo parcial',20,'{"blocks_assignment":true,"blocking_scope":"TIME_OVERLAP","approval_control":"REQUIRE_COVERAGE"}'::jsonb),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','FULL_DAY_BLOCK','Bloqueo de jornada completa','Bloqueo completo',30,'{"blocks_assignment":true,"blocking_scope":"FULL_DAY","approval_control":"REQUIRE_COVERAGE"}'::jsonb),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','Politica pendiente de clasificacion','Sin clasificar',40,'{"blocks_assignment":true,"blocking_scope":"UNCLASSIFIED","approval_control":"BLOCK_UNTIL_CONFIGURED"}'::jsonb),
+    ('SHIFT_PLANNING_IMPACT_STATUS','PENDING_REVIEW','Pendiente de revision','Pendiente',10,'{}'::jsonb),
+    ('SHIFT_PLANNING_IMPACT_STATUS','QUEUED','Replanificacion en cola','En cola',20,'{}'::jsonb),
+    ('SHIFT_PLANNING_IMPACT_STATUS','RESOLVED','Impacto resuelto','Resuelto',30,'{}'::jsonb),
+    ('SHIFT_PLANNING_IMPACT_STATUS','DISMISSED','Impacto descartado','Descartado',40,'{}'::jsonb),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PENDING','Pendiente','Pendiente',10,'{}'::jsonb),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PROCESSING','Procesando','Procesando',20,'{}'::jsonb),
+    ('SHIFT_PLANNING_QUEUE_STATUS','COMPLETED','Completado','Completado',30,'{}'::jsonb),
+    ('SHIFT_PLANNING_QUEUE_STATUS','FAILED','Fallido','Fallido',40,'{}'::jsonb)
+)
+INSERT INTO public.lookup_values (
+  id, tenant_id, lookup_group_id, lookup_key, lookup_label, lookup_short_label,
+  lookup_scope, sort_order, metadata, is_active, created_by
+)
+SELECT gen_random_uuid(), NULL, group_row.id, seed.value_key, seed.label, seed.short_label,
+       'SYSTEM', seed.sort_order, seed.metadata, true, 'SYSTEM'
+FROM values_seed seed
+JOIN public.lookup_groups group_row ON group_row.lookup_group_key = seed.group_key
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.lookup_values existing
+  WHERE existing.lookup_group_id = group_row.id
+    AND existing.lookup_key = seed.value_key
+    AND existing.tenant_id IS NULL
+);
+
+WITH group_i18n(group_key, language_code, label, short_label) AS (
+  VALUES
+    ('SHIFT_PLANNING_ABSENCE_POLICY','es','Politica de ausencia en planificacion','Politica ausencia'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','en','Absence planning policy','Absence policy'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','pt','Politica de ausencia no planejamento','Politica ausencia'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','es','Estado de impacto de planificacion','Estado impacto'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','en','Planning impact status','Impact status'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','pt','Estado do impacto no planejamento','Estado impacto'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','es','Estado de cola de replanificacion','Estado cola'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','en','Replanning queue status','Queue status'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','pt','Estado da fila de replanejamento','Estado fila')
+)
+INSERT INTO public.lookup_group_translations (id, lookup_group_id, language_code, label, short_label, created_at)
+SELECT gen_random_uuid(), group_row.id, translation.language_code, translation.label, translation.short_label, now()
+FROM group_i18n translation
+JOIN public.lookup_groups group_row ON group_row.lookup_group_key = translation.group_key
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.lookup_group_translations existing
+  WHERE existing.lookup_group_id = group_row.id AND existing.language_code = translation.language_code
+);
+
+WITH value_i18n(group_key, value_key, language_code, label, short_label) AS (
+  VALUES
+    ('SHIFT_PLANNING_ABSENCE_POLICY','NO_IMPACT','es','Sin impacto en planificacion','Sin impacto'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','NO_IMPACT','en','No planning impact','No impact'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','NO_IMPACT','pt','Sem impacto no planejamento','Sem impacto'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','TIME_OVERLAP_BLOCK','es','Bloqueo durante el intervalo autorizado','Bloqueo parcial'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','TIME_OVERLAP_BLOCK','en','Block during approved interval','Partial block'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','TIME_OVERLAP_BLOCK','pt','Bloqueio durante o intervalo autorizado','Bloqueio parcial'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','FULL_DAY_BLOCK','es','Bloqueo de jornada completa','Bloqueo completo'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','FULL_DAY_BLOCK','en','Full-day block','Full block'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','FULL_DAY_BLOCK','pt','Bloqueio de jornada completa','Bloqueio completo'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','es','Politica pendiente de clasificacion','Sin clasificar'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','en','Policy pending classification','Unclassified'),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','pt','Politica pendente de classificacao','Sem classificar'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','PENDING_REVIEW','es','Pendiente de revision','Pendiente'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','PENDING_REVIEW','en','Pending review','Pending'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','PENDING_REVIEW','pt','Pendente de revisao','Pendente'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','QUEUED','es','Replanificacion en cola','En cola'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','QUEUED','en','Replanning queued','Queued'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','QUEUED','pt','Replanejamento na fila','Na fila'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','RESOLVED','es','Impacto resuelto','Resuelto'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','RESOLVED','en','Impact resolved','Resolved'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','RESOLVED','pt','Impacto resolvido','Resolvido'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','DISMISSED','es','Impacto descartado','Descartado'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','DISMISSED','en','Impact dismissed','Dismissed'),
+    ('SHIFT_PLANNING_IMPACT_STATUS','DISMISSED','pt','Impacto descartado','Descartado'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PENDING','es','Pendiente','Pendiente'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PENDING','en','Pending','Pending'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PENDING','pt','Pendente','Pendente'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PROCESSING','es','Procesando','Procesando'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PROCESSING','en','Processing','Processing'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','PROCESSING','pt','Processando','Processando'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','COMPLETED','es','Completado','Completado'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','COMPLETED','en','Completed','Completed'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','COMPLETED','pt','Concluido','Concluido'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','FAILED','es','Fallido','Fallido'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','FAILED','en','Failed','Failed'),
+    ('SHIFT_PLANNING_QUEUE_STATUS','FAILED','pt','Falhou','Falhou')
+)
+INSERT INTO public.lookup_value_translations (id, lookup_value_id, language_code, label, short_label, created_at)
+SELECT gen_random_uuid(), value.id, translation.language_code, translation.label, translation.short_label, now()
+FROM value_i18n translation
+JOIN public.lookup_groups group_row ON group_row.lookup_group_key = translation.group_key
+JOIN public.lookup_values value
+  ON value.lookup_group_id = group_row.id
+ AND value.lookup_key = translation.value_key
+ AND value.tenant_id IS NULL
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.lookup_value_translations existing
+  WHERE existing.lookup_value_id = value.id AND existing.language_code = translation.language_code
+);
+
+WITH policies AS (
+  SELECT value.id, value.lookup_key
+  FROM public.lookup_values value
+  JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+  WHERE group_row.lookup_group_key = 'SHIFT_PLANNING_ABSENCE_POLICY' AND value.tenant_id IS NULL
+), classified AS (
+  SELECT justification.id,
+         CASE
+           WHEN justification.justification_short_name IN ('Vacac','Lic_Cal_Dom','Lic_Car_Vac','Lic_Con_Sue','Lic_Mat','Lic_Med','Lic_Pat','Lic_Sin_Sue','Enferm','Cert_Med','Cal_Dom','Sanc_Susp','Sepelio','Dia_Lib_Rot','Feriado','Fiesta_Civ','Paro_Trans') THEN 'FULL_DAY_BLOCK'
+           WHEN justification.justification_short_name IN ('Asun_Pers','At_Med_Isc','At_Med_Part','Cita_Med','Cita_Med_Iess','Cons_Med','Exam_Med','Estudio','Juzgado','Perm_Iess','Permiso','Perm_Lact','Rehab','Hor_Mat') THEN 'TIME_OVERLAP_BLOCK'
+           WHEN justification.justification_short_name IN ('Aut_No_Mar','Biom_Sin_Ene','Exento_Reg','Exon_Mar','Ger_Exon_Mar','Ing_Biom','No_Marca','No_Tomo_Lunch','Olv_Mar','Olv_Mar_Hor','Olv_Mar_Sal','Olv_Mar_Tmp','Prob_Biom','Prob_Biom_Ent','Reg_Escr','Toma_Huella') THEN 'NO_IMPACT'
+           ELSE 'UNCLASSIFIED'
+         END AS policy_key
+  FROM public.justification_types justification
+)
+UPDATE public.justification_types justification
+SET planning_policy_id = policy.id, updated_by = 'SYSTEM', updated_at = now()
+FROM classified, policies policy
+WHERE classified.id = justification.id AND policy.lookup_key = classified.policy_key;
+
+INSERT INTO public.shift_coverage_requirements (
+  id, tenant_id, effective_from, minimum_staff, optimal_staff, priority, is_active, created_by
+)
+SELECT gen_random_uuid(), tenant.id, DATE '2000-01-01', 1, 1, 0, true, 'SYSTEM'
+FROM public.tenants tenant
+WHERE tenant.is_active
+  AND NOT EXISTS (
+    SELECT 1 FROM public.shift_coverage_requirements requirement
+    WHERE requirement.tenant_id = tenant.id
+      AND requirement.company_id IS NULL AND requirement.work_location_id IS NULL
+      AND requirement.department_id IS NULL AND requirement.area_id IS NULL
+      AND requirement.cost_center_id IS NULL AND requirement.work_group_id IS NULL
+      AND requirement.shift_id IS NULL AND requirement.day_of_week IS NULL
+      AND requirement.effective_from = DATE '2000-01-01' AND requirement.is_active
+  );
+
+INSERT INTO public.shift_planning_realtime_state (tenant_id, event_version, source_table, operation)
+SELECT tenant.id, 0, 'INITIAL_STATE', 'INITIALIZE'
+FROM public.tenants tenant
+ON CONFLICT (tenant_id) DO NOTHING;
+
+INSERT INTO public.api_authorization_rules (
+  id, route_prefix, http_method, screen_id, action_id,
+  authorization_mode, priority, is_active, created_by
+)
+SELECT gen_random_uuid(), '/kiosk/requests/:id/planning-impact', 'GET', screen.id, action.id,
+       'PERMISSION', 950, true, 'SYSTEM'
+FROM public.screens screen
+JOIN public.actions action ON action.action_key = 'VIEW' AND action.is_active
+WHERE screen.screen_key = 'REQUESTS_MANAGEMENT'
+  AND screen.is_active
+  AND NOT EXISTS (
+    SELECT 1 FROM public.api_authorization_rules existing
+    WHERE existing.route_prefix = '/kiosk/requests/:id/planning-impact'
+      AND existing.http_method = 'GET'
+      AND existing.is_active
+  );
+
 -- CONTRATO DE INTEGRIDAD DEL ESTADO DE FABRICA
 -- Un cambio incompleto en el seed debe abortar toda la transaccion.
 -- ============================================================================
@@ -24806,10 +24987,10 @@ BEGIN
       ('subscription_plans', 3::bigint),
       ('system_message_keys', 5::bigint),
       ('system_message_translations', 15::bigint),
-      ('lookup_groups', 35::bigint),
-      ('lookup_values', 253::bigint),
-      ('lookup_group_translations', 105::bigint),
-      ('lookup_value_translations', 759::bigint),
+      ('lookup_groups', 38::bigint),
+      ('lookup_values', 265::bigint),
+      ('lookup_group_translations', 114::bigint),
+      ('lookup_value_translations', 795::bigint),
       ('attendance_movements', 3::bigint),
       ('attendance_events', 24::bigint),
       ('attendance_event_punch_keys', 6::bigint),
@@ -24830,7 +25011,7 @@ BEGIN
       ('screen_translations', 204::bigint),
       ('screen_actions', 265::bigint),
       ('role_screen_actions', 397::bigint),
-      ('api_authorization_rules', 377::bigint),
+      ('api_authorization_rules', 378::bigint),
       ('data_access_authorization_rules', 141::bigint),
       ('system_reports', 6::bigint),
       ('system_report_translations', 18::bigint),
@@ -24844,7 +25025,11 @@ BEGIN
       ('companies', 0::bigint),
       ('employees', 0::bigint),
       ('employee_companies', 0::bigint),
-      ('organization_import_runs', 0::bigint)
+      ('organization_import_runs', 0::bigint),
+      ('shift_coverage_requirements', 1::bigint),
+      ('shift_planning_impacts', 0::bigint),
+      ('shift_planning_recalculation_queue', 0::bigint),
+      ('shift_planning_realtime_state', 1::bigint)
     ) AS baseline(table_name, expected_count)
   LOOP
     EXECUTE format('SELECT count(*) FROM public.%I', expected.table_name)
@@ -25045,6 +25230,84 @@ BEGIN
     RAISE EXCEPTION 'Integridad de notificaciones incumplida: existen estados sin equivalencia canónica de notificación';
   END IF;
 
+  IF EXISTS (
+    SELECT 1
+    FROM public.justification_types justification
+    LEFT JOIN public.lookup_values policy ON policy.id = justification.planning_policy_id
+    LEFT JOIN public.lookup_groups group_row ON group_row.id = policy.lookup_group_id
+    WHERE justification.is_active
+      AND (
+        policy.id IS NULL
+        OR group_row.lookup_group_key <> 'SHIFT_PLANNING_ABSENCE_POLICY'
+        OR policy.tenant_id IS NOT NULL
+        OR NOT policy.is_active
+      )
+  ) THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: existen justificaciones sin politica SYSTEM valida';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM public.lookup_values policy
+    JOIN public.lookup_groups group_row ON group_row.id = policy.lookup_group_id
+    WHERE group_row.lookup_group_key = 'SHIFT_PLANNING_ABSENCE_POLICY'
+      AND policy.lookup_key IN ('NO_IMPACT','TIME_OVERLAP_BLOCK','FULL_DAY_BLOCK','UNCLASSIFIED')
+      AND policy.tenant_id IS NULL
+      AND policy.is_active
+  ) <> 4 THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: catalogo de politicas incompleto';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.shift_coverage_requirements requirement
+    JOIN public.tenants tenant ON tenant.id = requirement.tenant_id
+    WHERE tenant.tenant_key = 'SYSTEM'
+      AND requirement.company_id IS NULL
+      AND requirement.shift_id IS NULL
+      AND requirement.minimum_staff >= 0
+      AND requirement.is_active
+  ) THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: falta cobertura minima base';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_shift_planning_impact',
+      'trg_holidays_shift_planning_impact',
+      'trg_employee_companies_holiday_planning_impact'
+    )
+      AND NOT tgisinternal
+  ) <> 3 THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: faltan enlaces de recalculo dinamico';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_shift_planning_realtime',
+      'trg_holidays_shift_planning_realtime',
+      'trg_employee_companies_shift_planning_realtime',
+      'trg_employee_shift_plans_realtime'
+    )
+      AND NOT tgisinternal
+  ) <> 4 THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: faltan enlaces de actualizacion en tiempo real';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.shift_planning_realtime_state state
+    JOIN public.tenants tenant ON tenant.id = state.tenant_id
+    WHERE tenant.tenant_key = 'SYSTEM'
+      AND state.event_version >= 0
+  ) THEN
+    RAISE EXCEPTION 'Integridad de planificacion incumplida: falta el estado persistente de tiempo real';
+  END IF;
+
   RAISE NOTICE 'Contrato de integridad de 002_SEED_COMPLETE verificado.';
 END $$;
 
@@ -25068,10 +25331,10 @@ DECLARE
     "countries": 6,
     "justification_types": 63,
     "kv_store_e19f2094": 1,
-    "lookup_groups": 35,
-    "lookup_group_translations": 105,
-    "lookup_values": 253,
-    "lookup_value_translations": 759,
+    "lookup_groups": 38,
+    "lookup_group_translations": 114,
+    "lookup_values": 265,
+    "lookup_value_translations": 795,
     "report_parameters": 46,
     "report_parameter_translations": 138,
     "report_permissions": 3,
@@ -25079,7 +25342,7 @@ DECLARE
     "role_screen_actions": 397,
     "scope_types": 7,
     "screen_actions": 265,
-    "api_authorization_rules": 377,
+    "api_authorization_rules": 378,
     "data_access_authorization_rules": 141,
     "screens": 68,
     "screen_translations": 204,
@@ -25100,7 +25363,9 @@ DECLARE
     "users": 1,
     "v_gender_group_id": 1,
     "v_super_admin_role_id": 1,
-    "work_patterns": 2
+    "work_patterns": 2,
+    "shift_coverage_requirements": 1,
+    "shift_planning_realtime_state": 1
   }'::jsonb;
   existing_baseline jsonb;
   current_seed_version jsonb;
@@ -25122,8 +25387,8 @@ BEGIN
   WHERE key = 'seed.version';
 
   IF current_seed_version IS NULL
-     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V14' THEN
-    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V14';
+     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V16' THEN
+    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V16';
   END IF;
 
   IF existing_baseline IS NOT NULL

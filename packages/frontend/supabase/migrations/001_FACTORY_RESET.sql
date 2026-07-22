@@ -24,7 +24,7 @@ SELECT pg_catalog.pg_advisory_xact_lock(
 DO $$
 DECLARE
   baseline_key constant text := 'system:factory-baseline:v1';
-  required_seed_version constant text := '2026-07-22-FACTORY-V14';
+  required_seed_version constant text := '2026-07-22-FACTORY-V16';
   baseline jsonb;
   current_table_count integer;
   snapshot_table_count integer;
@@ -487,8 +487,8 @@ BEGIN
     RAISE EXCEPTION 'FACTORY RESET invalido: no se restauro el mantenimiento de movimientos';
   END IF;
 
-  IF (SELECT count(*) FROM public.api_authorization_rules WHERE is_active) <> 377 THEN
-    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 377 reglas de autorización API';
+  IF (SELECT count(*) FROM public.api_authorization_rules WHERE is_active) <> 378 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 378 reglas de autorización API';
   END IF;
 
   IF (SELECT count(*) FROM public.data_access_authorization_rules WHERE is_active) <> 141 THEN
@@ -613,6 +613,72 @@ BEGIN
       AND NULLIF(value.metadata->>'notification_lifecycle_state', '') IS NULL
   ) THEN
     RAISE EXCEPTION 'FACTORY RESET invalido: existen estados de solicitud sin ciclo de vida de notificación';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.justification_types justification
+    LEFT JOIN public.lookup_values policy ON policy.id = justification.planning_policy_id
+    LEFT JOIN public.lookup_groups group_row ON group_row.id = policy.lookup_group_id
+    WHERE justification.is_active
+      AND (
+        policy.id IS NULL
+        OR group_row.lookup_group_key <> 'SHIFT_PLANNING_ABSENCE_POLICY'
+        OR policy.tenant_id IS NOT NULL
+        OR NOT policy.is_active
+      )
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: existen justificaciones sin politica de planificacion valida';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.shift_coverage_requirements requirement
+    JOIN public.tenants tenant ON tenant.id = requirement.tenant_id
+    WHERE tenant.tenant_key = 'SYSTEM'
+      AND requirement.company_id IS NULL
+      AND requirement.shift_id IS NULL
+      AND requirement.minimum_staff >= 0
+      AND requirement.is_active
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta la cobertura minima base';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_shift_planning_impact',
+      'trg_holidays_shift_planning_impact',
+      'trg_employee_companies_holiday_planning_impact'
+    )
+      AND NOT tgisinternal
+  ) <> 3 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: faltan enlaces de recalculo dinamico de turnos';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_shift_planning_realtime',
+      'trg_holidays_shift_planning_realtime',
+      'trg_employee_companies_shift_planning_realtime',
+      'trg_employee_shift_plans_realtime'
+    )
+      AND NOT tgisinternal
+  ) <> 4 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: faltan enlaces de actualizacion en tiempo real de turnos';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.shift_planning_realtime_state state
+    JOIN public.tenants tenant ON tenant.id = state.tenant_id
+    WHERE tenant.tenant_key = 'SYSTEM'
+      AND state.event_version >= 0
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta el estado persistente de planificacion en tiempo real';
   END IF;
 
   RAISE NOTICE '============================================================';

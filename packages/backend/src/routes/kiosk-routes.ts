@@ -5,6 +5,10 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { resolveAuthorizedEmployeeIds } from '../lib/user-data-scope.js';
+import {
+  evaluateAbsencePlanningImpact,
+  queueAbsencePlanningImpact,
+} from '../lib/shift-planning-impact.js';
 
 const router = Router();
 
@@ -3394,6 +3398,50 @@ router.get('/requests/approvals/catalogs', async (req: Request, res: Response) =
   }
 });
 
+router.get('/requests/:id/planning-impact', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveUserContext(req);
+    if (!userContext) {
+      return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
+    }
+    const canViewApprovals = await assertApproverActionPermission({
+      userContext,
+      screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
+      actionKey: 'VIEW',
+      errorMessage: 'No tiene permiso VIEW para evaluar la cobertura',
+    });
+    if (!canViewApprovals.ok) {
+      return res.status(canViewApprovals.status).json({ error: canViewApprovals.error });
+    }
+
+    const requestId = normalizeNullableText(req.params.id);
+    if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
+    const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
+      userContext.tenant_id,
+      userContext.user_id
+    );
+    const authorized = await pool.query(
+      `
+        SELECT 1
+        FROM public.employee_absence_requests request
+        WHERE request.id = $1::uuid
+          AND request.tenant_id = $2::uuid
+          AND request.employee_id = ANY($3::uuid[])
+          AND request.is_active
+        LIMIT 1
+      `,
+      [requestId, userContext.tenant_id, managedEmployeeIds]
+    );
+    if (!authorized.rows[0]) return res.status(404).json({ error: 'Solicitud no encontrada' });
+
+    const assessment = await evaluateAbsencePlanningImpact(pool, userContext.tenant_id, requestId);
+    if (!assessment) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    return res.status(200).json({ success: true, planning_impact: assessment });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
 router.patch('/requests/:id/review-fields', async (req: Request, res: Response) => {
   try {
     const userContext = await resolveUserContext(req);
@@ -3493,6 +3541,8 @@ router.patch('/requests/:id/review-fields', async (req: Request, res: Response) 
 });
 
 router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
+  const client = await pool.connect();
+  let transactionStarted = false;
   try {
     const userContext = await resolveUserContext(req);
     if (!userContext) {
@@ -3511,9 +3561,14 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     const decision = String(req.body?.decision || '').toUpperCase();
     const approvalNotes = normalizeNullableText(req.body?.approval_notes);
     const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
+    const planningResolution = String(req.body?.planning_resolution || 'NONE').trim().toUpperCase();
+    const assessmentToken = normalizeNullableText(req.body?.assessment_token);
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
     if (!['APPROVE', 'REJECT'].includes(decision)) {
       return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
+    }
+    if (!['NONE', 'REPLAN'].includes(planningResolution)) {
+      return res.status(400).json({ error: 'planning_resolution debe ser NONE o REPLAN' });
     }
     const decisionActionKey = decision === 'APPROVE' ? 'APPROVE' : 'REJECT';
     const canDecide = await assertApproverActionPermission({
@@ -3528,7 +3583,10 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     const resolvedApprovalNotes =
       approvalNotes || (decision === 'APPROVE' ? 'Aprobada por supervisor' : 'Denegada por supervisor');
 
-    const currentResult = await pool.query(
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const currentResult = await client.query(
       `
         SELECT
           r.id,
@@ -3544,14 +3602,21 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
           AND r.tenant_id = $2::uuid
           AND r.employee_id = ANY($3::uuid[])
         LIMIT 1
+        FOR UPDATE OF r
       `,
       [requestId, userContext.tenant_id, managedEmployeeIds]
     );
     const current = currentResult.rows[0];
-    if (!current) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    if (!current) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
 
     const currentStatusKey = String(current.request_status_key || '').toUpperCase();
     if (isClosedRequestStatusKey(currentStatusKey)) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
       return res.status(400).json({ error: 'La solicitud ya tiene estado final' });
     }
 
@@ -3561,19 +3626,79 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         ABSENCE_DISCOUNT_METHOD_GROUP_KEY,
         userContext.tenant_id
       );
-      if (!isValid) return res.status(400).json({ error: 'justify_method_id no valido' });
+      if (!isValid) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(400).json({ error: 'justify_method_id no valido' });
+      }
     }
 
-    const targetStatusId =
-      decision === 'APPROVE'
-        ? await resolveRequestStatusIdByKeys(userContext.tenant_id, ['APPROVED', 'APROBADO'])
-        : await resolveRequestStatusIdByKeys(userContext.tenant_id, ['REJECTED', 'RECHAZADO']);
+    const targetStatusResult = await client.query(
+      `
+        SELECT value.id
+        FROM public.lookup_values value
+        JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+        WHERE group_row.lookup_group_key = $1
+          AND value.lookup_key = ANY($2::text[])
+          AND value.is_active
+          AND (value.tenant_id IS NULL OR value.tenant_id = $3::uuid)
+        ORDER BY CASE WHEN value.tenant_id = $3::uuid THEN 0 ELSE 1 END, value.sort_order
+        LIMIT 1
+      `,
+      [
+        REQUEST_STATUS_GROUP_KEY,
+        decision === 'APPROVE' ? ['APPROVED', 'APROBADO'] : ['REJECTED', 'RECHAZADO'],
+        userContext.tenant_id,
+      ]
+    );
+    const targetStatusId = targetStatusResult.rows[0]?.id || null;
 
     if (!targetStatusId) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
       return res.status(400).json({ error: 'No existe estado de decisión configurado' });
     }
 
-    const updated = await pool.query(
+    let planningImpact = null;
+    if (decision === 'APPROVE') {
+      planningImpact = await evaluateAbsencePlanningImpact(client, userContext.tenant_id, requestId);
+      if (!planningImpact) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(404).json({ error: 'Solicitud no encontrada' });
+      }
+      if (assessmentToken && assessmentToken !== planningImpact.assessment_token) {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(409).json({
+          error: 'La planificacion o la cobertura cambiaron. Revise la evaluacion actualizada antes de aprobar.',
+          planning_impact: planningImpact,
+        });
+      }
+      if (planningImpact.assessment_key === 'CONFIGURATION_REQUIRED') {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(409).json({ error: planningImpact.message, planning_impact: planningImpact });
+      }
+      if (planningImpact.assessment_key === 'NOT_FEASIBLE') {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(409).json({
+          error: 'No es posible aprobar: la cobertura quedaria por debajo del minimo y no hay reemplazos disponibles.',
+          planning_impact: planningImpact,
+        });
+      }
+      if (planningImpact.assessment_key === 'CONDITIONAL' && planningResolution !== 'REPLAN') {
+        await client.query('ROLLBACK');
+        transactionStarted = false;
+        return res.status(409).json({
+          error: 'La aprobacion requiere registrar una replanificacion para resolver el impacto de cobertura.',
+          planning_impact: planningImpact,
+        });
+      }
+    }
+
+    const updated = await client.query(
       `
         UPDATE public.employee_absence_requests
         SET
@@ -3599,9 +3724,34 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
       ]
     );
 
-    return res.status(200).json({ success: true, request: updated.rows[0] });
+    let planningImpactId: string | null = null;
+    if (decision === 'APPROVE' && planningImpact) {
+      planningImpactId = await queueAbsencePlanningImpact(client, planningImpact, {
+        tenantId: userContext.tenant_id,
+        requestId,
+        actor: getActor(req),
+        resolutionMode: planningResolution,
+      });
+    }
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    return res.status(200).json({
+      success: true,
+      request: updated.rows[0],
+      planning_impact: planningImpact,
+      planning_impact_id: planningImpactId,
+    });
   } catch (err: any) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {}
+    }
     return res.status(500).json({ error: err.message || 'Error interno' });
+  } finally {
+    client.release();
   }
 });
 

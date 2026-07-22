@@ -40,6 +40,7 @@ class GeneratePlanningRequest(BaseModel):
     reglasIA: ReglasIA
     empleadosDisponibles: List[Dict[str, Any]]
     turnosDisponibles: List[Dict[str, Any]]
+    restriccionesDisponibilidad: List[Dict[str, Any]] = []
 
 
 def _normalize_text(value: Any) -> str:
@@ -77,10 +78,43 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _parse_local_datetime(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def _shift_overlaps_constraint(fecha: str, turno: Dict[str, Any], constraint: Dict[str, Any]) -> bool:
+    if _normalize_text(constraint.get("bloqueo")) == "FULL_DAY":
+        return True
+    if _normalize_text(constraint.get("bloqueo")) != "TIME_OVERLAP":
+        return False
+
+    start_text = str(turno.get("horaInicio") or "").strip()
+    end_text = str(turno.get("horaFin") or "").strip()
+    if not start_text or not end_text:
+        return True
+    try:
+        shift_start = datetime.fromisoformat(f"{fecha}T{start_text}")
+        shift_end = datetime.fromisoformat(f"{fecha}T{end_text}")
+    except ValueError:
+        return True
+    if shift_end <= shift_start:
+        shift_end += timedelta(days=1)
+
+    constraint_start = _parse_local_datetime(constraint.get("desdeLocal"))
+    constraint_end = _parse_local_datetime(constraint.get("hastaLocal"))
+    if not constraint_start or not constraint_end:
+        return True
+    return constraint_start < shift_end and constraint_end > shift_start
+
+
 def _is_libre(turno: Dict[str, Any]) -> bool:
-    codigo = _normalize_text(turno.get("codigoTurno"))
-    nombre = _normalize_text(turno.get("nombreTurno"))
-    return codigo == "LIBRE" or nombre == "LIBRE"
+    return _safe_int(turno.get("duracionMinutos"), 0) <= 0
 
 
 def _is_night_shift(turno: Dict[str, Any]) -> bool:
@@ -120,6 +154,7 @@ def generate_planning(payload: GeneratePlanningRequest):
     dotacion = data.get("dotacionRequerida") or []
     turnos_disponibles = data.get("turnosDisponibles") or []
     reglas = data.get("reglasIA") or {}
+    restricciones = data.get("restriccionesDisponibilidad") or []
 
     fecha_inicio = str(rango.get("fechaInicio") or "").strip()
     fecha_fin = str(rango.get("fechaFin") or "").strip()
@@ -176,6 +211,9 @@ def generate_planning(payload: GeneratePlanningRequest):
             "horaInicio": row.get("horaInicio") or catalog.get("horaInicio"),
             "horaFin": row.get("horaFin") or catalog.get("horaFin"),
             "cantidadRequerida": cantidad,
+            "duracionMinutos": row.get("duracionMinutos")
+            if row.get("duracionMinutos") is not None
+            else catalog.get("duracionMinutos"),
         }
         dotacion_enriquecida.append(turno_info)
 
@@ -209,6 +247,18 @@ def generate_planning(payload: GeneratePlanningRequest):
                 var = model.NewBoolVar(f"a_e{e_idx}_d{d_idx}_s{s_idx}")
                 asignacion[(e_idx, d_idx, s_idx)] = var
                 vars_dia.append(var)
+                employee_id = str(empleados[e_idx].get("id") or "")
+                day_constraints = [
+                    constraint
+                    for constraint in restricciones
+                    if str(constraint.get("empleadoId") or "") == employee_id
+                    and str(constraint.get("fecha") or "") == fechas[d_idx]
+                ]
+                if any(
+                    _shift_overlaps_constraint(fechas[d_idx], turnos_trabajo[s_idx], constraint)
+                    for constraint in day_constraints
+                ):
+                    model.Add(var == 0)
             if vars_dia:
                 model.Add(sum(vars_dia) <= 1)
 

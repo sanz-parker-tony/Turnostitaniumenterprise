@@ -2,8 +2,66 @@ import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
 import { resolveEffectiveAttendanceTimeZone } from '../lib/effective-settings.js';
+import { waitForTenantShiftPlanningEvent } from '../lib/shift-planning-events.js';
 
 const router = Router();
+
+router.get('/events', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    const sinceVersion = Number.isFinite(Number(req.query.since))
+      ? Math.max(0, Math.trunc(Number(req.query.since)))
+      : 0;
+
+    const stateResult = await pool.query(
+      `
+        SELECT event_version, source_table, operation, employee_id, company_id, emitted_at
+        FROM public.shift_planning_realtime_state
+        WHERE tenant_id = $1::uuid
+        LIMIT 1
+      `,
+      [tenantId]
+    );
+    const state = stateResult.rows[0] || null;
+    const databaseVersion = Number(state?.event_version || 0);
+    if (databaseVersion > sinceVersion) {
+      return res.status(200).json({
+        success: true,
+        timed_out: false,
+        version: databaseVersion,
+        event: state ? {
+          tenant_id: tenantId,
+          version: databaseVersion,
+          source_table: state.source_table,
+          operation: state.operation,
+          employee_id: state.employee_id,
+          company_id: state.company_id,
+          emitted_at: state.emitted_at,
+        } : null,
+      });
+    }
+
+    const eventResult = await waitForTenantShiftPlanningEvent(tenantId, sinceVersion);
+    if (!eventResult.timed_out || eventResult.version > sinceVersion) {
+      return res.status(200).json({ success: true, ...eventResult });
+    }
+
+    const finalStateResult = await pool.query(
+      `SELECT event_version FROM public.shift_planning_realtime_state WHERE tenant_id = $1::uuid LIMIT 1`,
+      [tenantId]
+    );
+    const finalVersion = Number(finalStateResult.rows[0]?.event_version || eventResult.version || 0);
+    return res.status(200).json({
+      success: true,
+      ...eventResult,
+      timed_out: finalVersion <= sinceVersion,
+      version: finalVersion,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error escuchando cambios de planificacion' });
+  }
+});
 
 function getActor(req: Request): string {
   const user = (req as any).user;
@@ -152,16 +210,6 @@ function formatMinutesAsClock(totalMinutes: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
-function isFreeShiftLabel(name?: string | null, shortName?: string | null): boolean {
-  const text = `${name || ''} ${shortName || ''}`.toUpperCase();
-  return (
-    text.includes('LIBRE') ||
-    text.includes('DESCANSO') ||
-    text.includes('OFF') ||
-    text.includes('REST')
-  );
-}
-
 router.get('/catalogs', async (req: Request, res: Response) => {
   try {
     const tenantId = await resolveTenantId(req);
@@ -235,6 +283,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       combinationsResult,
       workPatternsResult,
       patternShiftsResult,
+      coverageRequirementsResult,
     ] = await Promise.all([
       pool.query(
         `
@@ -384,6 +433,30 @@ router.get('/catalogs', async (req: Request, res: Response) => {
         `,
         [tenantId]
       ),
+      pool.query(
+        `
+          SELECT
+            id, company_id, work_location_id, department_id, area_id,
+            cost_center_id, work_group_id, shift_id, day_of_week,
+            effective_from, effective_to, minimum_staff, optimal_staff,
+            priority, is_active
+          FROM public.shift_coverage_requirements
+          WHERE tenant_id = $1::uuid
+            AND is_active
+          ORDER BY
+            ((company_id IS NOT NULL)::integer
+              + (work_location_id IS NOT NULL)::integer
+              + (department_id IS NOT NULL)::integer
+              + (area_id IS NOT NULL)::integer
+              + (cost_center_id IS NOT NULL)::integer
+              + (work_group_id IS NOT NULL)::integer
+              + (shift_id IS NOT NULL)::integer
+              + (day_of_week IS NOT NULL)::integer) DESC,
+            priority DESC,
+            effective_from DESC
+        `,
+        [tenantId]
+      ),
     ]);
 
     const patternShiftsByPattern = new Map<string, any[]>();
@@ -485,7 +558,190 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       employee_profiles: Array.from(employeeProfilesMap.values()),
       work_groups: Array.from(workGroupsMap.values()),
       work_patterns: workPatterns,
+      coverage_requirements: coverageRequirementsResult.rows,
     });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.put('/coverage/default', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    const minimumStaff = Number(req.body?.minimum_staff);
+    const optimalStaff = req.body?.optimal_staff == null ? minimumStaff : Number(req.body.optimal_staff);
+    if (!Number.isInteger(minimumStaff) || minimumStaff < 0) {
+      return res.status(400).json({ error: 'minimum_staff debe ser un entero mayor o igual a cero' });
+    }
+    if (!Number.isInteger(optimalStaff) || optimalStaff < minimumStaff) {
+      return res.status(400).json({ error: 'optimal_staff debe ser un entero mayor o igual al minimo' });
+    }
+
+    const actor = getActor(req);
+    const existing = await pool.query(
+      `
+        UPDATE public.shift_coverage_requirements
+        SET minimum_staff = $2,
+            optimal_staff = $3,
+            updated_by = $4,
+            updated_at = now()
+        WHERE tenant_id = $1::uuid
+          AND company_id IS NULL
+          AND work_location_id IS NULL
+          AND department_id IS NULL
+          AND area_id IS NULL
+          AND cost_center_id IS NULL
+          AND work_group_id IS NULL
+          AND shift_id IS NULL
+          AND day_of_week IS NULL
+          AND is_active
+        RETURNING *
+      `,
+      [tenantId, minimumStaff, optimalStaff, actor]
+    );
+    let requirement = existing.rows[0] || null;
+    if (!requirement) {
+      const inserted = await pool.query(
+        `
+          INSERT INTO public.shift_coverage_requirements (
+            tenant_id, effective_from, minimum_staff, optimal_staff,
+            priority, is_active, created_by
+          ) VALUES ($1::uuid, CURRENT_DATE, $2, $3, 0, true, $4)
+          RETURNING *
+        `,
+        [tenantId, minimumStaff, optimalStaff, actor]
+      );
+      requirement = inserted.rows[0];
+    }
+    return res.status(200).json({ success: true, coverage_requirement: requirement });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
+router.get('/constraints', async (req: Request, res: Response) => {
+  try {
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
+    const dateFrom = String(req.query.date_from || '').trim();
+    const dateTo = String(req.query.date_to || '').trim();
+    if (!isDateIso(dateFrom) || !isDateIso(dateTo)) {
+      return res.status(400).json({ error: 'date_from y date_to son obligatorios en formato YYYY-MM-DD' });
+    }
+
+    const userId = await resolveInternalUserId(req, tenantId);
+    const restrictByEmployeeScope = await shouldRestrictByEmployeeScope(tenantId, userId);
+    const authorizedEmployeeIds = restrictByEmployeeScope ? await resolveAuthorizedEmployeeIds(tenantId, userId) : [];
+    if (restrictByEmployeeScope && authorizedEmployeeIds.length === 0) {
+      return res.status(200).json({ success: true, constraints: [] });
+    }
+    const params: any[] = [tenantId, dateFrom, dateTo];
+    const employeeScope = restrictByEmployeeScope ? 'AND assignment.employee_id = ANY($4::uuid[])' : '';
+    if (restrictByEmployeeScope) params.push(authorizedEmployeeIds);
+
+    const result = await pool.query(
+      `
+        WITH tenant_timezone AS (
+          SELECT public.resolve_attendance_timezone($1::uuid, NULL, NULL, NULL) AS zone
+        ), approved_absences AS (
+          SELECT
+            request.employee_id,
+            day_value::date AS constraint_date,
+            'ABSENCE_REQUEST'::text AS source_key,
+            request.id AS source_id,
+            policy.lookup_key AS policy_key,
+            policy.metadata->>'blocking_scope' AS blocking_scope,
+            to_char(request.start_datetime AT TIME ZONE timezone.zone, 'YYYY-MM-DD"T"HH24:MI:SS') AS start_local,
+            to_char(request.end_datetime AT TIME ZONE timezone.zone, 'YYYY-MM-DD"T"HH24:MI:SS') AS end_local,
+            justification.justification_name AS reason
+          FROM public.employee_absence_requests request
+          JOIN public.employee_companies assignment
+            ON assignment.tenant_id = request.tenant_id
+           AND assignment.company_id = request.company_id
+           AND assignment.employee_id = request.employee_id
+           AND assignment.is_active
+          JOIN public.justification_types justification ON justification.id = request.justification_type_id
+          JOIN public.lookup_values policy ON policy.id = justification.planning_policy_id AND policy.is_active
+          JOIN public.lookup_values status ON status.id = request.request_status_id
+          CROSS JOIN tenant_timezone timezone
+          CROSS JOIN LATERAL generate_series(
+            greatest((request.start_datetime AT TIME ZONE timezone.zone)::date, $2::date),
+            least((request.end_datetime AT TIME ZONE timezone.zone)::date, $3::date),
+            interval '1 day'
+          ) day_value
+          WHERE request.tenant_id = $1::uuid
+            AND request.is_active
+            AND status.metadata->>'notification_status_key' = 'APPROVED'
+            AND COALESCE((policy.metadata->>'blocks_assignment')::boolean, false)
+            ${employeeScope}
+        ), holiday_constraints AS (
+          SELECT
+            assignment.employee_id,
+            day_value::date AS constraint_date,
+            'HOLIDAY'::text AS source_key,
+            holiday.id AS source_id,
+            'HOLIDAY_NON_WORKER'::text AS policy_key,
+            'FULL_DAY'::text AS blocking_scope,
+            NULL::text AS start_local,
+            NULL::text AS end_local,
+            holiday.holiday_name AS reason
+          FROM public.employee_companies assignment
+          LEFT JOIN public.work_locations location ON location.id = assignment.work_location_id
+          JOIN public.holidays holiday
+            ON holiday.tenant_id = assignment.tenant_id
+           AND holiday.is_active
+           AND NOT holiday.is_working_day
+           AND (holiday.company_id IS NULL OR holiday.company_id = assignment.company_id)
+           AND (holiday.work_location_id IS NULL OR holiday.work_location_id = assignment.work_location_id)
+           AND (holiday.country_id IS NULL OR holiday.country_id = location.country_id)
+           AND (holiday.state_id IS NULL OR holiday.state_id = location.state_id)
+           AND (holiday.city_id IS NULL OR holiday.city_id = location.city_id)
+          CROSS JOIN LATERAL generate_series($2::date, $3::date, interval '1 day') day_value
+          WHERE assignment.tenant_id = $1::uuid
+            AND assignment.is_active
+            AND assignment.work_on_holidays = false
+            AND (
+              (NOT holiday.is_recurring AND holiday.holiday_date = day_value::date)
+              OR (holiday.is_recurring AND to_char(holiday.holiday_date, 'MM-DD') = to_char(day_value, 'MM-DD'))
+            )
+            ${employeeScope}
+        ), planned_rest_days AS (
+          SELECT
+            plan.employee_id,
+            plan.shift_date AS constraint_date,
+            'PLANNED_REST_DAY'::text AS source_key,
+            plan.id AS source_id,
+            'PUBLISHED_REST'::text AS policy_key,
+            'FULL_DAY'::text AS blocking_scope,
+            NULL::text AS start_local,
+            NULL::text AS end_local,
+            shift.shift_name AS reason
+          FROM public.employee_shift_plans plan
+          JOIN public.shifts shift
+            ON shift.id = plan.shift_id
+           AND shift.tenant_id = plan.tenant_id
+           AND shift.work_minutes = 0
+          JOIN public.employee_companies assignment
+            ON assignment.tenant_id = plan.tenant_id
+           AND assignment.company_id = plan.company_id
+           AND assignment.employee_id = plan.employee_id
+           AND assignment.is_active
+          WHERE plan.tenant_id = $1::uuid
+            AND plan.shift_date BETWEEN $2::date AND $3::date
+            AND plan.is_active
+            ${employeeScope}
+        )
+        SELECT * FROM approved_absences
+        UNION ALL
+        SELECT * FROM holiday_constraints
+        UNION ALL
+        SELECT * FROM planned_rest_days
+        ORDER BY constraint_date, employee_id, source_key
+      `,
+      params
+    );
+    return res.status(200).json({ success: true, constraints: result.rows });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
   }
@@ -577,7 +833,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
     const shiftsResult = await client.query(
       `
-        SELECT id, company_id, shift_name, shift_short_name, start_time
+        SELECT id, company_id, shift_name, shift_short_name, start_time, work_minutes
         FROM public.shifts
         WHERE tenant_id = $1
           AND is_active = true
@@ -592,7 +848,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       shiftStartTimeById.set(row.id, row.start_time || null);
     });
     shiftsResult.rows.forEach((row) => {
-      if (isFreeShiftLabel(row.shift_name, row.shift_short_name) && row.company_id && !freeShiftByCompany.has(row.company_id)) {
+      if (Number(row.work_minutes || 0) <= 0 && row.company_id && !freeShiftByCompany.has(row.company_id)) {
         freeShiftByCompany.set(row.company_id, row.id);
       }
     });
@@ -626,7 +882,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
       const existing = await client.query(
         `
-          SELECT id, shift_name, shift_short_name, start_time
+          SELECT id, shift_name, shift_short_name, start_time, work_minutes
           FROM public.shifts
           WHERE tenant_id = $1
             AND company_id = $2
@@ -636,7 +892,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         [tenantId, companyId]
       );
 
-      const found = existing.rows.find((row) => isFreeShiftLabel(row.shift_name, row.shift_short_name));
+      const found = existing.rows.find((row) => Number(row.work_minutes || 0) <= 0);
       if (found?.id) {
         freeShiftByCompany.set(companyId, found.id);
         shiftCompanyById.set(found.id, companyId);
@@ -650,21 +906,32 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
             id, tenant_id, company_id, shift_name, shift_short_name, start_time,
             shift_duration_minutes, work_minutes, lunch_minutes, lunch_window_minutes,
             lunch_is_paid, lunch_deduction_mode,
-            entry_grace_minutes, exit_grace_minutes,
-            is_active, created_by
-          ) VALUES (
-            gen_random_uuid(), $1, $2, 'Turno Libre', 'LIB', '00:00',
-            1440, 0, 0, 0, false, NULL, 0, 0, true, $3
+            entry_grace_minutes, exit_grace_minutes, shift_icon_key,
+            shift_bg_color, shift_text_color, is_active, created_by
           )
-          RETURNING id
+          SELECT
+            gen_random_uuid(), $1, $2, template.shift_name, template.shift_short_name, template.start_time,
+            template.shift_duration_minutes, template.work_minutes, template.lunch_minutes, template.lunch_window_minutes,
+            template.lunch_is_paid, template.lunch_deduction_mode,
+            template.entry_grace_minutes, template.exit_grace_minutes, template.shift_icon_key,
+            template.shift_bg_color, template.shift_text_color, true, $3
+          FROM public.system_shift_templates template
+          WHERE template.is_active
+            AND template.work_minutes = 0
+          ORDER BY template.sort_order, template.created_at
+          LIMIT 1
+          RETURNING id, start_time
         `,
         [tenantId, companyId, actor]
       );
 
-      const freeShiftId = created.rows[0]?.id as string;
+      const freeShiftId = created.rows[0]?.id as string | undefined;
+      if (!freeShiftId) {
+        throw new Error('No existe una plantilla SYSTEM activa para jornada no laborable');
+      }
       freeShiftByCompany.set(companyId, freeShiftId);
       shiftCompanyById.set(freeShiftId, companyId);
-      shiftStartTimeById.set(freeShiftId, '00:00');
+      shiftStartTimeById.set(freeShiftId, created.rows[0]?.start_time || null);
       return freeShiftId;
     };
 

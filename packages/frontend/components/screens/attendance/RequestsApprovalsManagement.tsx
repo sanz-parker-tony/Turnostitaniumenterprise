@@ -6,7 +6,7 @@ import { createClient } from '@/utils/backend/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Paperclip, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Paperclip, RefreshCw, Search, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatClientDateTime } from '@/utils/date-time';
 
@@ -30,6 +30,32 @@ type Row = {
   approved_by_display_name: string | null;
   approved_by_username: string | null;
   approved_at: string | null;
+};
+
+type PlanningImpact = {
+  request_id: string;
+  policy_key: string | null;
+  policy_label: string | null;
+  assessment_key: 'NO_IMPACT' | 'SAFE' | 'CONDITIONAL' | 'NOT_FEASIBLE' | 'CONFIGURATION_REQUIRED';
+  message: string;
+  affected_plan_count: number;
+  date_from: string;
+  date_to: string;
+  assessment_token: string;
+  days: Array<{
+    date: string;
+    shift_name: string;
+    shift_short_name: string;
+    required_staff: number | null;
+    planned_staff: number;
+    remaining_staff: number;
+    deficit_staff: number | null;
+    replacement_candidates: Array<{
+      employee_id: string;
+      employee_code: string | null;
+      employee_name: string;
+    }>;
+  }>;
 };
 
 function normalizeStatusKey(statusKey: string | null | undefined, statusLabel: string | null | undefined): string {
@@ -60,6 +86,8 @@ export default function RequestsApprovalsManagement() {
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusFilter>(() => linkedRequestId ? 'ALL' : 'PENDING');
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [planningImpacts, setPlanningImpacts] = useState<Record<string, PlanningImpact>>({});
+  const [planningImpactLoading, setPlanningImpactLoading] = useState<Record<string, boolean>>({});
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -131,6 +159,33 @@ export default function RequestsApprovalsManagement() {
         }
         return copy;
       });
+      const pendingRows = nextRows.filter(isPending);
+      setPlanningImpactLoading((prev) => ({
+        ...prev,
+        ...Object.fromEntries(pendingRows.map((row) => [row.id, true])),
+      }));
+      const impactEntries = await Promise.all(
+        pendingRows.map(async (row) => {
+          try {
+            const impactPayload = await request(`/kiosk/requests/${row.id}/planning-impact`);
+            return [row.id, impactPayload?.planning_impact as PlanningImpact] as const;
+          } catch {
+            return [row.id, null] as const;
+          }
+        })
+      );
+      setPlanningImpacts((prev) => {
+        const copy = { ...prev };
+        impactEntries.forEach(([id, impact]) => {
+          if (impact) copy[id] = impact;
+        });
+        return copy;
+      });
+      setPlanningImpactLoading((prev) => {
+        const copy = { ...prev };
+        pendingRows.forEach((row) => { copy[row.id] = false; });
+        return copy;
+      });
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo cargar solicitudes');
     } finally {
@@ -164,6 +219,18 @@ export default function RequestsApprovalsManagement() {
     return ['PENDING', 'PENDIENTE', 'REQUESTED', 'SOLICITADO', 'IN_REVIEW', 'EN_REVISION'].includes(key);
   };
 
+  const refreshPlanningImpact = async (requestId: string) => {
+    setPlanningImpactLoading((prev) => ({ ...prev, [requestId]: true }));
+    try {
+      const payload = await request(`/kiosk/requests/${requestId}/planning-impact`);
+      setPlanningImpacts((prev) => ({ ...prev, [requestId]: payload?.planning_impact as PlanningImpact }));
+    } catch (err: any) {
+      toast.error(err?.message || 'No se pudo evaluar la cobertura');
+    } finally {
+      setPlanningImpactLoading((prev) => ({ ...prev, [requestId]: false }));
+    }
+  };
+
   const decide = async (row: Row, decision: 'APPROVE' | 'REJECT') => {
     const approvalNotes = (reviewNotes[row.id] || '').trim();
     const resolvedApprovalNotes =
@@ -171,17 +238,22 @@ export default function RequestsApprovalsManagement() {
 
     setWorkingId(row.id);
     try {
+      const impact = planningImpacts[row.id];
       await request(`/kiosk/requests/${row.id}/decision`, {
         method: 'PATCH',
         body: JSON.stringify({
           decision,
           approval_notes: resolvedApprovalNotes,
+          planning_resolution:
+            decision === 'APPROVE' && impact?.assessment_key === 'CONDITIONAL' ? 'REPLAN' : 'NONE',
+          assessment_token: decision === 'APPROVE' ? impact?.assessment_token || null : null,
         }),
       });
       toast.success(decision === 'APPROVE' ? 'Solicitud aprobada' : 'Solicitud denegada');
       await load();
     } catch (err: any) {
       toast.error(err?.message || 'No se pudo actualizar la solicitud');
+      if (decision === 'APPROVE') await refreshPlanningImpact(row.id);
     } finally {
       setWorkingId(null);
     }
@@ -215,6 +287,9 @@ export default function RequestsApprovalsManagement() {
           {filtered.map((r) => {
             const fullName = `${r.employee_name || ''} ${r.employee_lastname || ''}`.trim() || 'Empleado';
             const pending = isPending(r);
+            const planningImpact = planningImpacts[r.id];
+            const planningBlocked = planningImpact?.assessment_key === 'NOT_FEASIBLE'
+              || planningImpact?.assessment_key === 'CONFIGURATION_REQUIRED';
             return (
               <div key={r.id} className={`rounded-lg border bg-white p-4 ${r.id === linkedRequestId ? 'border-blue-500 ring-2 ring-blue-100' : ''}`}>
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -255,6 +330,87 @@ export default function RequestsApprovalsManagement() {
                 </div>
 
                 {pending ? (
+                  <div className={`mb-3 rounded-lg border p-3 ${
+                    planningImpact?.assessment_key === 'SAFE' || planningImpact?.assessment_key === 'NO_IMPACT'
+                      ? 'border-green-200 bg-green-50'
+                      : planningImpact?.assessment_key === 'CONDITIONAL'
+                      ? 'border-amber-300 bg-amber-50'
+                      : 'border-red-200 bg-red-50'
+                  }`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        {planningImpact?.assessment_key === 'SAFE' || planningImpact?.assessment_key === 'NO_IMPACT' ? (
+                          <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-700" />
+                        ) : planningImpact?.assessment_key === 'CONDITIONAL' ? (
+                          <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
+                        ) : (
+                          <ShieldAlert className="mt-0.5 h-4 w-4 text-red-700" />
+                        )}
+                        <div>
+                          <div className="font-semibold text-slate-900">Impacto sobre la planificación</div>
+                          {planningImpactLoading[r.id] ? (
+                            <div className="mt-1 text-sm text-slate-600">Evaluando turnos y cobertura...</div>
+                          ) : planningImpact ? (
+                            <>
+                              <div className="mt-1 text-sm text-slate-700">
+                                {planningImpact.policy_label || planningImpact.policy_key || 'Política no configurada'} · {planningImpact.message}
+                              </div>
+                              {planningImpact.days.length > 0 ? (
+                                <div className="mt-3 overflow-x-auto rounded border border-slate-200 bg-white">
+                                  <table className="w-full min-w-[680px] text-left text-xs">
+                                    <thead className="bg-slate-100 text-slate-700">
+                                      <tr>
+                                        <th className="px-2 py-2">Fecha</th>
+                                        <th className="px-2 py-2">Turno</th>
+                                        <th className="px-2 py-2 text-center">Requeridos</th>
+                                        <th className="px-2 py-2 text-center">Planificados</th>
+                                        <th className="px-2 py-2 text-center">Después del permiso</th>
+                                        <th className="px-2 py-2 text-center">Déficit</th>
+                                        <th className="px-2 py-2">Reemplazos libres</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {planningImpact.days.map((day) => (
+                                        <tr key={`${r.id}-${day.date}-${day.shift_short_name}`} className="border-t border-slate-100">
+                                          <td className="px-2 py-2">{day.date}</td>
+                                          <td className="px-2 py-2">{day.shift_short_name || day.shift_name}</td>
+                                          <td className="px-2 py-2 text-center">{day.required_staff ?? 'Sin configurar'}</td>
+                                          <td className="px-2 py-2 text-center">{day.planned_staff}</td>
+                                          <td className="px-2 py-2 text-center">{day.remaining_staff}</td>
+                                          <td className={`px-2 py-2 text-center font-semibold ${Number(day.deficit_staff || 0) > 0 ? 'text-red-700' : 'text-green-700'}`}>
+                                            {day.deficit_staff ?? '-'}
+                                          </td>
+                                          <td className="px-2 py-2">
+                                            {day.replacement_candidates.length > 0
+                                              ? day.replacement_candidates.map((candidate) => candidate.employee_name).join(', ')
+                                              : 'Ninguno identificado'}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <div className="mt-1 text-sm text-red-700">No se pudo obtener la evaluación de cobertura.</div>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded border border-slate-300 bg-white p-1.5 text-slate-600 hover:bg-slate-50"
+                        onClick={() => void refreshPlanningImpact(r.id)}
+                        disabled={planningImpactLoading[r.id]}
+                        title="Recalcular impacto"
+                      >
+                        <RefreshCw className={`h-4 w-4 ${planningImpactLoading[r.id] ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {pending ? (
                   <>
                     <div className="mb-3">
                       <label className="mb-1 block text-sm font-medium text-gray-700">Observacion del aprobador</label>
@@ -272,8 +428,12 @@ export default function RequestsApprovalsManagement() {
                     </div>
 
                     <div className="flex gap-2">
-                      <Button size="sm" disabled={workingId === r.id} onClick={() => decide(r, 'APPROVE')}>
-                        Aprobar
+                      <Button
+                        size="sm"
+                        disabled={workingId === r.id || planningImpactLoading[r.id] || !planningImpact || planningBlocked}
+                        onClick={() => decide(r, 'APPROVE')}
+                      >
+                        {planningImpact?.assessment_key === 'CONDITIONAL' ? 'Aprobar y replanificar' : 'Aprobar'}
                       </Button>
                       <Button size="sm" variant="outline" disabled={workingId === r.id} onClick={() => decide(r, 'REJECT')}>
                         Denegar

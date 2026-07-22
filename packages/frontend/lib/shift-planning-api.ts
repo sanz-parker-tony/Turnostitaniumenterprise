@@ -32,6 +32,7 @@ export type ShiftPlanningRequiredCoverageItem = {
   horaInicio: string | null;
   horaFin: string | null;
   cantidadRequerida: number;
+  duracionMinutos: number;
 };
 
 export type ShiftPlanningAIRules = {
@@ -61,6 +62,17 @@ export type ShiftPlanningAvailableShift = {
   companyId: string;
 };
 
+export type ShiftPlanningAvailabilityConstraint = {
+  empleadoId: string;
+  fecha: string;
+  bloqueo: 'FULL_DAY' | 'TIME_OVERLAP';
+  desdeLocal: string | null;
+  hastaLocal: string | null;
+  motivo: string;
+  sourceKey: string;
+  sourceId: string;
+};
+
 export type ShiftPlanningGeneratePayload = {
   filtrosEmpleados: ShiftPlanningEmployeeFilter;
   rangoFechas: ShiftPlanningDateRange;
@@ -69,6 +81,7 @@ export type ShiftPlanningGeneratePayload = {
   reglasIA: ShiftPlanningAIRules;
   empleadosDisponibles: ShiftPlanningAvailableEmployee[];
   turnosDisponibles: ShiftPlanningAvailableShift[];
+  restriccionesDisponibilidad: ShiftPlanningAvailabilityConstraint[];
 };
 
 export type ShiftPlanningGeneratedItem = {
