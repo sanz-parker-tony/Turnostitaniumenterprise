@@ -15,6 +15,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
 import { pool } from '../lib/db.js';
+import { loadAuthenticationPolicy } from '../lib/authentication-policy.js';
 
 const router = Router();
 
@@ -1304,8 +1305,9 @@ router.post('/', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'El formato del email no es vÃ¡lido' });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (password.length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({ error: `La contraseña debe tener al menos ${passwordPolicy.passwordMinLength} caracteres` });
     }
 
     const Postgres = getPostgres();
@@ -1376,6 +1378,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     const { error: syncPasswordError } = await Postgres.auth.admin.updateUserById(authUserId, {
       password,
+      must_change_password: true,
     });
     if (syncPasswordError) {
       return res.status(500).json({
@@ -1434,8 +1437,9 @@ router.put('/:id', async (req: Request, res: Response) => {
       }
     }
 
-    if (password && String(password).length < 8) {
-      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (password && String(password).length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({ error: `La contraseña debe tener al menos ${passwordPolicy.passwordMinLength} caracteres` });
     }
 
     const updateData: any = { updated_by: ctx.userId, updated_at: new Date().toISOString() };
@@ -1458,9 +1462,12 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    const authUpdatePayload: { email?: string; password?: string } = {};
+    const authUpdatePayload: { email?: string; password?: string; must_change_password?: boolean } = {};
     if (email && email !== existing.email) authUpdatePayload.email = email;
-    if (password) authUpdatePayload.password = String(password);
+    if (password) {
+      authUpdatePayload.password = String(password);
+      authUpdatePayload.must_change_password = true;
+    }
 
     if (Object.keys(authUpdatePayload).length > 0) {
       const { error: authUpdateError } = await Postgres.auth.admin.updateUserById(existing.auth_user_id, authUpdatePayload);
@@ -1525,8 +1532,9 @@ router.patch('/:id/reset-password', async (req: Request, res: Response) => {
     const body = req.body;
     const { new_password } = body;
 
-    if (!new_password || new_password.length < 8) {
-      return res.status(400).json({ error: 'La contraseÃ±a debe tener al menos 8 caracteres' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (!new_password || new_password.length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({ error: `La contraseña debe tener al menos ${passwordPolicy.passwordMinLength} caracteres` });
     }
 
     const Postgres = getPostgres();
@@ -1543,6 +1551,7 @@ router.patch('/:id/reset-password', async (req: Request, res: Response) => {
 
     const { error: pwError } = await Postgres.auth.admin.updateUserById(user.auth_user_id, {
       password: new_password,
+      must_change_password: true,
     });
 
     if (pwError) {

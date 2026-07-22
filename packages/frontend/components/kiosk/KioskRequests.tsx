@@ -26,6 +26,8 @@ interface CatalogItem {
   event_short_name?: string | null;
   lookup_label?: string;
   lookup_key?: string;
+  requires_target_punch?: boolean;
+  compatible_punch_key_ids?: string[];
 }
 
 interface RequestRow {
@@ -81,6 +83,7 @@ interface PunchOption {
   id: string;
   punch_datetime: string;
   punch_key: number;
+  punch_key_lookup_id: string | null;
   movement_label: string | null;
 }
 
@@ -398,15 +401,12 @@ export default function KioskRequests({
     () => events.find((item) => item.id === popupForm.attendance_event_id) || null,
     [events, popupForm.attendance_event_id]
   );
-  const selectedEventShortName = String(selectedAttendanceEvent?.event_short_name || '').trim().toUpperCase();
-  const requiresTargetPunch = ['ATR', 'SAN', 'LEX', 'LFH'].includes(selectedEventShortName);
+  const requiresTargetPunch = selectedAttendanceEvent?.requires_target_punch === true;
   const compatiblePunches = useMemo(() => recentPunches.filter((punch) => {
-    const key = Number(punch.punch_key);
-    if (selectedEventShortName === 'ATR') return key === 1;
-    if (selectedEventShortName === 'SAN') return key === 4;
-    if (selectedEventShortName === 'LEX' || selectedEventShortName === 'LFH') return key === 2 || key === 3;
-    return true;
-  }), [recentPunches, selectedEventShortName]);
+    const compatibleIds = selectedAttendanceEvent?.compatible_punch_key_ids || [];
+    if (compatibleIds.length === 0) return true;
+    return Boolean(punch.punch_key_lookup_id && compatibleIds.includes(punch.punch_key_lookup_id));
+  }), [recentPunches, selectedAttendanceEvent]);
 
   const allowedDiscountMethods = useMemo(() => {
     const justificationRules = discountMethodRules.filter(

@@ -1,9 +1,10 @@
 ﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
-import { resolveEffectiveNumberSetting } from '../lib/effective-settings.js';
+import { resolveEffectiveAttendanceTimeZone, resolveRequiredEffectiveNumberSetting } from '../lib/effective-settings.js';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { resolveAuthorizedEmployeeIds } from '../lib/user-data-scope.js';
 
 const router = Router();
 
@@ -12,30 +13,62 @@ const PUNCH_SOURCE_GROUP_KEY = 'PUNCH_SOURCE';
 const TIME_PUNCH_STATUS_GROUP_KEY = 'TIME_PUNCH_STATUS';
 const REQUEST_STATUS_GROUP_KEY = 'REQUEST_STATUS';
 const ABSENCE_DISCOUNT_METHOD_GROUP_KEY = 'JUSTIFY_METHOD';
-const EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY = 'DEC';
-const EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS = ['INC', 'LFH', 'TNL'];
-const PUNCH_LINKED_ABSENCE_EVENT_KEYS = new Set(['ATR', 'SAN', 'LEX', 'LFH']);
 const SHIFT_CHANGE_REQUEST_STATUS_GROUP_KEY = 'SHIFT_CHANGE_REQUEST_STATUS';
 const TIME_PUNCH_CHANGE_REQUEST_TYPE_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_TYPE';
 const TIME_PUNCH_CHANGE_REQUEST_STATUS_GROUP_KEY = 'TIME_PUNCH_CHANGE_REQUEST_STATUS';
 const USER_NOTIFICATION_TYPE_GROUP_KEY = 'USER_NOTIFICATION_TYPE';
-const FIXED_PUNCH_SOURCE_KEY = 'WEB';
 const REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_PATH';
 const REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY = 'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES';
-const DEFAULT_REQUEST_SUPPORT_DOCS_PATH = path.join('storage', 'request-support-docs');
-const DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES = 5 * 1024 * 1024;
 const FIXED_NOTES = 'marcaci\u00f3n manual v\u00eda web';
 const MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY = 'MIN_MINUTES_BETWEEN_VALID_PUNCHES';
-const DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES = 5;
 const ROUTE_TRACKING_NOTES = 'marcacion de recorrido - fuera de recinto autorizado';
 
-function isPunchCompatibleWithAbsenceEvent(eventShortName: unknown, punchKey: unknown): boolean {
-  const eventKey = String(eventShortName || '').trim().toUpperCase();
-  const key = Number(punchKey);
-  if (eventKey === 'ATR') return key === 1;
-  if (eventKey === 'SAN') return key === 4;
-  if (eventKey === 'LEX' || eventKey === 'LFH') return key === 2 || key === 3;
-  return true;
+async function validateEventPunchSelection(params: {
+  tenantId: string;
+  employeeId: string;
+  attendanceEventId: string;
+  targetPunchId: string | null;
+}): Promise<string | null> {
+  const rulesResult = await pool.query(
+    `
+      SELECT punch_key_lookup_id
+      FROM public.attendance_event_punch_keys
+      WHERE tenant_id = $1::uuid
+        AND attendance_event_id = $2::uuid
+        AND is_active = true
+    `,
+    [params.tenantId, params.attendanceEventId]
+  );
+
+  const configuredPunchKeyIds = new Set(
+    rulesResult.rows.map((row) => String(row.punch_key_lookup_id))
+  );
+  if (configuredPunchKeyIds.size > 0 && !params.targetPunchId) {
+    return 'target_punch_id es obligatorio para justificar este evento';
+  }
+  if (!params.targetPunchId) return null;
+
+  const targetPunchResult = await pool.query(
+    `
+      SELECT id, punch_key_lookup_id
+      FROM public.employee_time_punches
+      WHERE id = $1::uuid
+        AND tenant_id = $2::uuid
+        AND employee_id = $3::uuid
+        AND is_active = true
+      LIMIT 1
+    `,
+    [params.targetPunchId, params.tenantId, params.employeeId]
+  );
+  const targetPunch = targetPunchResult.rows[0];
+  if (!targetPunch) return 'target_punch_id no corresponde al empleado';
+  if (
+    configuredPunchKeyIds.size > 0 &&
+    !configuredPunchKeyIds.has(String(targetPunch.punch_key_lookup_id || ''))
+  ) {
+    return 'La marcación seleccionada no corresponde al evento indicado';
+  }
+  return null;
 }
 
 type EmployeeContext = {
@@ -520,16 +553,18 @@ async function resolveSupportDocumentStorageConfig(
     if (key === REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY) configuredMaxSize = resolvedValue;
   }
 
-  const basePath = configuredPath || DEFAULT_REQUEST_SUPPORT_DOCS_PATH;
-  const absolutePath = path.isAbsolute(basePath)
-    ? basePath
-    : path.resolve(process.cwd(), basePath);
+  if (!configuredPath) {
+    throw new Error(`No existe una configuracion activa para ${REQUEST_SUPPORT_DOCS_PATH_SETTING_KEY}`);
+  }
+  const absolutePath = path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(process.cwd(), configuredPath);
 
-  const parsedMax = Number(configuredMaxSize || DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES);
-  const maxSizeBytes =
-    Number.isFinite(parsedMax) && parsedMax > 0
-      ? Math.trunc(parsedMax)
-      : DEFAULT_REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES;
+  const parsedMax = Number(configuredMaxSize);
+  if (!Number.isFinite(parsedMax) || parsedMax <= 0) {
+    throw new Error(`La configuracion ${REQUEST_SUPPORT_DOCS_MAX_SIZE_SETTING_KEY} no es valida`);
+  }
+  const maxSizeBytes = Math.trunc(parsedMax);
 
   return { absolutePath, maxSizeBytes };
 }
@@ -789,6 +824,34 @@ async function resolveLookupValueIdByGroupKeyAndKeys(
       LIMIT 1
     `,
     [groupKey, normalized, tenantId]
+  );
+
+  return result.rows[0]?.id || null;
+}
+
+async function resolveLookupValueIdByGroupMetadata(
+  tenantId: string,
+  groupKey: string,
+  metadataKey: string,
+  metadataValue: string
+): Promise<string | null> {
+  const result = await pool.query(
+    `
+      SELECT lv.id
+      FROM public.lookup_values lv
+      INNER JOIN public.lookup_groups lg
+        ON lg.id = lv.lookup_group_id
+      WHERE lg.lookup_group_key = $1
+        AND lg.is_active = true
+        AND lv.is_active = true
+        AND (lv.tenant_id IS NULL OR lv.tenant_id = $2::uuid)
+        AND UPPER(COALESCE(lv.metadata ->> $3, '')) = UPPER($4)
+      ORDER BY
+        CASE WHEN lv.tenant_id = $2::uuid THEN 0 ELSE 1 END,
+        lv.sort_order ASC
+      LIMIT 1
+    `,
+    [groupKey, tenantId, metadataKey, metadataValue]
   );
 
   return result.rows[0]?.id || null;
@@ -1136,29 +1199,6 @@ async function resolveUserContext(req: Request): Promise<UserContext | null> {
   return (result.rows[0] as UserContext | undefined) || null;
 }
 
-async function getApproverRoleKeys(tenantId: string, userId: string): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT r.role_key
-      FROM public.user_roles ur
-      INNER JOIN public.roles r
-        ON r.id = ur.role_id
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND r.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-    `,
-    [tenantId, userId]
-  );
-  return result.rows.map((row) => String(row.role_key || '').toUpperCase()).filter(Boolean);
-}
-
-function hasApprovalPermission(roleKeys: string[]): boolean {
-  return roleKeys.some((roleKey) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
-}
-
 async function hasScreenActionPermissionForUser(
   tenantId: string,
   userId: string,
@@ -1221,49 +1261,17 @@ async function assertApproverActionPermission(params: {
 
 async function resolveApproverContext(req: Request): Promise<{
   userContext: UserContext;
-  roleKeys: string[];
 } | null> {
   const userContext = await resolveUserContext(req);
   if (!userContext) return null;
-
-  const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-  if (!hasApprovalPermission(roleKeys)) return null;
-
-  return { userContext, roleKeys };
+  return { userContext };
 }
 
 async function resolveManagedEmployeeIdsForApprover(
   tenantId: string,
   userId: string
 ): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT ura.employee_id::text AS employee_id
-      FROM user_roles ur
-      JOIN roles r
-        ON r.id = ur.role_id
-       AND r.is_active = true
-      JOIN user_role_employee_assignments ura
-        ON ura.tenant_id = ur.tenant_id
-       AND ura.user_role_id = ur.id
-       AND ura.is_active = true
-      JOIN employees e
-        ON e.id = ura.employee_id
-       AND e.tenant_id = ura.tenant_id
-       AND e.is_active = true
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-    `,
-    [tenantId, userId]
-  );
-
-  return result.rows
-    .map((row) => String(row.employee_id || '').trim())
-    .filter(Boolean);
+  return resolveAuthorizedEmployeeIds(pool, tenantId, userId);
 }
 
 async function resolveAssignedApproverUserIds(
@@ -1283,7 +1291,7 @@ async function resolveAssignedApproverUserIds(
       JOIN public.roles r
         ON r.id = ur.role_id
        AND r.is_active = true
-       AND r.role_key IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+       AND r.is_employee_access_target = true
       JOIN public.users u
         ON u.id = ur.user_id
        AND u.is_active = true
@@ -1375,7 +1383,12 @@ async function createRouteTrackingPoint(params: {
     'ROUTE_TRACKING_STATUS',
     ['ROUTE_POINT_VALID']
   );
-  const effectiveTimeZone = params.clientTimeZone || 'America/Guayaquil';
+  const effectiveTimeZone = params.clientTimeZone || await resolveEffectiveAttendanceTimeZone(pool, {
+    tenantId: params.context.tenant_id,
+    companyId: params.companyId,
+    employeeProfileId: params.context.employee_profile_id,
+    employeeId: params.context.employee_id,
+  });
 
   const insertResult = await pool.query(
     `
@@ -1511,6 +1524,9 @@ router.get('/mark/context', async (req: Request, res: Response) => {
                 THEN (lv.metadata->>'device_code')::integer
               ELSE NULL
             END AS punch_key_value
+            ,NULLIF(lv.metadata->>'direction', '') AS movement_direction
+            ,NULLIF(lv.metadata->>'icon_key', '') AS icon_key
+            ,NULLIF(lv.metadata->>'kiosk_column', '') AS kiosk_column
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg
             ON lg.id = lv.lookup_group_id
@@ -1746,13 +1762,14 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
     }
     const punchKey = Math.trunc(Number(punchKeyRow.punch_key_value));
 
-    const normalizedSourceId = await resolveLookupValueIdByGroupKeyAndKeys(
+    const normalizedSourceId = await resolveLookupValueIdByGroupMetadata(
       context.tenant_id,
       PUNCH_SOURCE_GROUP_KEY,
-      [FIXED_PUNCH_SOURCE_KEY]
+      'usage_key',
+      'EMPLOYEE_WEB_PUNCH'
     );
     if (!normalizedSourceId) {
-      return res.status(400).json({ error: 'No existe la fuente fija Aplicacion Web configurada' });
+      return res.status(400).json({ error: 'No existe una fuente de marcacion web configurada' });
     }
 
     let requestedStatusId: string | null = null;
@@ -1890,15 +1907,19 @@ router.post('/mark/punch', async (req: Request, res: Response) => {
       ['VALID']
     );
     const normalizedStatusId = validStatusId || requestedStatusId || null;
-    const effectivePunchTimeZone = locationValidation.time_zone || clientTimeZone || 'America/Guayaquil';
+    const effectivePunchTimeZone = locationValidation.time_zone || clientTimeZone || await resolveEffectiveAttendanceTimeZone(pool, {
+      tenantId: context.tenant_id,
+      companyId,
+      employeeProfileId,
+      employeeId: context.employee_id,
+    });
 
-    const minMinutesBetweenValidPunches = await resolveEffectiveNumberSetting(pool, {
+    const minMinutesBetweenValidPunches = await resolveRequiredEffectiveNumberSetting(pool, {
       tenantId: context.tenant_id,
       companyId,
       employeeProfileId,
       employeeId: context.employee_id,
       settingKey: MIN_MINUTES_BETWEEN_VALID_PUNCHES_SETTING_KEY,
-      fallback: DEFAULT_MIN_MINUTES_BETWEEN_VALID_PUNCHES,
       min: 0,
       max: 1440,
     });
@@ -2325,47 +2346,43 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
           FROM public.justification_types jt
           LEFT JOIN public.attendance_events ae
             ON ae.id = jt.attendance_event_id
-          LEFT JOIN public.lookup_values event_direction
-            ON event_direction.id = ae.transaction_direction_id
-          LEFT JOIN public.lookup_groups event_direction_group
-            ON event_direction_group.id = event_direction.lookup_group_id
           WHERE jt.tenant_id = $1
             AND jt.is_active = true
             AND (
               jt.attendance_event_id IS NULL
-              OR (
-                event_direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-                AND (
-                  UPPER(event_direction.lookup_key) = $2
-                  OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($3::text[])
-                )
-              )
+              OR ae.allows_employee_request = true
             )
           ORDER BY jt.justification_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
+        [context.tenant_id]
       ),
       pool.query(
         `
           SELECT
             ae.id,
             ae.event_name,
-            ae.event_short_name
+            ae.event_short_name,
+            EXISTS (
+              SELECT 1
+              FROM public.attendance_event_punch_keys rule
+              WHERE rule.tenant_id = ae.tenant_id
+                AND rule.attendance_event_id = ae.id
+                AND rule.is_active = true
+            ) AS requires_target_punch,
+            COALESCE((
+              SELECT jsonb_agg(rule.punch_key_lookup_id ORDER BY rule.created_at, rule.id)
+              FROM public.attendance_event_punch_keys rule
+              WHERE rule.tenant_id = ae.tenant_id
+                AND rule.attendance_event_id = ae.id
+                AND rule.is_active = true
+            ), '[]'::jsonb) AS compatible_punch_key_ids
           FROM public.attendance_events ae
-          INNER JOIN public.lookup_values direction
-            ON direction.id = ae.transaction_direction_id
-          INNER JOIN public.lookup_groups direction_group
-            ON direction_group.id = direction.lookup_group_id
           WHERE ae.tenant_id = $1
             AND ae.is_active = true
-            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND (
-              UPPER(direction.lookup_key) = $2
-              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($3::text[])
-            )
+            AND ae.allows_employee_request = true
           ORDER BY ae.event_name ASC
         `,
-        [context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
+        [context.tenant_id]
       ),
       pool.query(
         `
@@ -2422,6 +2439,7 @@ router.get('/requests/catalogs', async (req: Request, res: Response) => {
             p.id,
             p.punch_datetime,
             p.punch_key,
+            p.punch_key_lookup_id,
             movement.lookup_label AS movement_label
           FROM public.employee_time_punches p
           LEFT JOIN public.lookup_values movement
@@ -2718,21 +2736,13 @@ router.post('/requests', async (req: Request, res: Response) => {
         `
           SELECT ae.id, ae.event_short_name
           FROM public.attendance_events ae
-          INNER JOIN public.lookup_values direction
-            ON direction.id = ae.transaction_direction_id
-          INNER JOIN public.lookup_groups direction_group
-            ON direction_group.id = direction.lookup_group_id
           WHERE ae.id = $1
             AND ae.tenant_id = $2
             AND ae.is_active = true
-            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND (
-              UPPER(direction.lookup_key) = $3
-              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($4::text[])
-            )
+            AND ae.allows_employee_request = true
           LIMIT 1
         `,
-        [attendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
+        [attendanceEventId, context.tenant_id]
       ),
     ]);
 
@@ -2741,29 +2751,13 @@ router.post('/requests', async (req: Request, res: Response) => {
     const attendanceEvent = eventResult.rows[0];
     if (!attendanceEvent) return res.status(400).json({ error: 'attendance_event_id no valido' });
 
-    const eventShortName = String(attendanceEvent.event_short_name || '').trim().toUpperCase();
-    if (PUNCH_LINKED_ABSENCE_EVENT_KEYS.has(eventShortName) && !targetPunchId) {
-      return res.status(400).json({ error: 'target_punch_id es obligatorio para justificar este evento' });
-    }
-    if (targetPunchId) {
-      const targetPunchResult = await pool.query(
-        `
-          SELECT id, punch_key
-          FROM public.employee_time_punches
-          WHERE id = $1::uuid
-            AND tenant_id = $2::uuid
-            AND employee_id = $3::uuid
-            AND is_active = true
-          LIMIT 1
-        `,
-        [targetPunchId, context.tenant_id, context.employee_id]
-      );
-      const targetPunch = targetPunchResult.rows[0];
-      if (!targetPunch) return res.status(400).json({ error: 'target_punch_id no corresponde al empleado' });
-      if (!isPunchCompatibleWithAbsenceEvent(eventShortName, targetPunch.punch_key)) {
-        return res.status(400).json({ error: 'La marcación seleccionada no corresponde al evento indicado' });
-      }
-    }
+    const punchSelectionError = await validateEventPunchSelection({
+      tenantId: context.tenant_id,
+      employeeId: context.employee_id,
+      attendanceEventId,
+      targetPunchId,
+    });
+    if (punchSelectionError) return res.status(400).json({ error: punchSelectionError });
 
     if (justification.attendance_event_id && justification.attendance_event_id !== attendanceEventId) {
       return res.status(400).json({
@@ -2984,54 +2978,31 @@ router.patch('/requests/:id', async (req: Request, res: Response) => {
     }
 
     const effectiveAttendanceEventId = attendanceEventId ?? current.attendance_event_id;
-    let effectiveEventShortName = '';
     if (effectiveAttendanceEventId) {
       const validation = await pool.query(
         `
           SELECT ae.id, ae.event_short_name
           FROM public.attendance_events ae
-          INNER JOIN public.lookup_values direction
-            ON direction.id = ae.transaction_direction_id
-          INNER JOIN public.lookup_groups direction_group
-            ON direction_group.id = direction.lookup_group_id
           WHERE ae.id = $1
             AND ae.tenant_id = $2
             AND ae.is_active = true
-            AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
-            AND (
-              UPPER(direction.lookup_key) = $3
-              OR UPPER(COALESCE(ae.event_short_name, '')) = ANY($4::text[])
-            )
+            AND ae.allows_employee_request = true
           LIMIT 1
         `,
-        [effectiveAttendanceEventId, context.tenant_id, EMPLOYEE_REQUESTS_EVENT_DIRECTION_KEY, EMPLOYEE_REQUESTS_EXTRA_EVENT_KEYS]
+        [effectiveAttendanceEventId, context.tenant_id]
       );
       if (!validation.rows[0]) return res.status(400).json({ error: 'attendance_event_id no valido' });
-      effectiveEventShortName = String(validation.rows[0].event_short_name || '').trim().toUpperCase();
     }
 
     const effectiveTargetPunchId = targetPunchId === undefined ? current.target_punch_id : targetPunchId;
-    if (PUNCH_LINKED_ABSENCE_EVENT_KEYS.has(effectiveEventShortName) && !effectiveTargetPunchId) {
-      return res.status(400).json({ error: 'target_punch_id es obligatorio para justificar este evento' });
-    }
-    if (effectiveTargetPunchId) {
-      const targetPunchResult = await pool.query(
-        `
-          SELECT id, punch_key
-          FROM public.employee_time_punches
-          WHERE id = $1::uuid
-            AND tenant_id = $2::uuid
-            AND employee_id = $3::uuid
-            AND is_active = true
-          LIMIT 1
-        `,
-        [effectiveTargetPunchId, context.tenant_id, context.employee_id]
-      );
-      const targetPunch = targetPunchResult.rows[0];
-      if (!targetPunch) return res.status(400).json({ error: 'target_punch_id no corresponde al empleado' });
-      if (!isPunchCompatibleWithAbsenceEvent(effectiveEventShortName, targetPunch.punch_key)) {
-        return res.status(400).json({ error: 'La marcación seleccionada no corresponde al evento indicado' });
-      }
+    if (effectiveAttendanceEventId) {
+      const punchSelectionError = await validateEventPunchSelection({
+        tenantId: context.tenant_id,
+        employeeId: context.employee_id,
+        attendanceEventId: effectiveAttendanceEventId,
+        targetPunchId: effectiveTargetPunchId,
+      });
+      if (punchSelectionError) return res.status(400).json({ error: punchSelectionError });
     }
 
     const effectiveJustificationTypeId = justificationTypeId ?? current.justification_type_id;
@@ -3284,11 +3255,6 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
     }
 
-    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-    const canApprove = hasApprovalPermission(roleKeys);
-    if (!canApprove) {
-      return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
-    }
     const canViewApprovals = await assertApproverActionPermission({
       userContext,
       screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
@@ -3393,10 +3359,6 @@ router.get('/requests/approvals/catalogs', async (req: Request, res: Response) =
     if (!userContext) {
       return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
     }
-    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-    if (!hasApprovalPermission(roleKeys)) {
-      return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
-    }
     const canViewApprovals = await assertApproverActionPermission({
       userContext,
       screenKeys: REQUESTS_APPROVAL_SCREEN_KEYS,
@@ -3437,10 +3399,6 @@ router.patch('/requests/:id/review-fields', async (req: Request, res: Response) 
     const userContext = await resolveUserContext(req);
     if (!userContext) {
       return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
-    }
-    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-    if (!hasApprovalPermission(roleKeys)) {
-      return res.status(403).json({ error: 'No tiene permisos para revisar solicitudes' });
     }
     const canEditApprovals = await assertApproverActionPermission({
       userContext,
@@ -3541,11 +3499,6 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
     }
 
-    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-    const canApprove = hasApprovalPermission(roleKeys);
-    if (!canApprove) {
-      return res.status(403).json({ error: 'No tiene permisos para aprobar solicitudes' });
-    }
     const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
       userContext.tenant_id,
       userContext.user_id
@@ -4721,10 +4674,6 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
       return res.status(403).json({ error: 'No existe usuario interno asociado al autenticado' });
     }
 
-    const roleKeys = await getApproverRoleKeys(userContext.tenant_id, userContext.user_id);
-    if (!hasApprovalPermission(roleKeys)) {
-      return res.status(403).json({ error: 'No tiene permisos para aprobar/denegar cambios de turno' });
-    }
     const managedEmployeeIds = await resolveManagedEmployeeIdsForApprover(
       userContext.tenant_id,
       userContext.user_id
@@ -4934,7 +4883,8 @@ router.get('/time-punch-requests/catalogs', async (req: Request, res: Response) 
       ),
       pool.query(
         `
-          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order,
+                 (lv.metadata->>'device_code')::integer AS device_code
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
           WHERE lg.lookup_group_key = $1
@@ -5622,7 +5572,8 @@ router.get('/time-punch-requests/approvals/catalogs', async (req: Request, res: 
       ),
       pool.query(
         `
-          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order
+          SELECT lv.id, lv.lookup_key, lv.lookup_label, lv.lookup_short_label, lv.sort_order,
+                 (lv.metadata->>'device_code')::integer AS device_code
           FROM public.lookup_values lv
           INNER JOIN public.lookup_groups lg ON lg.id = lv.lookup_group_id
           WHERE lg.lookup_group_key = $1
@@ -5951,13 +5902,14 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
         }
         const approvedPunchSourceId =
           normalizeNullableText(requestedValues.punch_source_id) ||
-          (await resolveLookupValueIdByGroupKeyAndKeys(
+          (await resolveLookupValueIdByGroupMetadata(
             approver.userContext.tenant_id,
             PUNCH_SOURCE_GROUP_KEY,
-            [FIXED_PUNCH_SOURCE_KEY]
+            'usage_key',
+            'EMPLOYEE_WEB_PUNCH'
           ));
         if (!approvedPunchSourceId) {
-          return res.status(400).json({ error: 'No existe la fuente Aplicacion Web configurada' });
+          return res.status(400).json({ error: 'No existe una fuente de marcacion web configurada' });
         }
         await pool.query(
           `
@@ -5989,7 +5941,11 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
             current.employee_id,
             requestedValues.time_clock_device_id || null,
             requestedValues.punch_datetime,
-            requestedValues.punch_time_zone || 'America/Guayaquil',
+            requestedValues.punch_time_zone || await resolveEffectiveAttendanceTimeZone(pool, {
+              tenantId: current.tenant_id,
+              companyId: requestedValues.company_id || current.company_id,
+              employeeId: current.employee_id,
+            }),
             Math.trunc(Number(requestedValues.punch_key)),
             approvedPunchSourceId,
             requestedValues.time_punch_status_id || null,

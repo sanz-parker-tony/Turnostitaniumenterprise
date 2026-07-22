@@ -88,9 +88,11 @@ export default function ChangePasswordModal({
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [passwordMinLength, setPasswordMinLength] = useState<number | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
+    const controller = new AbortController();
     setLoginId(initialLoginId.trim());
     setCurrentPassword('');
     setNewPassword('');
@@ -100,6 +102,24 @@ export default function ChangePasswordModal({
     setShowConfirmPassword(false);
     setIsLoading(false);
     setError('');
+    setPasswordMinLength(null);
+
+    void fetch(buildApiUrl('/auth/policy'), { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        const configuredLength = Number(payload?.password_min_length);
+        if (!response.ok || !Number.isInteger(configuredLength) || configuredLength < 1) {
+          throw new Error(payload?.error || 'No se pudo cargar la política de contraseñas.');
+        }
+        setPasswordMinLength(configuredLength);
+      })
+      .catch((policyError) => {
+        if (policyError?.name !== 'AbortError') {
+          setError(policyError?.message || 'No se pudo cargar la política de contraseñas.');
+        }
+      });
+
+    return () => controller.abort();
   }, [initialLoginId, isOpen]);
 
   if (!isOpen) return null;
@@ -117,8 +137,12 @@ export default function ChangePasswordModal({
       setError('Ingrese su contraseña actual.');
       return;
     }
-    if (newPassword.length < 8) {
-      setError('La nueva contraseña debe tener al menos 8 caracteres.');
+    if (passwordMinLength === null) {
+      setError('La política de contraseñas todavía no está disponible.');
+      return;
+    }
+    if (newPassword.length < passwordMinLength) {
+      setError(`La nueva contraseña debe tener al menos ${passwordMinLength} caracteres.`);
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -249,8 +273,8 @@ export default function ChangePasswordModal({
             visible={showNewPassword}
             onToggleVisibility={() => setShowNewPassword((value) => !value)}
             autoComplete="new-password"
-            placeholder="Mínimo 8 caracteres"
-            disabled={isLoading}
+            placeholder={passwordMinLength === null ? 'Cargando política...' : `Mínimo ${passwordMinLength} caracteres`}
+            disabled={isLoading || passwordMinLength === null}
           />
           <PasswordField
             id="change-password-confirm"
@@ -266,8 +290,8 @@ export default function ChangePasswordModal({
 
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className={`h-4 w-4 ${newPassword.length >= 8 ? 'text-green-600' : 'text-blue-400'}`} />
-              Mínimo 8 caracteres
+              <CheckCircle2 className={`h-4 w-4 ${passwordMinLength !== null && newPassword.length >= passwordMinLength ? 'text-green-600' : 'text-blue-400'}`} />
+              {passwordMinLength === null ? 'Cargando política de longitud' : `Mínimo ${passwordMinLength} caracteres`}
             </div>
             <div className="mt-1 flex items-center gap-2">
               <CheckCircle2 className={`h-4 w-4 ${newPassword && newPassword === confirmPassword ? 'text-green-600' : 'text-blue-400'}`} />
@@ -279,7 +303,7 @@ export default function ChangePasswordModal({
             <button
               type="button"
               onClick={onClose}
-              disabled={isLoading}
+              disabled={isLoading || passwordMinLength === null}
               className="flex-1 rounded-lg bg-gray-100 px-4 py-2.5 font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancelar

@@ -22,7 +22,7 @@ async function resolveViewerContext(req: Request) {
       SELECT
         u.id AS user_id,
         u.tenant_id,
-        ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys
+        COALESCE(BOOL_OR(UPPER(COALESCE(r.data_scope, '')) = 'ALL'), false) AS unrestricted
       FROM public.users u
       LEFT JOIN public.user_roles ur
         ON ur.user_id = u.id
@@ -42,14 +42,10 @@ async function resolveViewerContext(req: Request) {
 
   const context = result.rows[0];
   if (!context?.tenant_id || !context?.user_id) return null;
-  const roleKeys = (context.role_keys || []).map((roleKey: string) => String(roleKey || '').trim().toUpperCase());
-  const canView = roleKeys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(roleKey));
-  if (!canView) return null;
-
   return {
     tenant_id: String(context.tenant_id),
     user_id: String(context.user_id),
-    role_keys: roleKeys,
+    unrestricted: context.unrestricted === true,
   };
 }
 
@@ -129,7 +125,6 @@ function buildAssignedEmployeesSql(unrestricted: boolean) {
       AND ur.is_active = true
       AND (ur.valid_from IS NULL OR ur.valid_from <= now())
       AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-      AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
     ORDER BY e.id, c.company_name NULLS LAST, e.employee_lastname, e.employee_name
   `;
 }
@@ -139,7 +134,7 @@ router.get('/employees', async (req: Request, res: Response) => {
     const context = await resolveViewerContext(req);
     if (!context) return res.status(403).json({ error: 'Reporte disponible para Supervisor/RRHH' });
 
-    const unrestricted = context.role_keys.includes('TENANT_ADMIN') && !context.role_keys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
+    const unrestricted = context.unrestricted;
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
     const params = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
     const search = normalizeNullableText(req.query.search);
@@ -181,7 +176,7 @@ router.get('/employee-route', async (req: Request, res: Response) => {
     if (!dateFrom || !isIsoDate(dateFrom)) return res.status(400).json({ error: 'date_from debe tener formato YYYY-MM-DD' });
     if (!dateTo || !isIsoDate(dateTo)) return res.status(400).json({ error: 'date_to debe tener formato YYYY-MM-DD' });
 
-    const unrestricted = context.role_keys.includes('TENANT_ADMIN') && !context.role_keys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
+    const unrestricted = context.unrestricted;
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
     const scopedParams = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
     const params = [...scopedParams, employeeId, `${dateFrom}T00:00:00`, `${dateTo}T23:59:59`];

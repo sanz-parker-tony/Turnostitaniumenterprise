@@ -30,6 +30,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { StandardDateInput } from '@/components/ui/standard-date-input';
+import { getClientTimeZone } from '@/utils/date-time';
 import {
   generateShiftPlanning,
   ShiftPlanningGeneratePayload,
@@ -85,6 +86,7 @@ type ShiftTypeRow = {
 };
 
 type CatalogsResponse = {
+  attendance_timezone?: string;
   employees: EmployeeRow[];
   shifts: ShiftRow[];
   shift_types: ShiftTypeRow[];
@@ -215,9 +217,9 @@ function toIsoDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function getGuayaquilNow(): { dateIso: string; minutes: number } {
+function getBusinessNow(timeZone: string): { dateIso: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Guayaquil',
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -235,12 +237,12 @@ function getGuayaquilNow(): { dateIso: string; minutes: number } {
   };
 }
 
-function isFutureDateIso(dateIso: string): boolean {
-  return dateIso > getGuayaquilNow().dateIso;
+function isFutureDateIso(dateIso: string, timeZone: string): boolean {
+  return dateIso > getBusinessNow(timeZone).dateIso;
 }
 
-function isCurrentOrFutureDateIso(dateIso: string): boolean {
-  return dateIso >= getGuayaquilNow().dateIso;
+function isCurrentOrFutureDateIso(dateIso: string, timeZone: string): boolean {
+  return dateIso >= getBusinessNow(timeZone).dateIso;
 }
 
 function startOfWeek(date: Date): Date {
@@ -364,6 +366,7 @@ function isShiftCompatibleWithEmployee(shift: ShiftRow, employee: EmployeeRow): 
 }
 
 export function EmployeeShiftPlanningManagement() {
+  const [attendanceTimeZone, setAttendanceTimeZone] = useState(getClientTimeZone());
   const initialStart = startOfWeek(new Date());
   const initialEnd = addDays(initialStart, 6);
 
@@ -657,6 +660,7 @@ export function EmployeeShiftPlanningManagement() {
     }
 
     const payload = catalogsResult.value as CatalogsResponse;
+    if (payload.attendance_timezone) setAttendanceTimeZone(payload.attendance_timezone);
     setEmployees(payload.employees || []);
     setShifts(payload.shifts || []);
     setShiftTypes(payload.shift_types || []);
@@ -787,7 +791,7 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const isShiftAssignableOnDate = (shift: ShiftRow, dateIso: string): boolean => {
-    const now = getGuayaquilNow();
+    const now = getBusinessNow(attendanceTimeZone);
     if (dateIso > now.dateIso) return true;
     if (dateIso < now.dateIso) return false;
 
@@ -807,8 +811,8 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const canAssignShiftOnDate = (shiftId: string | null, dateIso: string): boolean => {
-    if (!isCurrentOrFutureDateIso(dateIso)) return false;
-    if (dateIso > getGuayaquilNow().dateIso) return true;
+    if (!isCurrentOrFutureDateIso(dateIso, attendanceTimeZone)) return false;
+    if (dateIso > getBusinessNow(attendanceTimeZone).dateIso) return true;
     if (!shiftId) return false;
 
     const shift = shiftsById.get(shiftId);
@@ -1024,7 +1028,7 @@ export function EmployeeShiftPlanningManagement() {
 
   const applyGeneratedPlanningToTable = (planificacion: ShiftPlanningGeneratedItem[]) => {
     const employeesById = new Map(filteredEmployees.map((employee) => [employee.id, employee]));
-    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)).filter(isFutureDateIso));
+    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)).filter((dateIso) => isFutureDateIso(dateIso, attendanceTimeZone)));
     const generated: Record<string, DayCellChange> = {};
     let appliedCount = 0;
 
@@ -1095,7 +1099,7 @@ export function EmployeeShiftPlanningManagement() {
       return;
     }
 
-    if (!rangeDays.some((day) => isFutureDateIso(toIsoDate(day)))) {
+    if (!rangeDays.some((day) => isFutureDateIso(toIsoDate(day), attendanceTimeZone))) {
       setError('No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
       return;
     }
@@ -1138,7 +1142,7 @@ export function EmployeeShiftPlanningManagement() {
     filteredEmployees.forEach((employee) => {
       rangeDays.forEach((day) => {
         const dateIso = toIsoDate(day);
-        if (!isCurrentOrFutureDateIso(dateIso)) return;
+        if (!isCurrentOrFutureDateIso(dateIso, attendanceTimeZone)) return;
 
         const cellKey = keyOf(employee.id, dateIso);
         const explicitChange = changes[cellKey];
@@ -1232,8 +1236,8 @@ export function EmployeeShiftPlanningManagement() {
 
     const editableRangeDays = rangeDays.filter((day) => (
       patternSelectionMode === 'custom'
-        ? isCurrentOrFutureDateIso(toIsoDate(day))
-        : isFutureDateIso(toIsoDate(day))
+        ? isCurrentOrFutureDateIso(toIsoDate(day), attendanceTimeZone)
+        : isFutureDateIso(toIsoDate(day), attendanceTimeZone)
     ));
     if (editableRangeDays.length === 0) {
       setError(patternSelectionMode === 'custom'
@@ -1718,8 +1722,8 @@ export function EmployeeShiftPlanningManagement() {
                           const label = shift?.shift_name || KIND_META[kind].label;
                           const hint = getShiftTimeHint(shift, kind);
                           const cycleOptions = buildCycleOptions(dateIso);
-                          const isToday = dateIso === getGuayaquilNow().dateIso;
-                          const editable = !confirmed && isCurrentOrFutureDateIso(dateIso) && cycleOptions.length > 0;
+                          const isToday = dateIso === getBusinessNow(attendanceTimeZone).dateIso;
+                          const editable = !confirmed && isCurrentOrFutureDateIso(dateIso, attendanceTimeZone) && cycleOptions.length > 0;
                           const title = !editable
                             ? confirmed
                               ? `${label} | ${hint} | La planificación está confirmada`

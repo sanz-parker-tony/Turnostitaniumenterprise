@@ -35,7 +35,13 @@ interface UserProfile {
   is_super_admin?: boolean;  // ✅ Indica si tiene rol SYSTEM
   role_scope?: 'SYSTEM' | 'TENANT';  // ✅ Scope del rol principal
   role_key?: string;  // ✅ Key del rol principal
-  role_name?: string;  // ✅ Nombre del rol principal
+  role_name?: string;
+  data_scope?: 'ALL' | 'DIRECT_REPORTS' | 'SELF';
+  is_tenant_administrator?: boolean;
+  is_employee_self_service?: boolean;
+  ui_dashboard_mode?: 'PLATFORM' | 'TENANT' | 'WORKFORCE' | 'SELF' | 'GENERIC';
+  ui_home_route?: string;
+  role_keys?: string[];
 }
 
 interface AuthContextType {
@@ -56,7 +62,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const POST_LOGIN_ROUTE_KEY = 'tt-post-login-route';
 const POST_LOGIN_RESOLVING_KEY = 'tt-post-login-resolving';
 const DEFAULT_DASHBOARD_ROUTE = '/dashboard';
-const EMPLOYEE_DEFAULT_ROUTE = '/kiosk/timeclock';
 const KIOSK_TIMECLOCK_ROUTES = new Set([
   '/dashboard/kiosk/timeclock',
   '/kiosk/timeclock',
@@ -101,100 +106,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setAuthStatusMessage('Ejecutando query: buscar perfil por auth_user_id...');
       console.log('📋 Buscando perfil en BD para auth_user_id:', currentUser.id);
       
-      // ✅ PASO 1: Buscar por auth_user_id primero
-      const { data: existingUser, error: queryError } = await ApiClient
-        .from('users_with_primary_role')
-        .select('id, auth_user_id, tenant_id, tenant_name, username, email, display_name, preferred_language_code, last_login_at, created_at, role_key, role_name, role_scope, is_super_admin')
-        .eq('auth_user_id', currentUser.id)
-        .limit(1)
-        .single();
+      // El perfil propio se obtiene por un endpoint autenticado que resuelve la
+      // identidad desde el token. No requiere privilegios de administración de usuarios.
+      const { data: sessionData } = await ApiClient.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) {
+        throw new Error('No existe una sesión activa para cargar el perfil');
+      }
+
+      const profileResponse = await fetch(buildApiUrl('/users/profile'), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const profilePayload = await profileResponse.json().catch(() => ({}));
+      const existingUser = profileResponse.ok ? profilePayload?.profile : null;
+      const queryError = profileResponse.ok
+        ? null
+        : {
+            message: profilePayload?.error || `No se pudo cargar el perfil (HTTP ${profileResponse.status})`,
+            code: profileResponse.status === 404 ? 'PGRST116' : `HTTP_${profileResponse.status}`,
+          };
 
       if (queryError) {
-        // Si es error de "no encontrado", intentar por email
-        if (queryError.code === 'PGRST116' && currentUser.email) {
-          setAuthStatusMessage('No se encontro por auth_user_id. Ejecutando query por email...');
-          console.log('🔍 Usuario no encontrado por auth_user_id, buscando por email:', currentUser.email);
-          
-          const { data: userByEmail, error: emailError } = await ApiClient
-            .from('users_with_primary_role')
-            .select('id, auth_user_id, tenant_id, tenant_name, username, email, display_name, preferred_language_code, last_login_at, created_at, role_key, role_name, role_scope, is_super_admin')
-            .eq('email', currentUser.email)
-            .limit(1)
-            .single();
-
-          if (emailError) {
-            if (emailError.code !== 'PGRST116') {
-              console.error('❌ Error al consultar usuario por email:', emailError);
-            }
-            // Usuario no existe en BD - esto es normal en algunos casos
-            console.warn('⚠️ Usuario no encontrado en BD');
-            return;
-          }
-
-          if (userByEmail) {
-            setAuthStatusMessage('Usuario encontrado. Actualizando auth_user_id...');
-            console.log('✅ Usuario encontrado por email, vinculando auth_user_id...');
-            
-            // Actualizar el auth_user_id en la tabla users
-            setAuthStatusMessage('Actualizando auth_user_id...');
-            await ApiClient
-              .from('users')
-              .update({ 
-                auth_user_id: currentUser.id,
-                updated_by: userByEmail.username,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', userByEmail.id);
-
-            console.log('✅ auth_user_id vinculado correctamente');
-            
-            // Usar este usuario para continuar
-            const formattedProfile: UserProfile = {
-              id: userByEmail.id,
-              auth_user_id: currentUser.id,
-              tenant_id: userByEmail.tenant_id,
-              tenant_name: userByEmail.tenant_name || 'Sin Tenant',
-              username: userByEmail.username,
-              email: userByEmail.email,
-              display_name: userByEmail.display_name,
-              preferred_language_code: userByEmail.preferred_language_code,
-              last_login_at: userByEmail.last_login_at,
-              created_at: userByEmail.created_at,
-              is_super_admin: userByEmail.is_super_admin,
-              role_scope: userByEmail.role_scope,
-              role_key: userByEmail.role_key,
-              role_name: userByEmail.role_name
-            };
-            
-            console.log('✅ Perfil cargado desde BD:', formattedProfile);
-            setProfile(formattedProfile);
-            localStorage.setItem('user_profile', JSON.stringify(formattedProfile));
-            
-            if (userByEmail.role_key) {
-              setUserRoles([userByEmail.role_key]);
-              console.log('✅ Roles establecidos:', [userByEmail.role_key]);
-            } else {
-              setUserRoles([]);
-            }
-            
-            // Actualizar last_login_at
-            setAuthStatusMessage('Actualizando ultimo login...');
-            await ApiClient
-              .from('users')
-              .update({ 
-                last_login_at: new Date().toISOString(),
-                updated_by: userByEmail.username,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', userByEmail.id);
-
-            return formattedProfile;
-          }
-          return null;
-        } else {
-          console.error('❌ Error al consultar usuario:', queryError);
-          throw queryError;
-        }
+        console.error('❌ Error al consultar el perfil propio:', queryError);
+        throw queryError;
       }
 
       if (existingUser) {
@@ -216,7 +150,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           is_super_admin: existingUser.is_super_admin,
           role_scope: existingUser.role_scope,
           role_key: existingUser.role_key,
-          role_name: existingUser.role_name
+          role_name: existingUser.role_name,
+          data_scope: existingUser.data_scope,
+          is_tenant_administrator: existingUser.is_tenant_administrator,
+          is_employee_self_service: existingUser.is_employee_self_service,
+          ui_dashboard_mode: existingUser.ui_dashboard_mode,
+          ui_home_route: existingUser.ui_home_route,
+          role_keys: Array.isArray(existingUser.role_keys) ? existingUser.role_keys : []
         };
         
         console.log('✅ Perfil cargado desde BD:', formattedProfile);
@@ -224,23 +164,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('user_profile', JSON.stringify(formattedProfile));
         
         // ✅ Establecer userRoles array (por ahora solo el rol principal)
-        if (existingUser.role_key) {
-          setUserRoles([existingUser.role_key]);
-          console.log('✅ Roles establecidos:', [existingUser.role_key]);
+        const resolvedRoleKeys = Array.from(new Set([
+          ...(Array.isArray(existingUser.role_keys) ? existingUser.role_keys : []),
+          existingUser.role_key,
+        ].map((role) => String(role || '').trim().toUpperCase()).filter(Boolean)));
+        if (resolvedRoleKeys.length > 0) {
+          setUserRoles(resolvedRoleKeys);
+          console.log('✅ Roles establecidos:', resolvedRoleKeys);
         } else {
           setUserRoles([]);
         }
-        
-        // Actualizar last_login_at
-        setAuthStatusMessage('Actualizando ultimo login...');
-        await ApiClient
-          .from('users')
-          .update({ 
-            last_login_at: new Date().toISOString(),
-            updated_by: existingUser.username,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingUser.id);
         
         return formattedProfile;
       }
@@ -272,61 +205,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const resolveUserRoleKeys = async (loadedProfile: UserProfile | null): Promise<string[]> => {
-    const profileRoleKey = String(loadedProfile?.role_key || '').trim().toUpperCase();
     const roleKeys = new Set<string>();
 
-    if (profileRoleKey) {
-      roleKeys.add(profileRoleKey);
-    }
-
-    if (!loadedProfile?.id) {
-      return Array.from(roleKeys);
-    }
-
-    const { data: userRoleRows, error: userRolesError } = await ApiClient
-      .from('user_roles')
-      .select('role_id')
-      .eq('user_id', loadedProfile.id)
-      .eq('is_active', true);
-
-    if (userRolesError) {
-      console.warn('[AUTH] No se pudieron resolver user_roles para post-login:', userRolesError);
-      return Array.from(roleKeys);
-    }
-
-    const roleIds = Array.from(
-      new Set((userRoleRows || []).map((item: any) => item?.role_id).filter(Boolean))
-    );
-
-    if (roleIds.length === 0) {
-      return Array.from(roleKeys);
-    }
-
-    const { data: roleRows, error: rolesError } = await ApiClient
-      .from('roles')
-      .select('role_key')
-      .in('id', roleIds)
-      .eq('is_active', true);
-
-    if (rolesError) {
-      console.warn('[AUTH] No se pudieron resolver roles para post-login:', rolesError);
-      return Array.from(roleKeys);
-    }
-
-    (roleRows || []).forEach((item: any) => {
-      const assignedRoleKey = String(item?.role_key || '').trim().toUpperCase();
-      if (assignedRoleKey) {
-        roleKeys.add(assignedRoleKey);
-      }
+    (loadedProfile?.role_keys || []).forEach((roleKey) => {
+      const normalizedRoleKey = String(roleKey || '').trim().toUpperCase();
+      if (normalizedRoleKey) roleKeys.add(normalizedRoleKey);
     });
+
+    const profileRoleKey = String(loadedProfile?.role_key || '').trim().toUpperCase();
+    if (profileRoleKey) roleKeys.add(profileRoleKey);
 
     return Array.from(roleKeys);
   };
 
-  const resolvePostLoginRoute = async (roleKeys: string[], accessToken: string | null | undefined): Promise<string> => {
-    if (roleKeys.includes('EMPLOYEE')) {
-      return EMPLOYEE_DEFAULT_ROUTE;
-    }
+  const resolvePostLoginRoute = async (loadedProfile: UserProfile | null, accessToken: string | null | undefined): Promise<string> => {
+    const configuredHome = String(loadedProfile?.ui_home_route || '').trim();
+    if (configuredHome.startsWith('/')) return configuredHome;
 
     if (!accessToken) {
       return DEFAULT_DASHBOARD_ROUTE;
@@ -351,7 +245,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return screenKey === 'KIOSK_TIMECLOCK' || KIOSK_TIMECLOCK_ROUTES.has(routePath);
       });
 
-      return hasKioskTimeclock ? EMPLOYEE_DEFAULT_ROUTE : DEFAULT_DASHBOARD_ROUTE;
+      return hasKioskTimeclock
+        ? String(screens.find((screen: any) => KIOSK_TIMECLOCK_ROUTES.has(String(screen?.route_path || '').trim()))?.route_path || DEFAULT_DASHBOARD_ROUTE)
+        : DEFAULT_DASHBOARD_ROUTE;
     } catch (error) {
       console.warn('[AUTH] Error resolviendo ruta post-login:', error);
       return DEFAULT_DASHBOARD_ROUTE;
@@ -523,7 +419,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const loadedProfile = await loadProfile(data.user);
           const roleKeys = await resolveUserRoleKeys(loadedProfile);
           setUserRoles(roleKeys);
-          const routeAfterLogin = await resolvePostLoginRoute(roleKeys, data.session?.access_token);
+          const routeAfterLogin = await resolvePostLoginRoute(loadedProfile, data.session?.access_token);
 
           if (typeof window !== 'undefined') {
             if (routeAfterLogin !== DEFAULT_DASHBOARD_ROUTE) {

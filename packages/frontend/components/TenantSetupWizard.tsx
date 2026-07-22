@@ -13,6 +13,7 @@ import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png
 import { toast } from 'sonner';
 import { useAuth } from '../contexts/AuthContext';
 import { ApiClient } from '../lib/api-client';
+import { useAuthenticationPolicy } from '../lib/authentication-policy';
 
 interface TenantSetupWizardProps {
   onComplete: () => void;
@@ -20,6 +21,7 @@ interface TenantSetupWizardProps {
 
 export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps) {
   const { session } = useAuth(); // Obtener session del AuthContext
+  const { policy: authenticationPolicy, error: authenticationPolicyError } = useAuthenticationPolicy();
   const [currentStep, setCurrentStep] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [checkingState, setCheckingState] = useState(true);
@@ -301,9 +303,13 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
       return;
     }
 
-    if (adminData.password.length < 8) {
+    if (!authenticationPolicy) {
+      toast.error(authenticationPolicyError || 'La política de autenticación todavía no está disponible');
+      return;
+    }
+    if (adminData.password.length < authenticationPolicy.passwordMinLength) {
       console.error('❌ La contraseña es muy corta');
-      toast.error('La contraseña debe tener al menos 8 caracteres');
+      toast.error(`La contraseña debe tener al menos ${authenticationPolicy.passwordMinLength} caracteres`);
       return;
     }
 
@@ -567,7 +573,7 @@ export default function TenantSetupWizard({ onComplete }: TenantSetupWizardProps
                     onChange={(e) => setAdminData({ ...adminData, password: e.target.value })}
                     required
                     className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                    placeholder="Mínimo 8 caracteres"
+                    placeholder={authenticationPolicy ? `Mínimo ${authenticationPolicy.passwordMinLength} caracteres` : 'Cargando política...'}
                   />
                   <button
                     type="button"

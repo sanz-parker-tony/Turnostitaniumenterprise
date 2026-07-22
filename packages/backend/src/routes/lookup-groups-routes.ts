@@ -41,10 +41,15 @@ async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
   };
 }
 
-async function hasRole(ctx: AuthContext, roleKey: 'SYSTEM_ADMIN' | 'TENANT_ADMIN'): Promise<boolean> {
+async function getAdministrativeCapabilities(ctx: AuthContext): Promise<{
+  isSystemAdministrator: boolean;
+  isTenantAdministrator: boolean;
+}> {
   const result = await pool.query(
     `
-      SELECT 1
+      SELECT
+        COALESCE(bool_or(r.role_scope = 'SYSTEM' AND r.is_system_role = true), false) AS is_system_administrator,
+        COALESCE(bool_or(r.is_tenant_administrator = true), false) AS is_tenant_administrator
       FROM user_roles ur
       JOIN roles r
         ON r.id = ur.role_id
@@ -52,13 +57,14 @@ async function hasRole(ctx: AuthContext, roleKey: 'SYSTEM_ADMIN' | 'TENANT_ADMIN
       WHERE ur.user_id = $1
         AND ur.tenant_id = $2
         AND ur.is_active = true
-        AND r.role_key = $3
-      LIMIT 1
     `,
-    [ctx.userId, ctx.tenantId, roleKey]
+    [ctx.userId, ctx.tenantId]
   );
 
-  return result.rows.length > 0;
+  return {
+    isSystemAdministrator: Boolean(result.rows[0]?.is_system_administrator),
+    isTenantAdministrator: Boolean(result.rows[0]?.is_tenant_administrator),
+  };
 }
 
 type TableReference = {
@@ -131,8 +137,8 @@ async function findReferenceUsage(targetTable: string, id: string, ignoreTables:
 router.get('/', async (req: Request, res: Response) => {
   try {
     const ctx = await resolveAuthContext(req);
-    const isSystemAdmin = ctx ? await hasRole(ctx, 'SYSTEM_ADMIN') : false;
-    const isTenantAdmin = ctx ? await hasRole(ctx, 'TENANT_ADMIN') : false;
+    const capabilities = ctx ? await getAdministrativeCapabilities(ctx) : null;
+    const isSystemAdmin = capabilities?.isSystemAdministrator === true;
 
     const Postgres = createDbClient(
       process.env.Postgres_URL || '',
@@ -157,27 +163,12 @@ router.get('/', async (req: Request, res: Response) => {
       return res.status(500).json({ error: error.message });
     }
 
-    let filteredGroups = groups || [];
-    if (ctx && isTenantAdmin && !isSystemAdmin) {
-      const ownTag = `TENANT_ADMIN:${ctx.tenantId}`;
-      filteredGroups = filteredGroups.filter((g: any) => {
-        const createdBy = String(g?.created_by || '');
-        const isTenantOwnedByAny = createdBy.startsWith('TENANT_ADMIN:');
-        if (!isTenantOwnedByAny) return true; // grupo de sistema/global
-        return createdBy === ownTag; // solo sus grupos tenant
-      });
-    }
-
-    const groupsWithFlags = filteredGroups.map((g: any) => {
-      const createdBy = String(g?.created_by || '');
-      const ownerTenantId = createdBy.startsWith('TENANT_ADMIN:') ? createdBy.replace('TENANT_ADMIN:', '') : null;
-      const isTenantCatalog = !!ownerTenantId;
-      const canEditForCurrentUser = isSystemAdmin || (ctx ? ownerTenantId === ctx.tenantId : false);
+    const groupsWithFlags = (groups || []).map((g: any) => {
       return {
         ...g,
-        owner_tenant_id: ownerTenantId,
-        is_tenant_catalog: isTenantCatalog,
-        can_edit_for_current_user: canEditForCurrentUser,
+        owner_tenant_id: null,
+        is_tenant_catalog: false,
+        can_edit_for_current_user: isSystemAdmin,
       };
     });
 
@@ -265,13 +256,9 @@ router.post('/', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
-
-    if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede crear grupos de catalogo' });
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    if (!capabilities.isSystemAdministrator) {
+      return res.status(403).json({ error: 'La creación de grupos de catálogo está reservada a la administración del sistema' });
     }
 
     const body = req.body;
@@ -330,10 +317,10 @@ router.post('/', async (req: Request, res: Response) => {
         lookup_group_key: lookup_group_key.toUpperCase(),
         lookup_group_label: lookup_group_label.trim(),
         lookup_group_short_label: lookup_group_short_label.trim(),
-        allows_tenant_items: isSystemAdmin ? (allows_tenant_items ?? false) : true,
-        management_policy: isSystemAdmin ? (management_policy || {}) : {},
+        allows_tenant_items: allows_tenant_items ?? false,
+        management_policy: management_policy || {},
         is_active: is_active ?? true,
-        created_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`
+        created_by: ctx.authUserId,
       })
       .select()
       .single();
@@ -386,12 +373,9 @@ router.put('/:id', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
-    if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'No autorizado para editar grupos de catalogo' });
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    if (!capabilities.isSystemAdministrator) {
+      return res.status(403).json({ error: 'La edición de grupos de catálogo está reservada a la administración del sistema' });
     }
 
     const id = req.params.id;
@@ -432,25 +416,16 @@ router.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Grupo no encontrado' });
     }
 
-    if (!isSystemAdmin) {
-      const ownerTag = `TENANT_ADMIN:${ctx.tenantId}`;
-      if (String(existingGroup.created_by || '') !== ownerTag) {
-        return res.status(403).json({
-          error: 'TENANT_ADMIN solo puede editar grupos de catalogo creados por su tenant'
-        });
-      }
-    }
-
     // Actualizar grupo
     const { data: updatedGroup, error: updateError } = await Postgres
       .from('lookup_groups')
       .update({
         lookup_group_label: lookup_group_label.trim(),
         lookup_group_short_label: lookup_group_short_label.trim(),
-        allows_tenant_items: isSystemAdmin ? (allows_tenant_items ?? false) : true,
-        ...(isSystemAdmin && management_policy !== undefined ? { management_policy } : {}),
+        allows_tenant_items: allows_tenant_items ?? false,
+        ...(management_policy !== undefined ? { management_policy } : {}),
         is_active: is_active ?? true,
-        updated_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`,
+        updated_by: ctx.authUserId,
         updated_at: new Date().toISOString()
       })
       .eq('id', id)
@@ -512,12 +487,9 @@ router.delete('/:id', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
-    if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'No autorizado para eliminar grupos de catalogo' });
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    if (!capabilities.isSystemAdministrator) {
+      return res.status(403).json({ error: 'La eliminación de grupos de catálogo está reservada a la administración del sistema' });
     }
 
     const id = String(req.params.id || '').trim();
@@ -536,15 +508,6 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     if (existingErr) return res.status(500).json({ error: existingErr.message });
     if (!existingGroup) return res.status(404).json({ error: 'Grupo no encontrado' });
-
-    if (!isSystemAdmin) {
-      const ownerTag = `TENANT_ADMIN:${ctx.tenantId}`;
-      if (String(existingGroup.created_by || '') !== ownerTag) {
-        return res.status(403).json({
-          error: 'TENANT_ADMIN solo puede eliminar grupos de catalogo creados por su tenant',
-        });
-      }
-    }
 
     const { data: relatedValues, error: valuesErr } = await Postgres
       .from('lookup_values')

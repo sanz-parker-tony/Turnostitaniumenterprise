@@ -4,6 +4,9 @@
 -- ============================================================================
 -- Descripción:
 --   Inserta TODOS los datos base del sistema (sin DDL persistente)
+--   Antes de ejecutarlo, configure en la misma sesión PostgreSQL:
+--     SET turnos.bootstrap_admin_email = 'correo-administrador';
+--     SET turnos.bootstrap_admin_password = 'contraseña-segura-de-12-o-más';
 --   
 -- Contenido:
 --   1. TENANT ÚNICO (SYSTEM) + 5 ROLES BASE (protocolo SELLADO)
@@ -28,7 +31,7 @@
 --   7. TRADUCCIONES COMPLETAS ES/EN/PT
 --      - Grupos de menú, pantallas, acciones y catálogos
 --      - Ítems de catálogo, reportes, parámetros y mensajes
---   8. USUARIO BOOTSTRAP (system.admin@titanium-labs.com)
+--   8. USUARIO BOOTSTRAP (credenciales provistas por configuración de sesión)
 --   9. TENANT ONBOARDING (estado inicial para wizard)
 --
 -- Notas importantes:
@@ -42,6 +45,8 @@
 -- ============================================================================
 
 BEGIN;
+
+SET LOCAL search_path = public, pg_catalog;
 
 -- ============================================================================
 -- PRECHECK: ESTRUCTURA ORGANIZACIONAL CON LEGACY_ID
@@ -168,7 +173,7 @@ ON CONFLICT (message_key, language_code) DO UPDATE SET
 
 -- KV store
 INSERT INTO public.kv_store_e19f2094 (key, value)
-VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V4'))
+VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V12'))
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- ============================================================================
@@ -188,15 +193,19 @@ BEGIN
   SELECT id INTO v_tenant_id FROM public.tenants WHERE tenant_key = 'SYSTEM';
   IF v_tenant_id IS NULL THEN RAISE EXCEPTION 'ERROR: TENANT SYSTEM no existe'; END IF;
 
-  INSERT INTO public.roles (tenant_id, role_key, role_name, role_scope, is_system_role, is_locked, data_scope, is_active, created_by) VALUES
-  (v_tenant_id, 'SYSTEM_ADMIN', 'System Administrator', 'SYSTEM', true, true, 'ALL', true, 'SYSTEM'),
-  (v_tenant_id, 'TENANT_ADMIN', 'Administrador del Tenant', 'TENANT', true, true, 'ALL', true, 'SYSTEM'),
-  (v_tenant_id, 'RRHH_ADMIN', 'Administrador de RRHH', 'SCOPE', true, true, 'ALL', true, 'SYSTEM'),
-  (v_tenant_id, 'SUPERVISOR', 'Supervisor', 'SCOPE', true, true, 'DIRECT_REPORTS', true, 'SYSTEM'),
-  (v_tenant_id, 'EMPLOYEE', 'Empleado', 'SCOPE', true, true, 'SELF', true, 'SYSTEM')
+  INSERT INTO public.roles (tenant_id, role_key, role_name, role_scope, is_system_role, is_locked, data_scope, is_tenant_administrator, is_employee_self_service, ui_dashboard_mode, ui_home_route, is_active, created_by) VALUES
+  (v_tenant_id, 'SYSTEM_ADMIN', 'System Administrator', 'SYSTEM', true, true, 'ALL', false, false, 'PLATFORM', '/dashboard', true, 'SYSTEM'),
+  (v_tenant_id, 'TENANT_ADMIN', 'Administrador del Tenant', 'TENANT', true, true, 'ALL', true, false, 'TENANT', '/dashboard', true, 'SYSTEM'),
+  (v_tenant_id, 'RRHH_ADMIN', 'Administrador de RRHH', 'SCOPE', true, true, 'ALL', false, false, 'WORKFORCE', '/dashboard', true, 'SYSTEM'),
+  (v_tenant_id, 'SUPERVISOR', 'Supervisor', 'SCOPE', true, true, 'DIRECT_REPORTS', false, false, 'WORKFORCE', '/dashboard', true, 'SYSTEM'),
+  (v_tenant_id, 'EMPLOYEE', 'Empleado', 'SCOPE', true, true, 'SELF', false, true, 'SELF', '/kiosk/timeclock', true, 'SYSTEM')
   ON CONFLICT (tenant_id, role_key) DO UPDATE SET
     role_name = EXCLUDED.role_name,
     data_scope = EXCLUDED.data_scope,
+    is_tenant_administrator = EXCLUDED.is_tenant_administrator,
+    is_employee_self_service = EXCLUDED.is_employee_self_service,
+    ui_dashboard_mode = EXCLUDED.ui_dashboard_mode,
+    ui_home_route = EXCLUDED.ui_home_route,
     is_locked = true;
 
   -- Gobierno de usuarios persistente y sin listas de roles en el backend.
@@ -629,15 +638,23 @@ ON CONFLICT ON CONSTRAINT uq_lookup_values DO NOTHING;
 
 -- PUNCH_KEY. device_code es el código físico; sort_order solo ordena la UI.
 INSERT INTO public.lookup_values (tenant_id, lookup_group_id, lookup_key, lookup_label, lookup_short_label, lookup_scope, sort_order, is_active, created_by, metadata)
-SELECT NULL, lg.id, vals.key, vals.label, vals.short_label, 'SYSTEM', vals.sort, true, 'SYSTEM', jsonb_build_object('device_code', vals.device_code)
+SELECT NULL, lg.id, vals.key, vals.label, vals.short_label, 'SYSTEM', vals.sort, true, 'SYSTEM',
+       jsonb_strip_nulls(jsonb_build_object(
+         'device_code', vals.device_code,
+         'movement_kind', vals.movement_kind,
+         'direction', vals.direction,
+         'work_boundary', vals.work_boundary,
+         'icon_key', vals.icon_key,
+         'kiosk_column', vals.kiosk_column
+       ))
 FROM public.lookup_groups lg, LATERAL (VALUES
-  ('ENTRY', 'Entrada', 'Entrada', 10, 1),
-  ('LUNCH_OUT', 'Inicio Lunch', 'Inicio Lunch', 20, 2),
-  ('LUNCH_IN', 'Retorno Lunch', 'Retorno Lunch', 30, 3),
-  ('EXIT', 'Salida', 'Salida', 40, 4),
-  ('PERMISSION_OUT', 'Salida Permiso', 'Salida Permiso', 50, 5),
-  ('PERMISSION_IN', 'Retorno Permiso', 'Retorno Permiso', 60, 6)
-) AS vals(key, label, short_label, sort, device_code)
+  ('ENTRY', 'Entrada', 'Entrada', 10, 1, 'WORK', 'IN', 'START', 'DoorOpen', 'LEFT'),
+  ('LUNCH_OUT', 'Inicio Lunch', 'Inicio Lunch', 20, 2, 'LUNCH', 'OUT', NULL, 'Utensils', 'LEFT'),
+  ('LUNCH_IN', 'Retorno Lunch', 'Retorno Lunch', 30, 3, 'LUNCH', 'IN', NULL, 'UtensilsCrossed', 'LEFT'),
+  ('EXIT', 'Salida', 'Salida', 40, 4, 'WORK', 'OUT', 'END', 'DoorClosed', 'LEFT'),
+  ('PERMISSION_OUT', 'Salida Permiso', 'Salida Permiso', 50, 5, 'PERMISSION', 'OUT', NULL, 'ArrowRightCircle', 'RIGHT'),
+  ('PERMISSION_IN', 'Retorno Permiso', 'Retorno Permiso', 60, 6, 'PERMISSION', 'IN', NULL, 'ArrowLeftCircle', 'RIGHT')
+) AS vals(key, label, short_label, sort, device_code, movement_kind, direction, work_boundary, icon_key, kiosk_column)
 WHERE lg.lookup_group_key = 'PUNCH_KEY'
 ON CONFLICT ON CONSTRAINT uq_lookup_values DO UPDATE
 SET lookup_label = EXCLUDED.lookup_label,
@@ -671,6 +688,14 @@ FROM public.lookup_groups lg, LATERAL (VALUES
 ) AS vals(key, label, short_label, sort)
 WHERE lg.lookup_group_key = 'TIME_PUNCH_STATUS'
 ON CONFLICT ON CONSTRAINT uq_lookup_values DO NOTHING;
+
+UPDATE public.lookup_values value
+SET metadata = COALESCE(value.metadata, '{}'::jsonb) || jsonb_build_object('usage_key', 'EMPLOYEE_WEB_PUNCH'),
+    updated_by = 'SYSTEM', updated_at = now()
+FROM public.lookup_groups group_row
+WHERE group_row.id = value.lookup_group_id
+  AND group_row.lookup_group_key = 'PUNCH_SOURCE'
+  AND value.lookup_key = 'WEB';
 
 -- TIME_PUNCH_CHANGE_REQUEST_TYPE
 INSERT INTO public.lookup_values (tenant_id, lookup_group_id, lookup_key, lookup_label, lookup_short_label, lookup_scope, sort_order, is_active, created_by)
@@ -1052,6 +1077,50 @@ WITH tenant AS (SELECT id FROM public.tenants WHERE tenant_key = 'SYSTEM' LIMIT 
 SELECT tenant_id, event_name, event_short_name, tolerance_minutes, weight_value, transaction_direction_id, event_type_id, movement_id, calculation_method_id, external_mapping, is_active, 'SYSTEM' FROM resolved
 ON CONFLICT (tenant_id, event_short_name) DO UPDATE SET event_name = EXCLUDED.event_name, tolerance_minutes = EXCLUDED.tolerance_minutes, weight_value = EXCLUDED.weight_value, transaction_direction_id = EXCLUDED.transaction_direction_id, event_type_id = EXCLUDED.event_type_id, movement_id = EXCLUDED.movement_id, calculation_method_id = EXCLUDED.calculation_method_id, external_mapping = EXCLUDED.external_mapping, is_active = EXCLUDED.is_active, updated_by = 'SYSTEM', updated_at = now();
 
+UPDATE public.attendance_events event_row
+SET allows_employee_request = true,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.lookup_values direction
+JOIN public.lookup_groups direction_group
+  ON direction_group.id = direction.lookup_group_id
+ AND direction_group.lookup_group_key = 'TRANSACTION_DIRECTION'
+WHERE direction.id = event_row.transaction_direction_id
+  AND (direction.lookup_key = 'DEC' OR event_row.event_short_name IN ('INC', 'LFH', 'TNL'));
+
+UPDATE public.attendance_events
+SET punch_match_order = CASE event_short_name WHEN 'ATR' THEN 'FIRST' WHEN 'SAN' THEN 'LAST' END,
+    updated_by = 'SYSTEM', updated_at = now()
+WHERE event_short_name IN ('ATR', 'SAN');
+
+UPDATE public.attendance_events
+SET tracks_late_arrival = event_short_name = 'ATR',
+    tracks_early_departure = event_short_name = 'SAN',
+    tracks_absence = event_short_name = 'FAL',
+    tracks_odd_punch = event_short_name = 'INC',
+    tracks_lunch_schedule_violation = event_short_name = 'LFH',
+    counts_as_non_working_time = event_short_name IN ('LEX', 'LFH', 'TNL', 'INC'),
+    is_employee_incident = event_short_name IN ('ATR', 'FAL', 'INC', 'LEX', 'LFH', 'SAN', 'TNL'),
+    updated_by = 'SYSTEM', updated_at = now();
+
+WITH configured(event_key, punch_key) AS (
+  VALUES ('ATR','ENTRY'),('SAN','EXIT'),('LEX','LUNCH_OUT'),
+         ('LEX','LUNCH_IN'),('LFH','LUNCH_OUT'),('LFH','LUNCH_IN')
+), resolved AS (
+  SELECT event_row.tenant_id, event_row.id attendance_event_id, punch_value.id punch_key_lookup_id
+  FROM configured
+  JOIN public.attendance_events event_row ON event_row.event_short_name = configured.event_key AND event_row.is_active
+  JOIN public.lookup_groups punch_group ON punch_group.lookup_group_key = 'PUNCH_KEY' AND punch_group.is_active
+  JOIN public.lookup_values punch_value
+    ON punch_value.lookup_group_id = punch_group.id
+   AND punch_value.lookup_key = configured.punch_key
+   AND punch_value.is_active
+)
+INSERT INTO public.attendance_event_punch_keys
+  (tenant_id,attendance_event_id,punch_key_lookup_id,is_active,created_by)
+SELECT tenant_id,attendance_event_id,punch_key_lookup_id,true,'SYSTEM' FROM resolved
+ON CONFLICT (tenant_id,attendance_event_id,punch_key_lookup_id) DO UPDATE SET is_active=true;
+
 -- JUSTIFICATION TYPES
 WITH tenant AS (SELECT id FROM public.tenants WHERE tenant_key = 'SYSTEM' LIMIT 1), data(justification_short_name, justification_name, event_short_name, is_active) AS (
   VALUES
@@ -1332,7 +1401,9 @@ WITH data(
     ('PAYROLL_PERIOD_TYPE', 'Tipo de Período de Nómina', 'PAY_PERIOD', 'DATA_TYPE', 'LOOKUP', 'BIWEEKLY', 'Tipo de período para la nómina (semanal, quincenal, mensual).', 'PAYROLL_PERIOD_TYPE', true),
     ('REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES', 'Tamaño máximo en bytes para PDF de respaldo', 'REQ_DOC_MAX', 'UI_CONTROL', 'TEXT', '5242880', NULL, NULL, true),
     ('REQUEST_SUPPORT_DOCS_PATH', 'Carpeta de respaldo PDF para solicitudes', 'REQ_DOC_PATH', 'UI_CONTROL', 'TEXT', 'storage/request-support-docs', NULL, NULL, true),
+    ('SECURITY_LOGIN_LOCKOUT_MINUTES', 'Duracion del bloqueo de acceso (minutos)', 'LOGIN_LOCK', 'DATA_TYPE', 'NUMBER', '15', 'Tiempo de bloqueo temporal luego de superar los intentos fallidos permitidos.', NULL, true),
     ('SECURITY_MAX_LOGIN_ATTEMPTS', 'Intentos Máximos de Login', 'MAX_LOGIN', 'DATA_TYPE', 'NUMBER', '5', 'Número máximo de intentos de login permitidos.', NULL, true),
+    ('SECURITY_PASSWORD_MIN_LENGTH', 'Longitud minima de contrasena', 'PWD_MIN_LEN', 'DATA_TYPE', 'NUMBER', '12', 'Cantidad minima de caracteres exigida para contrasenas nuevas.', NULL, true),
     ('SECURITY_SESSION_TIMEOUT_MIN', 'Timeout de Sesión (minutos)', 'SESSION_TO', 'DATA_TYPE', 'NUMBER', '480', 'Tiempo de inactividad antes de cerrar la sesión.', NULL, true),
     ('SHIFT_ALLOW_OVERLAP', 'Permitir Solapamiento de Turnos', 'ALLOW_OVERLAP', 'DATA_TYPE', 'LOOKUP', 'FALSE', 'Permite que los turnos se solapen.', 'BOOLEAN_OPTION', true),
     ('SHIFT_CHANGE_ADVANCE_DAYS', 'Días de Anticipación Cambio Turno', 'CHG_ADV_DAYS', 'DATA_TYPE', 'NUMBER', '2', 'Días de anticipación para cambiar de turno.', NULL, true),
@@ -1424,13 +1495,14 @@ BEGIN
     'NOTIFICATION_ABSENCE_ENABLED', 'NOTIFICATION_OVERTIME_ENABLED',
     'PAYROLL_CURRENCY_CODE', 'PAYROLL_EXPORT_FORMAT', 'PAYROLL_PERIOD_TYPE',
     'REQUEST_SUPPORT_DOCS_MAX_SIZE_BYTES', 'REQUEST_SUPPORT_DOCS_PATH',
-    'SECURITY_MAX_LOGIN_ATTEMPTS', 'SECURITY_SESSION_TIMEOUT_MIN',
+    'SECURITY_LOGIN_LOCKOUT_MINUTES', 'SECURITY_MAX_LOGIN_ATTEMPTS',
+    'SECURITY_PASSWORD_MIN_LENGTH', 'SECURITY_SESSION_TIMEOUT_MIN',
     'SHIFT_ALLOW_OVERLAP', 'SHIFT_CHANGE_ADVANCE_DAYS',
     'SHIFT_MAX_CONSECUTIVE_DAYS'
   );
 
-  IF v_seeded_count <> 25 THEN
-    RAISE EXCEPTION 'SYSTEM_SETTINGS incompleto: % de 25 parámetros sembrados', v_seeded_count;
+  IF v_seeded_count <> 27 THEN
+    RAISE EXCEPTION 'SYSTEM_SETTINGS incompleto: % de 27 parámetros sembrados', v_seeded_count;
   END IF;
 END $$;
 
@@ -23938,7 +24010,378 @@ END $$;
 -- END GENERATED COMPLETE TRANSLATIONS ES_EN_PT
 
 -- ============================================================================
--- SECCIÓN 11: USUARIO BOOTSTRAP (system.admin@titanium-labs.com)
+-- AUTORIZACIÓN EFECTIVA DE API (configurada en base de datos)
+-- ============================================================================
+INSERT INTO public.screen_actions (screen_id, action_id, is_active, created_by)
+SELECT screen.id, action.id, true, 'SYSTEM'
+FROM public.screens screen
+JOIN public.actions action ON action.action_key = 'IMPORT' AND action.is_active = true
+WHERE screen.screen_key = 'ORG_STRUCTURE'
+ON CONFLICT (screen_id, action_id) DO UPDATE SET is_active = true;
+
+INSERT INTO public.role_screen_actions (tenant_id, role_id, screen_action_id, is_allowed, is_active, created_by)
+SELECT DISTINCT existing.tenant_id, existing.role_id, import_sa.id, true, true, 'SYSTEM'
+FROM public.screens screen
+JOIN public.screen_actions view_sa ON view_sa.screen_id = screen.id
+JOIN public.actions view_action ON view_action.id = view_sa.action_id AND view_action.action_key = 'VIEW'
+JOIN public.role_screen_actions existing ON existing.screen_action_id = view_sa.id AND existing.is_active AND existing.is_allowed
+JOIN public.screen_actions import_sa ON import_sa.screen_id = screen.id
+JOIN public.actions import_action ON import_action.id = import_sa.action_id AND import_action.action_key = 'IMPORT'
+WHERE screen.screen_key = 'ORG_STRUCTURE'
+ON CONFLICT (tenant_id, role_id, screen_action_id) DO UPDATE SET is_allowed = true, is_active = true;
+
+WITH direct_rule(route_prefix, http_method, screen_key, action_key, priority) AS (
+  VALUES
+    ('/translations-management','GET','TRANSLATION_MANAGEMENT','VIEW',10),
+    ('/translations-management','PUT','TRANSLATION_MANAGEMENT','EDIT',10),
+    ('/lookup-groups','GET','CATALOG_MANAGEMENT','VIEW',10),
+    ('/lookup-groups','POST','CATALOG_MANAGEMENT','CREATE',10),
+    ('/lookup-groups','PUT','CATALOG_MANAGEMENT','EDIT',10),
+    ('/lookup-groups','DELETE','CATALOG_MANAGEMENT','DELETE',10),
+    ('/lookup-values','GET','CATALOG_MANAGEMENT','VIEW',10),
+    ('/lookup-values','POST','CATALOG_MANAGEMENT','CREATE',10),
+    ('/lookup-values','PUT','CATALOG_MANAGEMENT','EDIT',10),
+    ('/lookup-values','DELETE','CATALOG_MANAGEMENT','DELETE',10),
+    ('/organization/mass-import','GET','ORG_STRUCTURE','VIEW',100),
+    ('/organization/mass-import','POST','ORG_STRUCTURE','IMPORT',100),
+    ('/organization/mass-import','PATCH','ORG_STRUCTURE','EDIT',100),
+    ('/organization/catalogs','GET','ORG_STRUCTURE','VIEW',100),
+    ('/organization/migration-export','GET','ORG_STRUCTURE','VIEW',100),
+    ('/organization/employee-users','GET','ORG_STRUCTURE','VIEW',100),
+    ('/organization/employee-users','PUT','ORG_STRUCTURE','EDIT',100),
+    ('/organization/employees','GET','ORG_STRUCTURE','VIEW',20),
+    ('/organization/employees','POST','ORG_STRUCTURE','CREATE',20),
+    ('/organization/employees','PUT','ORG_STRUCTURE','EDIT',20),
+    ('/organization/employees','PATCH','ORG_STRUCTURE','EDIT',20),
+    ('/organization/employees','DELETE','ORG_STRUCTURE','DELETE',20),
+    ('/organization/shifts','GET','SHIFT_CONSTRUCTOR_MANAGEMENT','VIEW',20),
+    ('/organization/shifts','POST','SHIFT_CONSTRUCTOR_MANAGEMENT','CREATE',20),
+    ('/organization/shifts','PUT','SHIFT_CONSTRUCTOR_MANAGEMENT','EDIT',20),
+    ('/organization/shifts','PATCH','SHIFT_CONSTRUCTOR_MANAGEMENT','EDIT',20),
+    ('/organization/shifts','DELETE','SHIFT_CONSTRUCTOR_MANAGEMENT','DELETE',20),
+    ('/employee-shift-planning','GET','EMPLOYEE_SHIFT_PLANNING','VIEW',100),
+    ('/employee-shift-planning','POST','EMPLOYEE_SHIFT_PLANNING','ASSIGN',100),
+    ('/dashboard/tenant-admin-summary','GET','ORG_STRUCTURE','VIEW',200),
+    ('/dashboard/system-admin-summary','GET','SEC_ROLE_PERMS','VIEW',200),
+    ('/dashboard/supervisor-summary','GET','TIME_PUNCH_REPORTS','VIEW',200),
+    ('/dashboard/supervisor-events','GET','TIME_PUNCH_REPORTS','VIEW',200),
+    ('/dashboard/employee-summary','GET','KIOSK_TIMECLOCK','VIEW',200),
+    ('/bootstrap/ensure-system-admin','POST','SEC_ROLE_PERMS','ASSIGN',200),
+    ('/bootstrap/ensure-main-tenant','POST','SEC_ROLE_PERMS','ASSIGN',200),
+    ('/auth/create-system-admin','POST','SEC_ROLE_PERMS','ASSIGN',200),
+    ('/auth/reset-system-admin-password','POST','SEC_ROLE_PERMS','ASSIGN',200),
+    ('/auth/diagnostics','GET','SEC_ROLE_PERMS','VIEW',200),
+    ('/bootstrap-screens','POST','SEC_ROLE_PERMS','ASSIGN',100),
+    ('/bootstrap/ensure-system-settings-screen','POST','SEC_ROLE_PERMS','ASSIGN',100),
+    ('/bootstrap/ensure-maintenance-screens','POST','SEC_ROLE_PERMS','ASSIGN',100),
+    ('/bootstrap/ensure-security-screens','POST','SEC_ROLE_PERMS','ASSIGN',100),
+    ('/bootstrap/ensure-org-maintenance-screen','POST','SEC_ROLE_PERMS','ASSIGN',100)
+), organization_entity(route_prefix, screen_key) AS (
+  VALUES
+    ('/organization/companies','ORG_COMPANIES'),('/organization/work-locations','ORG_WORK_LOCATIONS'),
+    ('/organization/departments','ORG_DEPARTMENTS'),('/organization/areas','ORG_AREAS'),
+    ('/organization/cost-centers','ORG_COST_CENTERS'),('/organization/payroll-groups','ORG_PAYROLL_GROUPS'),
+    ('/organization/employee-profiles','ORG_EMPLOYEE_PROFILES'),('/organization/job-titles','ORG_JOB_TITLES'),
+    ('/organization/work-groups','ORG_WORK_GROUPS'),('/organization/employee-companies','ORG_EMPLOYEE_COMPANIES'),
+    ('/organization/holidays','CALENDAR_MANAGEMENT')
+), method_action(http_method, action_key) AS (
+  VALUES ('GET','VIEW'),('POST','CREATE'),('PUT','EDIT'),('PATCH','EDIT'),('DELETE','DELETE')
+), all_rule AS (
+  SELECT * FROM direct_rule
+  UNION ALL
+  SELECT entity.route_prefix, method.http_method, entity.screen_key, method.action_key, 10
+  FROM organization_entity entity CROSS JOIN method_action method
+), resolved AS (
+  SELECT rule.route_prefix, rule.http_method, screen.id screen_id, action.id action_id, rule.priority
+  FROM all_rule rule
+  JOIN public.screens screen ON screen.screen_key = rule.screen_key
+  JOIN public.actions action ON action.action_key = rule.action_key
+  JOIN public.screen_actions sa ON sa.screen_id = screen.id AND sa.action_id = action.id AND sa.is_active
+)
+INSERT INTO public.api_authorization_rules (route_prefix,http_method,screen_id,action_id,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,priority,true,'SYSTEM' FROM resolved
+ON CONFLICT (route_prefix,http_method) DO UPDATE
+SET screen_id=EXCLUDED.screen_id, action_id=EXCLUDED.action_id,
+    priority=EXCLUDED.priority, is_active=true, updated_by='SYSTEM', updated_at=now();
+
+-- ============================================================================
+WITH screen_pair(active_screen_key, source_screen_key) AS (
+  VALUES
+    ('SEC_ACTIONS', 'ACTION_MANAGEMENT'),
+    ('SEC_SCREENS', 'SCREEN_MANAGEMENT'),
+    ('SEC_MENU_GROUPS', 'MENU_GROUP_MANAGEMENT')
+)
+INSERT INTO public.screen_actions (screen_id, action_id, is_active, created_by)
+SELECT active_screen.id, source_screen_action.action_id, true, 'SYSTEM'
+FROM screen_pair
+JOIN public.screens active_screen
+  ON active_screen.screen_key = screen_pair.active_screen_key
+JOIN public.screens source_screen
+  ON source_screen.screen_key = screen_pair.source_screen_key
+JOIN public.screen_actions source_screen_action
+  ON source_screen_action.screen_id = source_screen.id
+ AND source_screen_action.is_active = true
+ON CONFLICT (screen_id, action_id) DO UPDATE
+SET is_active = true, updated_by = 'SYSTEM', updated_at = now();
+
+WITH screen_pair(active_screen_key, source_screen_key) AS (
+  VALUES
+    ('SEC_ACTIONS', 'ACTION_MANAGEMENT'),
+    ('SEC_SCREENS', 'SCREEN_MANAGEMENT'),
+    ('SEC_MENU_GROUPS', 'MENU_GROUP_MANAGEMENT')
+)
+INSERT INTO public.role_screen_actions (
+  tenant_id, role_id, screen_action_id, is_allowed, is_active, created_by
+)
+SELECT source_permission.tenant_id, source_permission.role_id,
+       active_screen_action.id, source_permission.is_allowed, true, 'SYSTEM'
+FROM screen_pair
+JOIN public.screens active_screen
+  ON active_screen.screen_key = screen_pair.active_screen_key
+JOIN public.screens source_screen
+  ON source_screen.screen_key = screen_pair.source_screen_key
+JOIN public.screen_actions source_screen_action
+  ON source_screen_action.screen_id = source_screen.id
+ AND source_screen_action.is_active = true
+JOIN public.screen_actions active_screen_action
+  ON active_screen_action.screen_id = active_screen.id
+ AND active_screen_action.action_id = source_screen_action.action_id
+ AND active_screen_action.is_active = true
+JOIN public.role_screen_actions source_permission
+  ON source_permission.screen_action_id = source_screen_action.id
+ AND source_permission.is_active = true
+ON CONFLICT (tenant_id, role_id, screen_action_id) DO UPDATE
+SET is_allowed = EXCLUDED.is_allowed,
+    is_active = true,
+    updated_by = 'SYSTEM',
+    updated_at = now();
+
+WITH required(screen_key, action_key) AS (
+  VALUES
+    ('SEC_ROLE_SCREEN_ACTIONS','VIEW'),('SEC_ROLE_SCREEN_ACTIONS','CREATE'),
+    ('SEC_ROLE_SCREEN_ACTIONS','EDIT'),('SEC_ROLE_SCREEN_ACTIONS','ASSIGN'),
+    ('SEC_SCREEN_ACTIONS','VIEW'),('SEC_SCREEN_ACTIONS','CREATE'),('SEC_SCREEN_ACTIONS','EDIT'),
+    ('MY_REQUESTS','EDIT'),('KIOSK_SHIFT_CHANGE','EDIT'),
+    ('KIOSK_SHIFT_CHANGE','CANCEL')
+)
+INSERT INTO public.screen_actions(screen_id,action_id,is_active,created_by)
+SELECT screen.id,action.id,true,'SYSTEM' FROM required
+JOIN public.screens screen ON screen.screen_key=required.screen_key AND screen.is_active
+JOIN public.actions action ON action.action_key=required.action_key AND action.is_active
+ON CONFLICT(screen_id,action_id) DO UPDATE SET is_active=true,updated_by='SYSTEM',updated_at=now();
+
+INSERT INTO public.role_screen_actions(tenant_id,role_id,screen_action_id,is_allowed,is_active,created_by)
+SELECT role.tenant_id,role.id,screen_action.id,true,true,'SYSTEM'
+FROM public.roles role
+JOIN public.screens screen ON screen.screen_key IN ('SEC_ROLE_SCREEN_ACTIONS','SEC_SCREEN_ACTIONS') AND screen.is_active
+JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.is_active
+WHERE role.role_scope='SYSTEM' AND role.is_system_role=true AND role.is_active
+ON CONFLICT(tenant_id,role_id,screen_action_id) DO UPDATE SET is_allowed=true,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+INSERT INTO public.role_screen_actions(tenant_id,role_id,screen_action_id,is_allowed,is_active,created_by)
+SELECT role.tenant_id,role.id,screen_action.id,true,true,'SYSTEM'
+FROM public.roles role
+JOIN public.screens screen ON screen.screen_key IN ('MY_REQUESTS','KIOSK_SHIFT_CHANGE') AND screen.is_active
+JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.is_active
+JOIN public.actions action ON action.id=screen_action.action_id
+WHERE role.is_employee_self_service=true AND role.is_active
+  AND action.action_key IN ('EDIT','CANCEL')
+ON CONFLICT(tenant_id,role_id,screen_action_id) DO UPDATE SET is_allowed=true,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+-- Cobertura completa de autorización API. Toda ruta autenticada queda en
+-- denegación por defecto si no coincide con una regla de esta tabla.
+WITH route_screen(route_prefix, screen_key) AS (
+  VALUES
+    ('/actions','SEC_ACTIONS'),('/actions-management','SEC_ACTIONS'),
+    ('/attendance-events/movements','ATTENDANCE_MOVEMENTS_MANAGEMENT'),('/attendance-events','ATTENDANCE_EVENTS_MANAGEMENT'),
+    ('/holidays','CALENDAR_MANAGEMENT'),('/lookup-routes','CATALOG_MANAGEMENT'),
+    ('/menu-groups','SEC_MENU_GROUPS'),('/menu-groups-management','SEC_MENU_GROUPS'),
+    ('/role-screen-actions','SEC_ROLE_SCREEN_ACTIONS'),('/role-screen-actions-management','SEC_ROLE_SCREEN_ACTIONS'),
+    ('/roles','ROLE_MANAGEMENT'),('/roles-management','ROLE_MANAGEMENT'),
+    ('/scope-types','SCOPE_TYPE_MANAGEMENT'),('/scope-types-management','SCOPE_TYPE_MANAGEMENT'),
+    ('/security-user-scopes','SEC_USER_ROLE_SCOPES'),('/security-role-permissions','SEC_ROLE_PERMS'),
+    ('/screen-actions','SEC_SCREEN_ACTIONS'),('/screen-actions-management','SEC_SCREEN_ACTIONS'),
+    ('/screens','SEC_SCREENS'),('/screens-management','SEC_SCREENS'),
+    ('/settings','TENANT_SETTINGS'),('/system-settings','SYSTEM_SETTINGS_MANAGEMENT'),
+    ('/system-settings-management','SYSTEM_SETTINGS_MANAGEMENT'),('/users-management','USER_MANAGEMENT'),
+    ('/shift-constructor','SHIFT_CONSTRUCTOR_MANAGEMENT'),('/subscription-plans','SUBSCRIPTION_PLAN_MANAGEMENT'),
+    ('/subscription-plans-management','SUBSCRIPTION_PLAN_MANAGEMENT'),('/work-patterns','CONF_WORK_PATTERNS'),
+    ('/profile-attendance-events','CONF_PROFILE_ATT_EVENTS'),('/time-clock-devices','DEVICE_MANAGEMENT'),
+    ('/api/shift-planning','EMPLOYEE_SHIFT_PLANNING'),('/employee-shift-planning','EMPLOYEE_SHIFT_PLANNING'),
+    ('/employee-time-punches','TIMECLOCK_MANAGEMENT'),('/employee-absence-requests','REQUESTS_MANAGEMENT'),
+    ('/kiosk/requests/approvals','REQUESTS_MANAGEMENT'),('/kiosk/requests','MY_REQUESTS'),
+    ('/kiosk/request-shift-change/approvals','SHIFT_CHANGE_APPROVALS'),('/kiosk/request-shift-change','KIOSK_SHIFT_CHANGE'),
+    ('/kiosk/time-punch-requests/approvals','TIME_PUNCH_CHANGE_APPROVALS'),('/kiosk/time-punch-requests','KIOSK_TIME_PUNCH_REQUESTS'),
+    ('/kiosk/mark','KIOSK_TIMECLOCK'),('/kiosk/my-punches','KIOSK_TIMECLOCK'),('/kiosk/my-shifts','KIOSK_TIMECLOCK'),
+    ('/kiosk/my-requests','MY_REQUESTS'),('/kiosk/my-shift-changes','KIOSK_SHIFT_CHANGE'),
+    ('/route-tracking','ROUTE_TRACKING_REPORT'),('/overtime-reports/anomalies','ATTENDANCE_ANOMALY_REPORTS'),
+    ('/overtime-reports','OVERTIME_REPORTS'),('/system-message-keys','MESSAGE_KEY_MANAGEMENT'),
+    ('/messages-management','MESSAGE_KEY_MANAGEMENT'),('/translations-management','TRANSLATION_MANAGEMENT'),
+    ('/system-reports','SYSTEM_REPORT_MANAGEMENT'),('/system-reports-management','SYSTEM_REPORT_MANAGEMENT'),
+    ('/tenants','TENANT_MANAGEMENT'),('/tenant/settings','TENANT_SETTINGS'),
+    ('/lookup-values/data-types','CATALOG_MANAGEMENT'),('/bootstrap/wizard-state','TENANT_MANAGEMENT'),
+    ('/bootstrap/tenant-info','TENANT_MANAGEMENT'),('/bootstrap/step1-tenant','TENANT_MANAGEMENT'),
+    ('/bootstrap/step2-admin','TENANT_MANAGEMENT')
+), method_action(http_method, action_key) AS (
+  VALUES ('GET','VIEW'),('POST','CREATE'),('PUT','EDIT'),('PATCH','EDIT'),('DELETE','DELETE')
+), resolved AS (
+  SELECT route.route_prefix,method.http_method,screen.id screen_id,action.id action_id
+  FROM route_screen route CROSS JOIN method_action method
+  JOIN public.screens screen ON screen.screen_key=route.screen_key AND screen.is_active
+  JOIN public.actions action ON action.action_key=method.action_key AND action.is_active
+  JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.action_id=action.id AND screen_action.is_active
+)
+INSERT INTO public.api_authorization_rules(route_prefix,http_method,screen_id,action_id,authorization_mode,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,'PERMISSION',50,true,'SYSTEM' FROM resolved
+ON CONFLICT(route_prefix,http_method) DO UPDATE SET screen_id=EXCLUDED.screen_id,action_id=EXCLUDED.action_id,
+authorization_mode='PERMISSION',priority=GREATEST(public.api_authorization_rules.priority,EXCLUDED.priority),is_active=true,updated_by='SYSTEM',updated_at=now();
+
+WITH authenticated_rule(route_prefix,http_method) AS (
+  VALUES ('/auth/me','GET'),('/users/profile','GET'),('/users/menu-screens','GET'),
+         ('/users/change-password','POST'),('/db/query','POST'),('/notifications','GET'),('/notifications','PATCH')
+), resolved AS (
+  SELECT rule.route_prefix,rule.http_method,screen.id screen_id,action.id action_id
+  FROM authenticated_rule rule
+  JOIN public.screens screen ON screen.screen_key='KIOSK_TIMECLOCK' AND screen.is_active
+  JOIN public.actions action ON action.action_key='VIEW' AND action.is_active
+)
+INSERT INTO public.api_authorization_rules(route_prefix,http_method,screen_id,action_id,authorization_mode,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,'AUTHENTICATED',500,true,'SYSTEM' FROM resolved
+ON CONFLICT(route_prefix,http_method) DO UPDATE SET screen_id=EXCLUDED.screen_id,action_id=EXCLUDED.action_id,
+authorization_mode='AUTHENTICATED',priority=500,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+WITH override_rule(route_prefix,http_method,screen_key,action_key) AS (
+  VALUES ('/kiosk/requests/approvals','PATCH','REQUESTS_MANAGEMENT','APPROVE'),
+         ('/kiosk/request-shift-change/approvals','PATCH','SHIFT_CHANGE_APPROVALS','APPROVE'),
+         ('/kiosk/time-punch-requests/approvals','PATCH','TIME_PUNCH_CHANGE_APPROVALS','APPROVE')
+), resolved AS (
+  SELECT rule.route_prefix,rule.http_method,screen.id screen_id,action.id action_id
+  FROM override_rule rule
+  JOIN public.screens screen ON screen.screen_key=rule.screen_key AND screen.is_active
+  JOIN public.actions action ON action.action_key=rule.action_key AND action.is_active
+  JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.action_id=action.id AND screen_action.is_active
+)
+INSERT INTO public.api_authorization_rules(route_prefix,http_method,screen_id,action_id,authorization_mode,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,'PERMISSION',500,true,'SYSTEM' FROM resolved
+ON CONFLICT(route_prefix,http_method) DO UPDATE SET screen_id=EXCLUDED.screen_id,action_id=EXCLUDED.action_id,
+authorization_mode='PERMISSION',priority=500,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+WITH special_rule(route_prefix,http_method,screen_key,action_key) AS (
+  VALUES
+    ('/kiosk/mark','POST','KIOSK_TIMECLOCK','PUNCH'),
+    ('/kiosk/mark','PATCH','KIOSK_TIMECLOCK','PUNCH'),
+    ('/kiosk/mark','DELETE','KIOSK_TIMECLOCK','PUNCH'),
+    ('/kiosk/requests','PATCH','MY_REQUESTS','CANCEL'),
+    ('/kiosk/requests','DELETE','MY_REQUESTS','CANCEL'),
+    ('/kiosk/request-shift-change','PATCH','KIOSK_SHIFT_CHANGE','CANCEL'),
+    ('/kiosk/request-shift-change','DELETE','KIOSK_SHIFT_CHANGE','CANCEL'),
+    ('/security-role-permissions','POST','SEC_ROLE_PERMS','ASSIGN'),
+    ('/settings','POST','TENANT_SETTINGS','EDIT'),
+    ('/settings','DELETE','TENANT_SETTINGS','EDIT')
+), resolved AS (
+  SELECT rule.route_prefix,rule.http_method,screen.id screen_id,action.id action_id
+  FROM special_rule rule
+  JOIN public.screens screen ON screen.screen_key=rule.screen_key AND screen.is_active
+  JOIN public.actions action ON action.action_key=rule.action_key AND action.is_active
+  JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.action_id=action.id AND screen_action.is_active
+)
+INSERT INTO public.api_authorization_rules(route_prefix,http_method,screen_id,action_id,authorization_mode,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,'PERMISSION',600,true,'SYSTEM' FROM resolved
+ON CONFLICT(route_prefix,http_method) DO UPDATE SET screen_id=EXCLUDED.screen_id,action_id=EXCLUDED.action_id,
+authorization_mode='PERMISSION',priority=600,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+-- Reglas de operación para rutas parametrizadas. Las decisiones y adjuntos
+-- delegan la autorización fina al handler porque dependen de propiedad,
+-- alcance organizacional y del valor APPROVE/REJECT recibido.
+WITH parameter_rule(route_prefix,http_method,screen_key,action_key,authorization_mode) AS (
+  VALUES
+    ('/users-management/:id/reset-password','PATCH','USER_MANAGEMENT','RESET_PASSWORD','PERMISSION'),
+    ('/kiosk/requests/:id/support-document','GET','MY_REQUESTS','VIEW','AUTHENTICATED'),
+    ('/kiosk/requests/:id','PATCH','MY_REQUESTS','EDIT','PERMISSION'),
+    ('/kiosk/requests/:id/cancel','PATCH','MY_REQUESTS','CANCEL','PERMISSION'),
+    ('/kiosk/requests/:id/review-fields','PATCH','REQUESTS_MANAGEMENT','EDIT','PERMISSION'),
+    ('/kiosk/requests/:id/decision','PATCH','REQUESTS_MANAGEMENT','APPROVE','AUTHENTICATED'),
+    ('/kiosk/request-shift-change/:id/support-document','GET','KIOSK_SHIFT_CHANGE','VIEW','AUTHENTICATED'),
+    ('/kiosk/request-shift-change/:id','PATCH','KIOSK_SHIFT_CHANGE','EDIT','PERMISSION'),
+    ('/kiosk/request-shift-change/:id/decision','PATCH','SHIFT_CHANGE_APPROVALS','APPROVE','AUTHENTICATED'),
+    ('/kiosk/time-punch-requests/:id/support-document','GET','KIOSK_TIME_PUNCH_REQUESTS','VIEW','AUTHENTICATED'),
+    ('/kiosk/time-punch-requests/:id','PATCH','KIOSK_TIME_PUNCH_REQUESTS','EDIT','PERMISSION'),
+    ('/kiosk/time-punch-requests/:id','DELETE','KIOSK_TIME_PUNCH_REQUESTS','CANCEL','PERMISSION'),
+    ('/kiosk/time-punch-requests/:id/decision','PATCH','TIME_PUNCH_CHANGE_APPROVALS','APPROVE','AUTHENTICATED')
+), resolved AS (
+  SELECT rule.route_prefix,rule.http_method,screen.id screen_id,action.id action_id,rule.authorization_mode
+  FROM parameter_rule rule
+  JOIN public.screens screen ON screen.screen_key=rule.screen_key AND screen.is_active
+  JOIN public.actions action ON action.action_key=rule.action_key AND action.is_active
+  JOIN public.screen_actions screen_action ON screen_action.screen_id=screen.id AND screen_action.action_id=action.id AND screen_action.is_active
+)
+INSERT INTO public.api_authorization_rules(route_prefix,http_method,screen_id,action_id,authorization_mode,priority,is_active,created_by)
+SELECT route_prefix,http_method,screen_id,action_id,authorization_mode,900,true,'SYSTEM' FROM resolved
+ON CONFLICT(route_prefix,http_method) DO UPDATE SET screen_id=EXCLUDED.screen_id,action_id=EXCLUDED.action_id,
+authorization_mode=EXCLUDED.authorization_mode,priority=900,is_active=true,updated_by='SYSTEM',updated_at=now();
+
+WITH table_screen(table_name, screen_key) AS (
+  VALUES
+    ('action_translations', 'TRANSLATION_MANAGEMENT'),
+    ('actions', 'SEC_ACTIONS'),
+    ('areas', 'ORG_AREAS'),
+    ('companies', 'ORG_COMPANIES'),
+    ('cost_centers', 'ORG_COST_CENTERS'),
+    ('departments', 'ORG_DEPARTMENTS'),
+    ('employee_companies', 'ORG_EMPLOYEE_COMPANIES'),
+    ('employee_profiles', 'ORG_EMPLOYEE_PROFILES'),
+    ('employees', 'ORG_STRUCTURE'),
+    ('job_titles', 'ORG_JOB_TITLES'),
+    ('lookup_group_translations', 'TRANSLATION_MANAGEMENT'),
+    ('lookup_groups', 'CATALOG_MANAGEMENT'),
+    ('lookup_value_translations', 'TRANSLATION_MANAGEMENT'),
+    ('lookup_values', 'CATALOG_MANAGEMENT'),
+    ('payroll_groups', 'ORG_PAYROLL_GROUPS'),
+    ('roles', 'ROLE_MANAGEMENT'),
+    ('scope_types', 'SCOPE_TYPE_MANAGEMENT'),
+    ('screen_translations', 'TRANSLATION_MANAGEMENT'),
+    ('screens', 'SEC_SCREENS'),
+    ('system_languages', 'LANGUAGE_MANAGEMENT'),
+    ('system_menu_group_translations', 'TRANSLATION_MANAGEMENT'),
+    ('system_menu_groups', 'SEC_MENU_GROUPS'),
+    ('tenant_onboarding', 'TENANT_MANAGEMENT'),
+    ('tenants', 'TENANT_MANAGEMENT'),
+    ('user_roles', 'USER_MANAGEMENT'),
+    ('users', 'USER_MANAGEMENT'),
+    ('users_with_primary_role', 'USER_MANAGEMENT'),
+    ('work_groups', 'ORG_WORK_GROUPS'),
+    ('work_locations', 'ORG_WORK_LOCATIONS')
+), operation_action(operation, action_key) AS (
+  VALUES
+    ('SELECT', 'VIEW'), ('INSERT', 'CREATE'), ('UPDATE', 'EDIT'),
+    ('DELETE', 'DELETE'), ('UPSERT', 'EDIT')
+), resolved AS (
+  SELECT table_screen.table_name, operation_action.operation,
+         screen.id AS screen_id, action.id AS action_id
+  FROM table_screen
+  CROSS JOIN operation_action
+  JOIN public.screens screen ON screen.screen_key = table_screen.screen_key
+  JOIN public.actions action ON action.action_key = operation_action.action_key
+  JOIN public.screen_actions screen_action
+    ON screen_action.screen_id = screen.id
+   AND screen_action.action_id = action.id
+   AND screen_action.is_active = true
+  WHERE table_screen.table_name <> 'users_with_primary_role'
+     OR operation_action.operation = 'SELECT'
+)
+INSERT INTO public.data_access_authorization_rules (
+  table_name, operation, screen_id, action_id, is_active, created_by
+)
+SELECT table_name, operation, screen_id, action_id, true, 'SYSTEM'
+FROM resolved
+ON CONFLICT (table_name, operation) DO UPDATE
+SET screen_id = EXCLUDED.screen_id,
+    action_id = EXCLUDED.action_id,
+    is_active = true,
+    updated_by = 'SYSTEM',
+    updated_at = now();
+
+-- SECCIÓN 11: USUARIO BOOTSTRAP
 -- ============================================================================
 -- ✅ HABILITADO: Crea el usuario system.admin directamente en public.users
 -- La autenticación actual usa public.users.password con hash SHA-256.
@@ -23952,10 +24395,28 @@ DECLARE
   v_role_id UUID;
   v_public_user_id UUID;
   v_password_hash TEXT;
-  v_email TEXT := 'system.admin@titanium-labs.com';
-  v_password TEXT := 'Titanium2026!';
+  v_password_min_length integer;
+  v_email TEXT := lower(NULLIF(btrim(current_setting('turnos.bootstrap_admin_email', true)), ''));
+  v_password TEXT := NULLIF(current_setting('turnos.bootstrap_admin_password', true), '');
 BEGIN
   RAISE NOTICE '============================================================';
+
+  SELECT default_value::integer INTO v_password_min_length
+  FROM public.system_settings
+  WHERE setting_key = 'SECURITY_PASSWORD_MIN_LENGTH'
+    AND is_active = true
+    AND default_value ~ '^[0-9]+$'
+  LIMIT 1;
+
+  IF v_email IS NULL OR v_email !~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$' THEN
+    RAISE EXCEPTION 'Configure turnos.bootstrap_admin_email con un correo válido antes de ejecutar 002';
+  END IF;
+  IF v_password_min_length IS NULL THEN
+    RAISE EXCEPTION 'SECURITY_PASSWORD_MIN_LENGTH no esta configurado correctamente';
+  END IF;
+  IF v_password IS NULL OR length(v_password) < v_password_min_length THEN
+    RAISE EXCEPTION 'Configure turnos.bootstrap_admin_password conforme a SECURITY_PASSWORD_MIN_LENGTH (% caracteres)', v_password_min_length;
+  END IF;
   RAISE NOTICE 'SECCIÓN 11: Usuario Bootstrap (HABILITADO)';
   RAISE NOTICE '============================================================';
 
@@ -23990,6 +24451,8 @@ BEGIN
         display_name = 'System Administrator',
         email = v_email,
         password = v_password_hash,
+        auth_version = auth_version + 1,
+        must_change_password = true,
         is_active = true,
         preferred_language_code = COALESCE(preferred_language_code, 'es'),
         updated_by = 'SEED_002',
@@ -24010,6 +24473,7 @@ BEGIN
       display_name,
       email,
       password,
+      must_change_password,
       is_active,
       preferred_language_code,
       created_by
@@ -24020,6 +24484,7 @@ BEGIN
       'System Administrator',
       v_email,
       v_password_hash,
+      true,
       true,
       'es',
       'SEED_002'
@@ -24068,7 +24533,7 @@ BEGIN
   RAISE NOTICE '';
   RAISE NOTICE '✅ Usuario Bootstrap creado exitosamente';
   RAISE NOTICE '📋 Credenciales: %', v_email;
-  RAISE NOTICE '🔐 Password: %', v_password;
+  RAISE NOTICE '🔐 Password recibido mediante configuración segura de sesión (no se muestra)';
   RAISE NOTICE '';
 END $$;
 
@@ -24168,7 +24633,7 @@ BEGIN
   RAISE NOTICE 'Permisos de Menú: %', v_role_perms;
   RAISE NOTICE 'Tenant Onboarding (en progreso): %', v_onboarding;
   RAISE NOTICE '============================================================';
-  RAISE NOTICE '✅ Credenciales: system.admin@titanium-labs.com / Titanium2026!';
+  RAISE NOTICE '✅ Usuario bootstrap configurado sin exponer su contraseña';
   RAISE NOTICE '============================================================';
 END $$;
 
@@ -24253,8 +24718,9 @@ BEGIN
       ('lookup_value_translations', 747::bigint),
       ('attendance_movements', 3::bigint),
       ('attendance_events', 24::bigint),
+      ('attendance_event_punch_keys', 6::bigint),
       ('justification_types', 63::bigint),
-      ('system_settings', 30::bigint),
+      ('system_settings', 32::bigint),
       ('system_shift_templates', 5::bigint),
       ('work_patterns', 2::bigint),
       ('work_pattern_shifts', 0::bigint),
@@ -24268,8 +24734,10 @@ BEGIN
       ('action_translations', 96::bigint),
       ('screens', 68::bigint),
       ('screen_translations', 204::bigint),
-      ('screen_actions', 242::bigint),
-      ('role_screen_actions', 373::bigint),
+      ('screen_actions', 265::bigint),
+      ('role_screen_actions', 397::bigint),
+      ('api_authorization_rules', 376::bigint),
+      ('data_access_authorization_rules', 141::bigint),
       ('system_reports', 6::bigint),
       ('system_report_translations', 18::bigint),
       ('report_parameters', 46::bigint),
@@ -24411,6 +24879,7 @@ DECLARE
     "actions": 32,
     "action_translations": 96,
     "attendance_events": 24,
+    "attendance_event_punch_keys": 6,
     "attendance_movements": 3,
     "cities": 19996,
     "countries": 6,
@@ -24424,9 +24893,11 @@ DECLARE
     "report_parameter_translations": 138,
     "report_permissions": 3,
     "roles": 5,
-    "role_screen_actions": 373,
+    "role_screen_actions": 397,
     "scope_types": 7,
-    "screen_actions": 242,
+    "screen_actions": 265,
+    "api_authorization_rules": 376,
+    "data_access_authorization_rules": 141,
     "screens": 68,
     "screen_translations": 204,
     "states": 183,
@@ -24438,7 +24909,7 @@ DECLARE
     "system_message_translations": 15,
     "system_reports": 6,
     "system_report_translations": 18,
-    "system_settings": 30,
+    "system_settings": 32,
     "system_shift_templates": 5,
     "tenant_onboarding": 1,
     "tenants": 1,
@@ -24468,8 +24939,8 @@ BEGIN
   WHERE key = 'seed.version';
 
   IF current_seed_version IS NULL
-     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V4' THEN
-    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V4';
+     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V12' THEN
+    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V12';
   END IF;
 
   IF existing_baseline IS NOT NULL
@@ -24526,6 +24997,7 @@ BEGIN
     baseline_table_count := baseline_table_count + 1;
   END LOOP;
 
+  PERFORM pg_catalog.set_config('search_path', 'pg_catalog', true);
   WITH schema_objects AS (
     SELECT format('table|%s', c.relname) AS definition
     FROM pg_catalog.pg_class c
@@ -24568,6 +25040,7 @@ BEGIN
   SELECT md5(string_agg(definition, E'\n' ORDER BY definition))
     INTO schema_fingerprint
   FROM schema_objects;
+  PERFORM pg_catalog.set_config('search_path', 'public, pg_catalog', true);
 
   INSERT INTO public.kv_store_e19f2094 (key, value)
   VALUES (

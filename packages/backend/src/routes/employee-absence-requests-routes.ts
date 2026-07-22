@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { withDocs } from '../lib/swagger-docs.js';
+import { hasUnrestrictedEmployeeDataScope, resolveAuthorizedEmployeeIds } from '../lib/user-data-scope.js';
 
 const router = Router();
 
@@ -100,59 +101,8 @@ async function resolveEffectiveUserContext(
   return resolveUserContext(req);
 }
 
-async function getUserRoleKeys(tenantId: string, userId: string): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT UPPER(r.role_key) AS role_key
-      FROM public.user_roles ur
-      JOIN public.roles r
-        ON r.id = ur.role_id
-       AND r.is_active = true
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-    `,
-    [tenantId, userId]
-  );
-
-  return result.rows.map((row) => String(row.role_key || '').trim()).filter(Boolean);
-}
-
-function mustRestrictToAssignedEmployees(roleKeys: string[]): boolean {
-  return roleKeys.some((key) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
-}
-
 async function resolveManagedEmployeeIds(tenantId: string, userId: string): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT ura.employee_id::text AS employee_id
-      FROM public.user_roles ur
-      JOIN public.roles r
-        ON r.id = ur.role_id
-       AND r.is_active = true
-      JOIN public.user_role_employee_assignments ura
-        ON ura.tenant_id = ur.tenant_id
-       AND ura.user_role_id = ur.id
-       AND ura.is_active = true
-      JOIN public.employees e
-        ON e.id = ura.employee_id
-       AND e.tenant_id = ura.tenant_id
-       AND e.is_active = true
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        AND UPPER(r.role_key) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-    `,
-    [tenantId, userId]
-  );
-
-  return result.rows
-    .map((row) => String(row.employee_id || '').trim())
-    .filter(Boolean);
+  return resolveAuthorizedEmployeeIds(pool, tenantId, userId);
 }
 
 function normalizeNullableText(value: any): string | null {
@@ -183,11 +133,9 @@ const getEmployeeAbsenceRequestsCatalogs = withDocs(
       const tenantId = await resolveTenantId(req);
       if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
       const userContext = await resolveUserContext(req);
-      const roleKeys =
-        userContext && userContext.tenant_id === tenantId
-          ? await getUserRoleKeys(tenantId, userContext.user_id)
-          : [];
-      const applyEmployeeRestriction = mustRestrictToAssignedEmployees(roleKeys);
+      const applyEmployeeRestriction = !userContext || userContext.tenant_id !== tenantId
+        ? true
+        : !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds =
         applyEmployeeRestriction && userContext
           ? await resolveManagedEmployeeIds(tenantId, userContext.user_id)
@@ -339,11 +287,9 @@ const getEmployeeAbsenceRequests = withDocs(
       const tenantId = await resolveTenantId(req);
       if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
       const userContext = await resolveEffectiveUserContext(req, tenantId);
-      const roleKeys =
-        userContext && userContext.tenant_id === tenantId
-          ? await getUserRoleKeys(tenantId, userContext.user_id)
-          : [];
-      const applyEmployeeRestriction = mustRestrictToAssignedEmployees(roleKeys);
+      const applyEmployeeRestriction = !userContext || userContext.tenant_id !== tenantId
+        ? true
+        : !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds =
         applyEmployeeRestriction && userContext
           ? await resolveManagedEmployeeIds(tenantId, userContext.user_id)
@@ -548,11 +494,9 @@ const getEmployeeAbsenceRequestById = withDocs(
       const tenantId = await resolveTenantId(req);
       if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
       const userContext = await resolveUserContext(req);
-      const roleKeys =
-        userContext && userContext.tenant_id === tenantId
-          ? await getUserRoleKeys(tenantId, userContext.user_id)
-          : [];
-      const applyEmployeeRestriction = mustRestrictToAssignedEmployees(roleKeys);
+      const applyEmployeeRestriction = !userContext || userContext.tenant_id !== tenantId
+        ? true
+        : !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds =
         applyEmployeeRestriction && userContext
           ? await resolveManagedEmployeeIds(tenantId, userContext.user_id)

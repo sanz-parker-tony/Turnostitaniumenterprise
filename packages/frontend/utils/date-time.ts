@@ -1,8 +1,8 @@
 export function getClientTimeZone(): string {
   try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Guayaquil';
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   } catch {
-    return 'America/Guayaquil';
+    return 'UTC';
   }
 }
 

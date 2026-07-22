@@ -6,29 +6,29 @@
 import { redirect } from "next/navigation";
 import { createApiClientServerClient } from "@/utils/backend/server";
 import LoginForm from "@/components/LoginForm";
-import { getHomeRouteByRoles } from "@/lib/auth/role-router";
+import { getConfiguredHomeRoute } from "@/lib/auth/role-router";
 
-async function getUserRoles(ApiClient: any, userId: string) {
+async function getUserHomeConfiguration(ApiClient: any, userId: string) {
   const { data, error } = await ApiClient
     .from("user_roles")
-    .select("role_id, roles:role_id(role_key)")
+    .select("role_id, roles:role_id(ui_home_route)")
     .eq("user_id", userId); // ✅ RLS filtra tenant automáticamente
 
   if (error) {
     console.error("[LOGIN] Error obteniendo roles:", error);
-    return [];
+    return { hasRoles: false, homeRoute: null };
   }
 
-  const roles =
-    (data ?? [])
-      .map((r: any) => r?.roles?.role_key)
-      .filter(Boolean);
+  const roleRows = data ?? [];
+  const configuredRoute = roleRows
+    .map((row: any) => String(row?.roles?.ui_home_route || '').trim())
+    .find((route: string) => route.startsWith('/')) || null;
 
-  if (roles.length === 0) {
+  if (roleRows.length === 0) {
     console.warn("[LOGIN] Usuario autenticado pero sin roles asignados:", { userId });
   }
 
-  return roles;
+  return { hasRoles: roleRows.length > 0, homeRoute: configuredRoute };
 }
 
 export default async function LoginPage() {
@@ -43,14 +43,16 @@ export default async function LoginPage() {
 
   // Si ya hay sesión => decidir destino por rol
   if (user) {
-    const roles = await getUserRoles(ApiClient, user.id);
+    const homeConfiguration = await getUserHomeConfiguration(ApiClient, user.id);
 
-    // ✅ USO DEL ROLE ROUTER: fuente de verdad única
-    const homeRoute = getHomeRouteByRoles(roles);
+    const homeRoute = getConfiguredHomeRoute(
+      homeConfiguration.homeRoute,
+      homeConfiguration.hasRoles
+    );
     
     console.log(`[LOGIN] Usuario autenticado, redirigiendo a: ${homeRoute}`, { 
       userId: user.id, 
-      roles 
+      configuredHomeRoute: homeConfiguration.homeRoute,
     });
     
     redirect(homeRoute);

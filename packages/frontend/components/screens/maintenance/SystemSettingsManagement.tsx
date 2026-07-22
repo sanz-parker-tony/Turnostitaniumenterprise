@@ -106,7 +106,7 @@ interface FormData {
 
 export function SystemSettingsManagement() {
   const { profile } = useAuth();
-  const isSystemAdmin = String(profile?.role_key || '').trim().toUpperCase() === 'SYSTEM_ADMIN';
+  const isSystemAdmin = profile?.role_scope === 'SYSTEM' && profile?.is_super_admin === true;
   const tenantId = String(profile?.tenant_id || '').trim();
 
   const [settings, setSettings] = useState<SystemSetting[]>([]);

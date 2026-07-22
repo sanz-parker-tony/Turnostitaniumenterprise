@@ -87,9 +87,9 @@ export function CatalogManagement() {
   const { profile, session } = useAuth();
   const roleKey = String(profile?.role_key || '').trim().toUpperCase();
   const currentTenantId = String(profile?.tenant_id || '').trim();
-  const isSystemAdmin = roleKey === 'SYSTEM_ADMIN';
-  const isTenantAdmin = roleKey === 'TENANT_ADMIN';
-  const canManageCatalogs = isSystemAdmin || isTenantAdmin;
+  const isSystemAdmin = profile?.ui_dashboard_mode === 'PLATFORM';
+  const isTenantAdmin = profile?.is_tenant_administrator === true;
+  const canManageGroups = isSystemAdmin;
 
   const getToken = () =>
     session?.access_token ||
@@ -142,22 +142,8 @@ export function CatalogManagement() {
     { language_code: 'en', label: '', short_label: '' }
   ]);
 
-  const isTenantOwnedGroup = (group: LookupGroup | null) => {
-    if (!group) return false;
-    if (group.owner_tenant_id) return group.owner_tenant_id === currentTenantId;
-    if (group.is_tenant_catalog === true) return true;
-    const createdBy = String(group.created_by || '');
-    return createdBy === `TENANT_ADMIN:${currentTenantId}`;
-  };
-
   const canEditGroup = (group: LookupGroup | null) => {
-    if (!group) return false;
-    if (isSystemAdmin) return true;
-    if (!isTenantAdmin) return false;
-    if (typeof group.can_edit_for_current_user === 'boolean') {
-      return group.can_edit_for_current_user;
-    }
-    return isTenantOwnedGroup(group);
+    return Boolean(group && isSystemAdmin && group.can_edit_for_current_user !== false);
   };
 
   const canCreateValueInGroup = (group: LookupGroup | null) => {
@@ -180,9 +166,6 @@ export function CatalogManagement() {
     if (!isTenantAdmin) return false;
     if (String(value.lookup_scope || '').toUpperCase() === 'SYSTEM' || !value.tenant_id) {
       return false;
-    }
-    if (isTenantOwnedGroup(group)) {
-      return value.tenant_id === currentTenantId;
     }
     return value.tenant_id === currentTenantId;
   };
@@ -268,13 +251,13 @@ export function CatalogManagement() {
 
   const saveGroup = async () => {
     try {
-      if (!canManageCatalogs) {
-        alert('No autorizado para crear o editar grupos de catalogo');
+      if (!canManageGroups) {
+        alert('La gestión de grupos de catálogo está reservada a la administración del sistema');
         return;
       }
 
       if (editingGroup && !canEditGroup(editingGroup)) {
-        alert('TENANT_ADMIN solo puede editar grupos creados por su tenant');
+        alert('No está autorizado para editar este grupo de catálogo');
         return;
       }
 
@@ -508,8 +491,12 @@ export function CatalogManagement() {
   // ============================================================================
 
   const openGroupModal = async (group?: LookupGroup) => {
+    if (!canManageGroups) {
+      alert('La gestión de grupos de catálogo está reservada a la administración del sistema');
+      return;
+    }
     if (group && !canEditGroup(group)) {
-      alert('TENANT_ADMIN solo puede editar grupos creados por su tenant');
+      alert('No está autorizado para editar este grupo de catálogo');
       return;
     }
 
@@ -693,13 +680,13 @@ export function CatalogManagement() {
           <HeaderInfoTips
             items={[
               {
-                title: 'Catálogos del tenant',
-                text: 'TENANT_ADMIN puede crear y administrar grupos/valores propios del tenant.',
+                title: 'Gobierno de catálogos',
+                text: 'Los grupos y su lógica pertenecen al sistema; el tenant no puede crear nuevas estructuras de catálogo.',
                 variant: 'security',
               },
               {
-                title: 'Consejo',
-                text: 'Solo grupos con "Permite items de tenant" aceptan nuevos valores desde TENANT_ADMIN.',
+                title: 'Opciones del tenant',
+                text: 'El tenant solo puede administrar valores propios cuando el grupo tiene habilitado “Permite items de tenant”.',
                 variant: 'tip',
               },
               {
@@ -737,7 +724,7 @@ export function CatalogManagement() {
             <h2 className="font-semibold">Grupos de Catalogo</h2>
             <button
               onClick={() => openGroupModal()}
-              disabled={!canManageCatalogs}
+              disabled={!canManageGroups}
               className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-[#0074D9] text-white hover:bg-[#0074D9]/90 h-9 px-3 gap-2"
             >
               <Plus className="size-4" />
@@ -776,11 +763,6 @@ export function CatalogManagement() {
                         </div>
                         <p className="text-sm mt-1">{group.lookup_group_label}</p>
                         <p className="text-xs text-muted-foreground">{group.lookup_group_short_label}</p>
-                        {isTenantOwnedGroup(group) && (
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-violet-100 text-violet-700 mt-2 ml-2">
-                            Catalogo del tenant
-                          </span>
-                        )}
                         {group.allows_tenant_items && (
                           <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-700 mt-2">
                             Permite items de tenant
@@ -1136,7 +1118,7 @@ export function CatalogManagement() {
                   <option value="TENANT">TENANT</option>
                 </select>
                 {isTenantAdmin && (
-                  <p className="text-xs text-muted-foreground mt-1">TENANT_ADMIN registra items con alcance TENANT.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Los valores creados por este perfil quedan limitados a su tenant.</p>
                 )}
                 </div>
 

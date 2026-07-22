@@ -26,7 +26,7 @@ async function resolveUserContext(req: Request) {
       SELECT
         u.id AS user_id,
         u.tenant_id,
-        ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys
+        COALESCE(BOOL_OR(UPPER(COALESCE(r.data_scope, '')) = 'ALL'), false) AS unrestricted
       FROM public.users u
       LEFT JOIN public.user_roles ur
         ON ur.user_id = u.id
@@ -46,24 +46,15 @@ async function resolveUserContext(req: Request) {
 
   const context = result.rows[0];
   if (!context?.tenant_id || !context?.user_id) return null;
-  const roleKeys = (context.role_keys || []).map((roleKey: string) => String(roleKey || '').trim().toUpperCase());
-
   return {
     tenant_id: String(context.tenant_id),
     user_id: String(context.user_id),
-    role_keys: roleKeys,
+    unrestricted: context.unrestricted === true,
   };
 }
 
 async function resolveViewerContext(req: Request) {
-  const context = await resolveUserContext(req);
-  if (!context) return null;
-  const canView = context.role_keys.some((roleKey: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(roleKey));
-  return canView ? context : null;
-}
-
-function isUnrestricted(context: { role_keys: string[] }) {
-  return context.role_keys.includes('TENANT_ADMIN') && !context.role_keys.some((roleKey) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(roleKey));
+  return resolveUserContext(req);
 }
 
 async function hasSystemReportPermission(
@@ -454,10 +445,10 @@ export function buildOvertimeCtes(
         pl.shift_date,
         MIN(p.punch_datetime) AS first_punch,
         MAX(p.punch_datetime) AS last_punch,
-        MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-        MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit,
-        MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'LUNCH_OUT') AS lunch_out,
-        MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'LUNCH_IN') AS lunch_in
+        MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+        MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit,
+        MIN(p.punch_datetime) FILTER (WHERE (public.punch_key_semantic(p.punch_key_lookup_id, 'movement_kind') = 'LUNCH' AND public.punch_key_semantic(p.punch_key_lookup_id, 'direction') = 'OUT')) AS lunch_out,
+        MAX(p.punch_datetime) FILTER (WHERE (public.punch_key_semantic(p.punch_key_lookup_id, 'movement_kind') = 'LUNCH' AND public.punch_key_semantic(p.punch_key_lookup_id, 'direction') = 'IN')) AS lunch_in
       FROM plans pl
       LEFT JOIN public.employee_time_punches p
         ON p.employee_id = pl.employee_id
@@ -549,16 +540,13 @@ export function buildOvertimeCtes(
         attendance.employee_id,
         attendance.shift_date,
         SUM(leave_minutes.minutes) FILTER (
-          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
-             OR UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
+          WHERE ae.tracks_late_arrival = true
         )::int AS approved_late_minutes,
         SUM(leave_minutes.minutes) FILTER (
-          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
-             OR UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
+          WHERE ae.tracks_early_departure = true
         )::int AS approved_early_departure_minutes,
         SUM(leave_minutes.minutes) FILTER (
-          WHERE UPPER(COALESCE(ae.event_short_name, '')) IN ('FAL', 'FALTA')
-             OR UPPER(COALESCE(ae.event_name, '')) IN ('FALTA', 'INASISTENCIA')
+          WHERE ae.tracks_absence = true
         )::int AS approved_absence_minutes,
         SUM(leave_minutes.minutes) FILTER (
           WHERE UPPER(COALESCE(jm.lookup_key, '')) = 'UNPAID_LEAVE'
@@ -851,10 +839,10 @@ function addUuidSql(params: any[], value: string | null): string {
 }
 
 function buildReportQueryParts(
-  context: { tenant_id: string; user_id: string; role_keys: string[] },
+  context: { tenant_id: string; user_id: string; unrestricted: boolean },
   req: Request
 ) {
-  const unrestricted = isUnrestricted(context);
+  const unrestricted = context.unrestricted;
   const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
   const params: any[] = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
   const dateFrom = normalizeNullableText(req.query.date_from);
@@ -912,7 +900,7 @@ router.get('/employees', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
     }
 
-    const unrestricted = isUnrestricted(context);
+    const unrestricted = context.unrestricted;
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
     const params = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
     const search = normalizeNullableText(req.query.search);
@@ -949,7 +937,7 @@ router.get('/filters', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
     }
 
-    const unrestricted = isUnrestricted(context);
+    const unrestricted = context.unrestricted;
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
     const params = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
     const result = await pool.query(
@@ -1015,7 +1003,7 @@ router.get('/punches', async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'No tiene autorizacion para consultar este reporte' });
     }
 
-    const unrestricted = isUnrestricted(context);
+    const unrestricted = context.unrestricted;
     const assignedEmployeesSql = buildAssignedEmployeesSql(unrestricted);
     const params: any[] = unrestricted ? [context.tenant_id] : [context.tenant_id, context.user_id];
     const dateFrom = normalizeNullableText(req.query.date_from);
@@ -1123,13 +1111,13 @@ router.get('/punches', async (req: Request, res: Response) => {
               AND esp.company_id = p.company_id
               AND esp.employee_id = p.employee_id
               AND esp.is_active = true
-              AND esp.shift_date = (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date
+              AND esp.shift_date = (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date
             ORDER BY esp.created_at DESC
             LIMIT 1
           ) shift_plan ON true
           WHERE p.tenant_id = $1::uuid
             AND p.is_active = true
-            AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date
+            AND (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date
                 BETWEEN ${dateFromSql}::date AND ${dateToSql}::date
             AND (${employeeIdSql} IS NULL OR ae.employee_id = ${employeeIdSql})
             AND (${payrollGroupIdSql} IS NULL OR ae.payroll_group_id = ${payrollGroupIdSql})

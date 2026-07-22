@@ -23,7 +23,6 @@ import { formatClientDate, formatClientDateTime, formatClientTime, getClientTime
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-const START_MOVEMENT_KEYS = new Set(['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT']);
 const LOCATION_CACHE_MAX_AGE_MS = 45_000;
 const LOCATION_REQUEST_TIMEOUT_MS = 6_000;
 const CLIENT_APP_INSTANCE_STORAGE_KEY = 'tt-client-app-instance-id';
@@ -33,6 +32,9 @@ interface SelectOption {
   lookup_label?: string;
   lookup_short_label?: string;
   punch_key_value?: number;
+  movement_direction?: 'IN' | 'OUT' | string | null;
+  icon_key?: string | null;
+  kiosk_column?: 'LEFT' | 'RIGHT' | string | null;
   company_id?: string | null;
   company_name?: string | null;
   device_name?: string | null;
@@ -422,6 +424,11 @@ export default function KioskPunch() {
     return map;
   }, [orderedPunchKeys]);
 
+  const punchKeysByColumn = useMemo(() => ({
+    left: orderedPunchKeys.filter((item) => item.kiosk_column === 'LEFT'),
+    right: orderedPunchKeys.filter((item) => item.kiosk_column === 'RIGHT'),
+  }), [orderedPunchKeys]);
+
   const currentCompanyName = useMemo(() => {
     if (!context) return '-';
     const employeeCompanyId = context.employee.company_id;
@@ -550,22 +557,22 @@ export default function KioskPunch() {
     const isSaving = item?.id ? savingLookupId === item.id : false;
     const disabled = !item || !!savingLookupId;
 
-    const isStartKey = START_MOVEMENT_KEYS.has(lookupKey);
+    const isStartKey = item?.movement_direction === 'IN';
     const toneClass = isStartKey
       ? 'border-emerald-400 bg-emerald-50 hover:bg-emerald-100'
       : 'border-rose-400 bg-rose-50 hover:bg-rose-100';
     const bubbleClass = isStartKey
       ? 'bg-emerald-100 border-emerald-300 text-emerald-800'
       : 'bg-rose-100 border-rose-300 text-rose-800';
-    const iconByLookupKey: Record<string, ComponentType<{ className?: string }>> = {
-      ENTRY: DoorOpen,
-      LUNCH_OUT: Utensils,
-      LUNCH_IN: UtensilsCrossed,
-      EXIT: DoorClosed,
-      PERMISSION_OUT: ArrowRightCircle,
-      PERMISSION_IN: ArrowLeftCircle,
+    const iconByKey: Record<string, ComponentType<{ className?: string }>> = {
+      DoorOpen,
+      Utensils,
+      UtensilsCrossed,
+      DoorClosed,
+      ArrowRightCircle,
+      ArrowLeftCircle,
     };
-    const Icon = iconByLookupKey[lookupKey] || MonitorSmartphone;
+    const Icon = iconByKey[String(item?.icon_key || '')] || MonitorSmartphone;
 
     return (
       <Button
@@ -674,11 +681,8 @@ export default function KioskPunch() {
           </div>
 
           <div className="timeclock-punch-layout grid grid-cols-2 items-start gap-2 sm:gap-4">
-            <div className="timeclock-left-actions order-2 hidden space-y-3">
-              {renderKeyButton('ENTRY')}
-              {renderKeyButton('LUNCH_OUT')}
-              {renderKeyButton('LUNCH_IN')}
-              {renderKeyButton('EXIT')}
+            <div className="timeclock-left-actions order-1 hidden space-y-3">
+              {punchKeysByColumn.left.map((item) => renderKeyButton(String(item.lookup_key || '')))}
             </div>
 
             <div className="timeclock-camera-column order-1 col-span-2 space-y-2 sm:space-y-3">
@@ -724,9 +728,7 @@ export default function KioskPunch() {
             </div>
 
             <div className="timeclock-right-actions order-3 hidden space-y-3">
-              {renderKeyButton('PERMISSION_OUT')}
-              {renderKeyButton('PERMISSION_IN')}
-              <div className="hidden h-[216px]" />
+              {punchKeysByColumn.right.map((item) => renderKeyButton(String(item.lookup_key || '')))}
             </div>
           </div>
 

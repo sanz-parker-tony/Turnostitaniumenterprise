@@ -19,17 +19,8 @@ import { z } from 'zod';
 // HELPERS DE VALIDACIÓN
 // ============================================================================
 
-/**
- * Validador de contraseña segura
- * Requiere: 8+ caracteres, mayúscula, minúscula, número, caracter especial
- */
-export const passwordSchema = z
-  .string()
-  .min(8, 'La contraseña debe tener al menos 8 caracteres')
-  .regex(/[A-Z]/, 'Debe contener al menos una letra mayúscula')
-  .regex(/[a-z]/, 'Debe contener al menos una letra minúscula')
-  .regex(/[0-9]/, 'Debe contener al menos un número')
-  .regex(/[^A-Za-z0-9]/, 'Debe contener al menos un caracter especial (!@#$%^&*)');
+/** La política de contraseña se obtiene del backend y se valida al enviar. */
+export const passwordSchema = z.string();
 
 /**
  * Validador de email

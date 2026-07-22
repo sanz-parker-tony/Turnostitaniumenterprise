@@ -76,7 +76,7 @@ function dayShortName(date: Date): string {
 }
 
 export default function DashboardPage() {
-  const { user, profile, userRoles, isLoading: authLoading } = useAuth();
+  const { user, profile, isLoading: authLoading } = useAuth();
   const { menuScreens, isLoading: permsLoading } = usePermissions();
   const router = useRouter();
   const [dashboardType, setDashboardType] = useState<string>('');
@@ -87,22 +87,10 @@ export default function DashboardPage() {
       return;
     }
 
-    if (!authLoading && userRoles) {
-      // Determinar tipo de dashboard por prioridad de rol
-      // Nota: TENANT_ADMIN debe tener prioridad sobre EMPLOYEE para mostrar su tablero administrativo.
-      if (userRoles.includes('SYSTEM_ADMIN')) {
-        setDashboardType('SYSTEM_ADMIN');
-      } else if (userRoles.includes('TENANT_ADMIN')) {
-        setDashboardType('TENANT_ADMIN');
-      } else if (userRoles.includes('RRHH_ADMIN')) {
-        setDashboardType('RRHH_ADMIN');
-      } else if (userRoles.includes('EMPLOYEE')) {
-        setDashboardType('EMPLOYEE');
-      } else {
-        setDashboardType('DEFAULT');
-      }
+    if (!authLoading && profile) {
+      setDashboardType(profile.ui_dashboard_mode || 'GENERIC');
     }
-  }, [user, authLoading, userRoles, router]);
+  }, [user, profile, authLoading, router]);
 
   // Loading state
   if (authLoading || permsLoading || !dashboardType) {
@@ -125,28 +113,28 @@ export default function DashboardPage() {
             Bienvenido, {profile?.full_name || 'Usuario'}
           </h1>
           <p className="text-gray-600 mt-2">
-            {dashboardType === 'EMPLOYEE' && 'Panel de autoservicio - Gestiona tus asistencias y solicitudes'}
-            {dashboardType === 'RRHH_ADMIN' && 'Panel de RRHH - Gestion de personal y aprobaciones'}
-            {dashboardType === 'SYSTEM_ADMIN' && 'Panel de Administracion - Configuracion del sistema'}
-            {dashboardType === 'TENANT_ADMIN' && 'Panel de Administracion - Gestion del tenant'}
-            {dashboardType === 'DEFAULT' && 'Panel principal'}
+            {dashboardType === 'SELF' && 'Panel de autoservicio - Gestiona tus asistencias y solicitudes'}
+            {dashboardType === 'WORKFORCE' && 'Panel de gestión de personal y aprobaciones'}
+            {dashboardType === 'PLATFORM' && 'Panel de Administración - Configuración del sistema'}
+            {dashboardType === 'TENANT' && 'Panel de Administración - Gestión de la empresa'}
+            {dashboardType === 'GENERIC' && 'Panel principal'}
           </p>
         </div>
 
         {/* Dashboard EMPLOYEE */}
-        {dashboardType === 'EMPLOYEE' && <EmployeeDashboard />}
+        {dashboardType === 'SELF' && <EmployeeDashboard />}
 
         {/* Dashboard RRHH_ADMIN */}
-        {dashboardType === 'RRHH_ADMIN' && <RRHHDashboard />}
+        {dashboardType === 'WORKFORCE' && <RRHHDashboard />}
 
         {/* Dashboard SYSTEM_ADMIN */}
-        {dashboardType === 'SYSTEM_ADMIN' && <SystemAdminDashboard />}
+        {dashboardType === 'PLATFORM' && <SystemAdminDashboard />}
 
         {/* Dashboard TENANT_ADMIN */}
-        {dashboardType === 'TENANT_ADMIN' && <TenantAdminDashboard menuScreens={menuScreens} />}
+        {dashboardType === 'TENANT' && <TenantAdminDashboard menuScreens={menuScreens} />}
 
         {/* Dashboard DEFAULT */}
-        {dashboardType === 'DEFAULT' && <DefaultDashboard />}
+        {dashboardType === 'GENERIC' && <DefaultDashboard />}
       </div>
     </LayoutNew>
   );

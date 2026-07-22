@@ -157,7 +157,8 @@ async function requireSystemAdminRole(req: Request, res: Response): Promise<bool
          AND r.is_active = true
         WHERE u.auth_user_id = $1
           AND u.is_active = true
-          AND r.role_key = 'SYSTEM_ADMIN'
+          AND r.role_scope = 'SYSTEM'
+          AND r.is_system_role = true
         LIMIT 1
       `,
       [authUserId]

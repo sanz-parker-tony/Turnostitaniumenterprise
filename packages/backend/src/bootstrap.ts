@@ -6,13 +6,21 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient } from './lib/postgres-client.js';
+import { pool } from './lib/db.js';
+import { loadAuthenticationPolicy } from './lib/authentication-policy.js';
 
 const router = Router();
 
-const SYSTEM_ADMIN_EMAIL = 'system.admin@titanium-labs.com';
-const SYSTEM_ADMIN_PASSWORD = 'Titanium2026!';
 const TENANT_KEY = 'SYSTEM';
 const ROLE_KEY = 'SYSTEM_ADMIN';
+
+async function resolveBootstrapAdminCredentials(): Promise<{ email: string; password: string } | null> {
+  const email = String(process.env.BOOTSTRAP_SYSTEM_ADMIN_EMAIL || '').trim().toLowerCase();
+  const password = String(process.env.BOOTSTRAP_SYSTEM_ADMIN_PASSWORD || '');
+  const policy = await loadAuthenticationPolicy(pool);
+  if (!email || password.length < policy.passwordMinLength) return null;
+  return { email, password };
+}
 
 function getPostgresClient() {
   return createDbClient(
@@ -38,13 +46,14 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
 
     const PostgresUrl = process.env.Postgres_URL;
     const PostgresServiceKey = process.env.Postgres_SERVICE_ROLE_KEY;
+    const credentials = await resolveBootstrapAdminCredentials();
 
-    if (!PostgresUrl || !PostgresServiceKey) {
+    if (!PostgresUrl || !PostgresServiceKey || !credentials) {
       console.error('❌ [BOOTSTRAP] Variables de entorno faltantes');
       return res.status(500).json({
         success: false,
         error: 'Missing required environment variables',
-        details: 'Postgres_URL and Postgres_SERVICE_ROLE_KEY must be set',
+        details: 'Postgres_URL, Postgres_SERVICE_ROLE_KEY, BOOTSTRAP_SYSTEM_ADMIN_EMAIL y una BOOTSTRAP_SYSTEM_ADMIN_PASSWORD que cumpla la política de la base deben estar configurados',
       });
     }
 
@@ -62,10 +71,10 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
     let authUserId: string | null = null;
     let isNewUser = false;
 
-    console.log(`🔍 [BOOTSTRAP] Verificando usuario Auth: ${SYSTEM_ADMIN_EMAIL}`);
+    console.log(`🔍 [BOOTSTRAP] Verificando usuario Auth: ${credentials.email}`);
 
     const { data: listData, error: listError } = await Postgres.auth.admin.listUsers();
-    const existingUser = listData?.users?.find(u => u.email === SYSTEM_ADMIN_EMAIL);
+    const existingUser = listData?.users?.find(u => u.email === credentials.email);
 
     if (existingUser) {
       console.log('✅ [BOOTSTRAP] Usuario Auth ya existe:', existingUser.id);
@@ -74,8 +83,8 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
       console.log('🆕 [BOOTSTRAP] Creando usuario Auth...');
 
       const { data: newAuthUser, error: createUserError } = await Postgres.auth.admin.createUser({
-        email: SYSTEM_ADMIN_EMAIL,
-        password: SYSTEM_ADMIN_PASSWORD,
+        email: credentials.email,
+        password: credentials.password,
         email_confirm: true,
         user_metadata: {
           display_name: 'System Administrator',
@@ -175,7 +184,7 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
           auth_user_id: authUserId,
           tenant_id: tenantId,
           username: 'system.admin',
-          email: SYSTEM_ADMIN_EMAIL,
+          email: credentials.email,
           display_name: 'System Administrator',
           is_active: true,
           created_by: 'SYSTEM',
@@ -195,7 +204,7 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
     }
 
     const { error: syncPasswordError } = await Postgres.auth.admin.updateUserById(authUserId, {
-      password: SYSTEM_ADMIN_PASSWORD,
+      password: credentials.password,
     });
     if (syncPasswordError) {
       return res.status(500).json({
@@ -281,7 +290,7 @@ export async function ensureSystemAdmin(req: Request, res: Response) {
 
     console.log('🎉 [BOOTSTRAP] Bootstrap completado exitosamente');
 
-    const mustChangePassword = SYSTEM_ADMIN_EMAIL === 'system.admin@titanium-labs.com';
+    const mustChangePassword = true;
 
     return res.json({
       success: true,

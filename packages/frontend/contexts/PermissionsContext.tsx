@@ -25,6 +25,7 @@ export interface MenuScreen {
 interface PermissionsContextType {
   menuScreens: MenuScreen[];
   isLoading: boolean;
+  loadError: string | null;
   reload: () => Promise<void>;
   getFirstAvailableScreen: () => MenuScreen | null;
   getScreenByPath: (path: string) => MenuScreen | null;
@@ -36,6 +37,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user, profile, session } = useAuth();
   const [menuScreens, setMenuScreens] = useState<MenuScreen[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadTrigger, setReloadTrigger] = useState(0);
   const hasLoadedMenuRef = useRef(false);
   const lastMenuIdentityRef = useRef('');
@@ -63,6 +65,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         console.log('⚠️ No hay usuario o rol, limpiando menú');
         if (isMounted) {
           setMenuScreens([]);
+          setLoadError(null);
           setIsLoading(false);
           hasLoadedMenuRef.current = false;
           lastMenuIdentityRef.current = '';
@@ -77,28 +80,48 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       try {
         if (isMounted && shouldShowBlockingLoading) setIsLoading(true);
         if (isMounted && isNewMenuIdentity) setMenuScreens([]);
+        if (isMounted) setLoadError(null);
         console.log('🔄 Cargando pantallas del menú por backend endpoint para rol:', profile.role_key);
 
-        const response = await fetch(buildApiUrl('/users/menu-screens'), {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        });
+        let response: Response | null = null;
+        let payload: any = {};
+        const retryDelays = [0, 350, 900];
+
+        for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+          if (retryDelays[attempt] > 0) {
+            await new Promise((resolve) => window.setTimeout(resolve, retryDelays[attempt]));
+          }
+          if (!isMounted) return;
+
+          try {
+            response = await fetch(buildApiUrl('/users/menu-screens'), {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+            });
+            payload = await response.json().catch(() => ({}));
+
+            if (response.ok || response.status === 401 || response.status === 403) {
+              break;
+            }
+          } catch (requestError) {
+            response = null;
+            payload = { error: requestError instanceof Error ? requestError.message : String(requestError) };
+          }
+        }
 
         if (!isMounted) {
           console.log('🛑 Componente desmontado - cancelando carga de menú');
           return;
         }
 
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
+        if (!response?.ok) {
           console.error('❌ Error al cargar pantallas desde backend:', payload);
-          if (isMounted) {
-            if (shouldShowBlockingLoading) setMenuScreens([]);
-            setIsLoading(false);
-          }
-          return;
+          throw new Error(
+            payload?.error ||
+            (response ? `No se pudo cargar el menú (HTTP ${response.status})` : 'No se pudo conectar con el backend para cargar el menú')
+          );
         }
 
         const screens = Array.isArray(payload?.screens) ? payload.screens : [];
@@ -110,6 +133,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         });
         if (isMounted) {
           setMenuScreens(sortedScreens);
+          setLoadError(null);
           hasLoadedMenuRef.current = true;
           lastMenuIdentityRef.current = menuIdentity;
           console.log('✅ Pantallas cargadas y ordenadas:', sortedScreens.length);
@@ -125,6 +149,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         console.error('❌ Error al cargar menú:', error);
         if (isMounted) {
           if (shouldShowBlockingLoading) setMenuScreens([]);
+          setLoadError(error?.message || 'No se pudo cargar el menú autorizado');
         }
       } finally {
         if (isMounted) {
@@ -164,6 +189,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   const value: PermissionsContextType = {
     menuScreens,
     isLoading,
+    loadError,
     reload,
     getFirstAvailableScreen,
     getScreenByPath,

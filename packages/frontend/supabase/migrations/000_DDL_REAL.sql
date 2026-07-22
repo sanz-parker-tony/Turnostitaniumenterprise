@@ -133,11 +133,21 @@ CREATE TABLE public.attendance_events (
     movement_id uuid,
     calculation_method_id uuid,
     external_mapping character varying,
+    allows_employee_request boolean DEFAULT false NOT NULL,
+    punch_match_order character varying,
+    tracks_late_arrival boolean DEFAULT false NOT NULL,
+    tracks_early_departure boolean DEFAULT false NOT NULL,
+    tracks_absence boolean DEFAULT false NOT NULL,
+    tracks_odd_punch boolean DEFAULT false NOT NULL,
+    tracks_lunch_schedule_violation boolean DEFAULT false NOT NULL,
+    counts_as_non_working_time boolean DEFAULT false NOT NULL,
+    is_employee_incident boolean DEFAULT false NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     created_by character varying NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_by character varying,
-    updated_at timestamp with time zone
+    updated_at timestamp with time zone,
+    CONSTRAINT attendance_events_punch_match_order_chk CHECK (punch_match_order IS NULL OR punch_match_order::text IN ('FIRST', 'LAST'))
 );
 
 
@@ -1187,9 +1197,14 @@ CREATE TABLE public.roles (
     user_manager_role_id uuid,
     is_org_scope_target boolean DEFAULT false NOT NULL,
     is_employee_access_target boolean DEFAULT false NOT NULL,
+    is_tenant_administrator boolean DEFAULT false NOT NULL,
+    is_employee_self_service boolean DEFAULT false NOT NULL,
+    ui_dashboard_mode character varying DEFAULT 'GENERIC'::character varying NOT NULL,
+    ui_home_route character varying DEFAULT '/dashboard'::character varying NOT NULL,
     CONSTRAINT roles_data_scope_check CHECK (((data_scope)::text = ANY (ARRAY[('ALL'::character varying)::text, ('DIRECT_REPORTS'::character varying)::text, ('SELF'::character varying)::text]))),
     CONSTRAINT roles_role_key_check CHECK ((((role_key)::text ~ '^[A-Z0-9_]+$'::text) AND (length((role_key)::text) >= 2))),
-    CONSTRAINT roles_role_scope_check CHECK (((role_scope)::text = ANY (ARRAY[('SYSTEM'::character varying)::text, ('TENANT'::character varying)::text, ('SCOPE'::character varying)::text, ('SELF'::character varying)::text])))
+    CONSTRAINT roles_role_scope_check CHECK (((role_scope)::text = ANY (ARRAY[('SYSTEM'::character varying)::text, ('TENANT'::character varying)::text, ('SCOPE'::character varying)::text, ('SELF'::character varying)::text]))),
+    CONSTRAINT roles_ui_dashboard_mode_check CHECK ((ui_dashboard_mode)::text = ANY (ARRAY['PLATFORM'::text, 'TENANT'::text, 'WORKFORCE'::text, 'SELF'::text, 'GENERIC'::text]))
 );
 
 
@@ -1841,6 +1856,12 @@ CREATE TABLE public.users (
     updated_by character varying,
     updated_at timestamp with time zone,
     password character varying,
+    auth_version integer DEFAULT 1 NOT NULL,
+    must_change_password boolean DEFAULT false NOT NULL,
+    failed_login_attempts integer DEFAULT 0 NOT NULL,
+    locked_until timestamp with time zone,
+    CONSTRAINT users_auth_version_chk CHECK (auth_version >= 1),
+    CONSTRAINT users_failed_login_attempts_chk CHECK (failed_login_attempts >= 0),
     CONSTRAINT users_email_check CHECK (((email)::text ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'::text))
 );
 
@@ -1879,12 +1900,16 @@ CREATE VIEW public.users_with_primary_role AS
     r.role_key,
     r.role_name,
     r.role_scope,
-    (v.id IS NOT NULL) AS is_super_admin
-   FROM ((((public.tenants t
+    ((r.role_scope)::text = 'SYSTEM'::text AND r.is_system_role = true) AS is_super_admin,
+    r.data_scope,
+    r.is_tenant_administrator,
+    r.is_employee_self_service,
+    r.ui_dashboard_mode,
+    r.ui_home_route
+   FROM ((public.tenants t
      JOIN public.users u ON ((t.id = u.tenant_id)))
-     JOIN public.user_roles ur ON ((u.id = ur.user_id)))
-     JOIN public.roles r ON ((ur.role_id = r.id)))
-     LEFT JOIN public.v_super_admin_role_id v ON ((r.id = v.id)));
+     JOIN public.user_roles ur ON ((u.id = ur.user_id AND ur.is_active = true)))
+     JOIN public.roles r ON ((ur.role_id = r.id AND r.is_active = true));
 
 
 --
@@ -3006,6 +3031,15 @@ ALTER TABLE ONLY public.time_surcharge_rules
 ALTER TABLE ONLY public.attendance_events
     ADD CONSTRAINT uq_attendance_events_tenant_short_name UNIQUE (tenant_id, event_short_name);
 
+CREATE UNIQUE INDEX uq_attendance_events_late_behavior
+    ON public.attendance_events USING btree (tenant_id) WHERE (tracks_late_arrival AND is_active);
+CREATE UNIQUE INDEX uq_attendance_events_early_behavior
+    ON public.attendance_events USING btree (tenant_id) WHERE (tracks_early_departure AND is_active);
+CREATE UNIQUE INDEX uq_attendance_events_absence_behavior
+    ON public.attendance_events USING btree (tenant_id) WHERE (tracks_absence AND is_active);
+CREATE UNIQUE INDEX uq_attendance_events_odd_punch_behavior
+    ON public.attendance_events USING btree (tenant_id) WHERE (tracks_odd_punch AND is_active);
+
 
 --
 -- TOC entry 4976 (class 2606 OID 35968)
@@ -3212,6 +3246,10 @@ ALTER TABLE ONLY public.user_roles
 
 ALTER TABLE ONLY public.users
     ADD CONSTRAINT users_auth_user_id_key UNIQUE (auth_user_id);
+
+CREATE UNIQUE INDEX uq_users_active_email
+    ON public.users USING btree (lower((email)::text))
+    WHERE is_active = true AND email IS NOT NULL;
 
 
 --
@@ -3484,6 +3522,10 @@ CREATE INDEX idx_route_tracking_tenant_employee_datetime ON public.employee_rout
 CREATE INDEX idx_roles_user_manager_role ON public.roles USING btree (tenant_id, user_manager_role_id, is_active);
 
 CREATE INDEX idx_roles_user_scope_targets ON public.roles USING btree (tenant_id, is_org_scope_target, is_employee_access_target, is_active);
+
+CREATE UNIQUE INDEX uq_roles_tenant_administrator ON public.roles USING btree (tenant_id) WHERE (is_tenant_administrator AND is_active);
+
+CREATE UNIQUE INDEX uq_roles_employee_self_service ON public.roles USING btree (tenant_id) WHERE (is_employee_self_service AND is_active);
 
 
 --
@@ -6353,6 +6395,163 @@ BEFORE INSERT OR UPDATE OF lookup_group_id, tenant_id, lookup_scope, metadata
 ON public.lookup_values
 FOR EACH ROW
 EXECUTE FUNCTION public.enforce_lookup_value_management_policy();
+
+CREATE TABLE public.api_authorization_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    route_prefix character varying NOT NULL,
+    http_method character varying NOT NULL,
+    screen_id uuid NOT NULL,
+    action_id uuid NOT NULL,
+    authorization_mode character varying DEFAULT 'PERMISSION'::character varying NOT NULL,
+    priority integer DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by character varying,
+    updated_at timestamp with time zone,
+    CONSTRAINT api_authorization_rules_pkey PRIMARY KEY (id),
+    CONSTRAINT uq_api_authorization_rules UNIQUE (route_prefix, http_method),
+    CONSTRAINT api_authorization_rules_method_chk
+      CHECK (http_method IN ('*', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE')),
+    CONSTRAINT api_authorization_rules_mode_chk
+      CHECK (authorization_mode IN ('PERMISSION', 'AUTHENTICATED')),
+    CONSTRAINT api_authorization_rules_route_chk
+      CHECK (route_prefix ~ '^/[A-Za-z0-9_./:-]+$'),
+    CONSTRAINT api_authorization_rules_screen_id_fkey
+      FOREIGN KEY (screen_id) REFERENCES public.screens(id),
+    CONSTRAINT api_authorization_rules_action_id_fkey
+      FOREIGN KEY (action_id) REFERENCES public.actions(id)
+);
+
+CREATE INDEX idx_api_authorization_rules_match
+  ON public.api_authorization_rules (http_method, route_prefix)
+  WHERE is_active = true;
+
+CREATE TABLE public.data_access_authorization_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    table_name character varying NOT NULL,
+    operation character varying NOT NULL,
+    screen_id uuid NOT NULL,
+    action_id uuid NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by character varying,
+    updated_at timestamp with time zone,
+    CONSTRAINT data_access_authorization_rules_pkey PRIMARY KEY (id),
+    CONSTRAINT uq_data_access_authorization_rules UNIQUE (table_name, operation),
+    CONSTRAINT data_access_authorization_rules_table_chk
+      CHECK (table_name ~ '^[a-z][a-z0-9_]*$'),
+    CONSTRAINT data_access_authorization_rules_operation_chk
+      CHECK (operation IN ('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'UPSERT')),
+    CONSTRAINT data_access_authorization_rules_screen_id_fkey
+      FOREIGN KEY (screen_id) REFERENCES public.screens(id),
+    CONSTRAINT data_access_authorization_rules_action_id_fkey
+      FOREIGN KEY (action_id) REFERENCES public.actions(id)
+);
+
+CREATE TABLE public.attendance_event_punch_keys (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tenant_id uuid NOT NULL,
+    attendance_event_id uuid NOT NULL,
+    punch_key_lookup_id uuid NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by character varying NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by character varying,
+    updated_at timestamp with time zone,
+    CONSTRAINT attendance_event_punch_keys_pkey PRIMARY KEY (id),
+    CONSTRAINT uq_attendance_event_punch_keys UNIQUE (tenant_id, attendance_event_id, punch_key_lookup_id),
+    CONSTRAINT attendance_event_punch_keys_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+    CONSTRAINT attendance_event_punch_keys_event_id_fkey FOREIGN KEY (attendance_event_id) REFERENCES public.attendance_events(id),
+    CONSTRAINT attendance_event_punch_keys_punch_key_id_fkey FOREIGN KEY (punch_key_lookup_id) REFERENCES public.lookup_values(id)
+);
+
+CREATE FUNCTION public.punch_key_metadata(p_lookup_value_id uuid) RETURNS jsonb
+LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(value.metadata, '{}'::jsonb)
+  FROM public.lookup_values value
+  JOIN public.lookup_groups group_row
+    ON group_row.id = value.lookup_group_id
+   AND group_row.lookup_group_key = 'PUNCH_KEY'
+   AND group_row.is_active = true
+  WHERE value.id = p_lookup_value_id AND value.is_active = true
+  LIMIT 1
+$$;
+
+CREATE FUNCTION public.punch_key_semantic(p_lookup_value_id uuid, p_property text) RETURNS text
+LANGUAGE sql STABLE
+AS $$
+  SELECT NULLIF(public.punch_key_metadata(p_lookup_value_id) ->> p_property, '')
+$$;
+
+CREATE FUNCTION public.resolve_attendance_timezone(
+  p_tenant_id uuid,
+  p_company_id uuid DEFAULT NULL,
+  p_employee_profile_id uuid DEFAULT NULL,
+  p_employee_id uuid DEFAULT NULL
+) RETURNS text
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+  configured_value text;
+  resolved_time_zone text;
+BEGIN
+  SELECT COALESCE(employee_setting.setting_value, profile_setting.setting_value,
+                  company_setting.setting_value, tenant_setting.setting_value,
+                  system_setting.default_value)
+    INTO configured_value
+  FROM public.system_settings system_setting
+  LEFT JOIN public.tenant_settings tenant_setting
+    ON tenant_setting.tenant_id = p_tenant_id
+   AND tenant_setting.system_setting_id = system_setting.id AND tenant_setting.is_active
+  LEFT JOIN public.company_settings company_setting
+    ON p_company_id IS NOT NULL AND company_setting.tenant_id = p_tenant_id
+   AND company_setting.company_id = p_company_id
+   AND company_setting.system_setting_id = system_setting.id AND company_setting.is_active
+  LEFT JOIN public.employee_profile_settings profile_setting
+    ON p_employee_profile_id IS NOT NULL AND profile_setting.tenant_id = p_tenant_id
+   AND profile_setting.employee_profile_id = p_employee_profile_id
+   AND profile_setting.system_setting_id = system_setting.id AND profile_setting.is_active
+  LEFT JOIN public.employee_settings employee_setting
+    ON p_employee_id IS NOT NULL AND employee_setting.tenant_id = p_tenant_id
+   AND employee_setting.employee_id = p_employee_id
+   AND employee_setting.system_setting_id = system_setting.id AND employee_setting.is_active
+  WHERE system_setting.setting_key = 'ATTENDANCE_TIMEZONE' AND system_setting.is_active
+  LIMIT 1;
+
+  IF NULLIF(btrim(configured_value), '') IS NULL THEN
+    RAISE EXCEPTION 'ATTENDANCE_TIMEZONE no está configurado para el tenant %', p_tenant_id;
+  END IF;
+
+  SELECT value.lookup_short_label INTO resolved_time_zone
+  FROM public.lookup_values value
+  JOIN public.lookup_groups group_row
+    ON group_row.id = value.lookup_group_id
+   AND group_row.lookup_group_key = 'ATTENDANCE_TIMEZONE' AND group_row.is_active
+  WHERE value.is_active AND (value.tenant_id IS NULL OR value.tenant_id = p_tenant_id)
+    AND (value.lookup_key = configured_value OR value.lookup_short_label = configured_value)
+  ORDER BY CASE WHEN value.tenant_id = p_tenant_id THEN 0 ELSE 1 END
+  LIMIT 1;
+
+  IF NULLIF(btrim(resolved_time_zone), '') IS NULL THEN
+    RAISE EXCEPTION 'ATTENDANCE_TIMEZONE referencia un valor inexistente o inactivo: %', configured_value;
+  END IF;
+  RETURN resolved_time_zone;
+END
+$$;
+
+CREATE FUNCTION public.attendance_timezone_for_punch(
+  p_punch_time_zone text,
+  p_tenant_id uuid,
+  p_employee_id uuid DEFAULT NULL
+) RETURNS text
+LANGUAGE sql STABLE
+AS $$
+  SELECT COALESCE(NULLIF(btrim(p_punch_time_zone), ''),
+                  public.resolve_attendance_timezone(p_tenant_id, NULL, NULL, p_employee_id))
+$$;
 
 COMMIT;
 

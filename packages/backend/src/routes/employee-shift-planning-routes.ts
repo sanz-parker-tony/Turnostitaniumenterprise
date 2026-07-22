@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { publishTenantDashboardEvent } from '../lib/dashboard-events.js';
+import { resolveEffectiveAttendanceTimeZone } from '../lib/effective-settings.js';
 
 const router = Router();
 
@@ -50,12 +51,14 @@ async function resolveInternalUserId(req: Request, tenantId: string): Promise<st
   return result.rows[0]?.id || null;
 }
 
-async function resolveUserRoleKeys(tenantId: string, userId: string | null): Promise<string[]> {
-  if (!userId) return [];
+async function shouldRestrictByEmployeeScope(tenantId: string, userId: string | null): Promise<boolean> {
+  if (!userId) return true;
 
   const result = await pool.query(
     `
-      SELECT DISTINCT UPPER(r.role_key) AS role_key
+      SELECT
+        COUNT(*)::integer AS active_role_count,
+        BOOL_OR(UPPER(COALESCE(r.data_scope, '')) = 'ALL') AS has_unrestricted_scope
       FROM public.user_roles ur
       JOIN public.roles r
         ON r.id = ur.role_id
@@ -70,12 +73,8 @@ async function resolveUserRoleKeys(tenantId: string, userId: string | null): Pro
     [tenantId, userId]
   );
 
-  return result.rows.map((row) => String(row.role_key || '').trim()).filter(Boolean);
-}
-
-function shouldRestrictByEmployeeScope(roleKeys: string[]): boolean {
-  const restrictedRoles = new Set(['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN']);
-  return roleKeys.some((roleKey) => restrictedRoles.has(roleKey)) && !roleKeys.includes('TENANT_ADMIN');
+  const row = result.rows[0];
+  return Number(row?.active_role_count || 0) === 0 || row?.has_unrestricted_scope !== true;
 }
 
 async function resolveAuthorizedEmployeeIds(tenantId: string, userId: string | null): Promise<string[]> {
@@ -101,7 +100,6 @@ async function resolveAuthorizedEmployeeIds(tenantId: string, userId: string | n
         AND ur.is_active = true
         AND (ur.valid_from IS NULL OR ur.valid_from <= now())
         AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
     `,
     [tenantId, userId]
   );
@@ -113,9 +111,9 @@ function isDateIso(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-function getGuayaquilNow(): { dateIso: string; minutes: number } {
+function getLocalNow(timeZone: string): { dateIso: string; minutes: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Guayaquil',
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -170,8 +168,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     if (!tenantId) return res.status(400).json({ error: 'No se pudo resolver tenant_id' });
 
     const userId = await resolveInternalUserId(req, tenantId);
-    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
-    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const restrictByEmployeeScope = await shouldRestrictByEmployeeScope(tenantId, userId);
     const assignmentParams = restrictByEmployeeScope ? [tenantId, userId] : [tenantId];
     const accessibleAssignmentsSql = restrictByEmployeeScope
       ? `
@@ -208,7 +205,6 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             AND ur.is_active = true
             AND (ur.valid_from IS NULL OR ur.valid_from <= now())
             AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-            AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
         `
       : `
           SELECT
@@ -231,7 +227,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             AND ec.is_active = true
         `;
 
-    const [employeesResult, shiftsResult, shiftTypesResult, combinationsResult] = await Promise.all([
+    const [employeesResult, shiftsResult, shiftTypesResult, combinationsResult, timezoneResult] = await Promise.all([
       pool.query(
         `
           WITH accessible_assignments AS (
@@ -277,6 +273,10 @@ router.get('/catalogs', async (req: Request, res: Response) => {
           ORDER BY e.id, aa.assignment_created_at DESC NULLS LAST, e.employee_lastname ASC, e.employee_name ASC
         `,
         assignmentParams
+      ),
+      pool.query(
+        `SELECT public.resolve_attendance_timezone($1::uuid, NULL, NULL, NULL) AS attendance_timezone`,
+        [tenantId]
       ),
       pool.query(
         `
@@ -407,6 +407,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
     return res.status(200).json({
       success: true,
       tenant_id: tenantId,
+      attendance_timezone: timezoneResult.rows[0]?.attendance_timezone,
       employees: employeesResult.rows,
       shifts: shiftsResult.rows,
       shift_types: shiftTypesResult.rows,
@@ -436,8 +437,7 @@ router.get('/plans', async (req: Request, res: Response) => {
     }
 
     const userId = await resolveInternalUserId(req, tenantId);
-    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
-    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const restrictByEmployeeScope = await shouldRestrictByEmployeeScope(tenantId, userId);
     const authorizedEmployeeIds = restrictByEmployeeScope ? await resolveAuthorizedEmployeeIds(tenantId, userId) : [];
 
     if (restrictByEmployeeScope && authorizedEmployeeIds.length === 0) {
@@ -504,8 +504,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
 
     const actor = getActor(req);
     const userId = await resolveInternalUserId(req, tenantId);
-    const roleKeys = await resolveUserRoleKeys(tenantId, userId);
-    const restrictByEmployeeScope = shouldRestrictByEmployeeScope(roleKeys);
+    const restrictByEmployeeScope = await shouldRestrictByEmployeeScope(tenantId, userId);
     const authorizedEmployeeIds = restrictByEmployeeScope ? await resolveAuthorizedEmployeeIds(tenantId, userId) : [];
     const authorizedEmployeeIdSet = new Set(authorizedEmployeeIds);
 
@@ -602,7 +601,8 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       return freeShiftId;
     };
 
-    const nowInGuayaquil = getGuayaquilNow();
+    const attendanceTimeZone = await resolveEffectiveAttendanceTimeZone(pool, { tenantId });
+    const nowInAttendanceTimeZone = getLocalNow(attendanceTimeZone);
 
     for (const change of changes) {
       const employeeId = String(change?.employee_id || '').trim();
@@ -617,7 +617,7 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
         throw new Error('Cada cambio requiere employee_id y shift_date (YYYY-MM-DD)');
       }
 
-      if (shiftDate < nowInGuayaquil.dateIso) {
+      if (shiftDate < nowInAttendanceTimeZone.dateIso) {
         throw new Error(`No se pueden modificar turnos con fecha anterior a la fecha actual (${shiftDate})`);
       }
 
@@ -645,9 +645,9 @@ router.post('/plans/bulk', async (req: Request, res: Response) => {
       }
       companyId = shiftCompanyId;
 
-      if (shiftDate === nowInGuayaquil.dateIso) {
+      if (shiftDate === nowInAttendanceTimeZone.dateIso) {
         const shiftStart = parseTimeToMinutes(shiftStartTimeById.get(shiftId));
-        const earliestAllowedStart = nowInGuayaquil.minutes + 120;
+        const earliestAllowedStart = nowInAttendanceTimeZone.minutes + 120;
         if (earliestAllowedStart > 1439 || shiftStart === null || shiftStart < earliestAllowedStart) {
           throw new Error(
             earliestAllowedStart > 1439

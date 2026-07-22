@@ -8,6 +8,7 @@ import { buildApiUrl } from '../../utils/api-config';
 import { useState, useEffect } from 'react';
 import { UserCog, ChevronRight, ChevronLeft, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
 import { projectId, publicApiToken } from '../../utils/backend/info';
+import { useAuthenticationPolicy } from '../../lib/authentication-policy';
 
 interface WizardStepAdminUserProps {
   onComplete: (data: any) => void;
@@ -15,6 +16,7 @@ interface WizardStepAdminUserProps {
 }
 
 export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStepAdminUserProps) {
+  const { policy: authenticationPolicy, error: authenticationPolicyError } = useAuthenticationPolicy();
   const [formData, setFormData] = useState({
     admin_username: '', // ✅ NUEVO: Username personalizado (opcional)
     admin_name: '',
@@ -113,8 +115,11 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
     if (!formData.admin_password) {
       return 'La contraseña es obligatoria';
     }
-    if (formData.admin_password.length < 8) {
-      return 'La contraseña debe tener al menos 8 caracteres';
+    if (!authenticationPolicy) {
+      return authenticationPolicyError || 'La política de autenticación todavía no está disponible';
+    }
+    if (formData.admin_password.length < authenticationPolicy.passwordMinLength) {
+      return `La contraseña debe tener al menos ${authenticationPolicy.passwordMinLength} caracteres`;
     }
     if (formData.admin_password !== formData.admin_password_confirm) {
       return 'Las contraseñas no coinciden';
@@ -426,7 +431,7 @@ export default function WizardStepAdminUser({ onComplete, onGoBack }: WizardStep
                 value={formData.admin_password}
                 onChange={(e) => setFormData({ ...formData, admin_password: e.target.value })}
                 className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0074D9] focus:border-transparent"
-                placeholder="Mínimo 8 caracteres"
+                placeholder={authenticationPolicy ? `Mínimo ${authenticationPolicy.passwordMinLength} caracteres` : 'Cargando política...'}
                 disabled={isCreating}
               />
               <button

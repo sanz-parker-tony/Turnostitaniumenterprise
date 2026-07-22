@@ -1,11 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { createDbClient } from '../lib/postgres-client.js';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import ExcelJS from 'exceljs';
 import { withDocs } from '../lib/swagger-docs.js';
 import { pool } from '../lib/db.js';
+import { resolveEffectiveAttendanceTimeZone } from '../lib/effective-settings.js';
+import { hashPassword } from '../lib/password-security.js';
+import { loadAuthenticationPolicy } from '../lib/authentication-policy.js';
 
 type EntityKey =
   | 'companies'
@@ -273,12 +276,12 @@ async function ensureEmployeeRoleAssigned(
   tenantId: string,
   userId: string,
   actor: string
-): Promise<string> {
+): Promise<{ userRoleId: string; roleKey: string }> {
   const { data: role, error: roleError } = await Postgres
     .from('roles')
-    .select('id')
+    .select('id, role_key')
     .eq('tenant_id', tenantId)
-    .eq('role_key', 'EMPLOYEE')
+    .eq('is_employee_self_service', true)
     .eq('is_active', true)
     .maybeSingle();
 
@@ -307,7 +310,7 @@ async function ensureEmployeeRoleAssigned(
       })
       .eq('id', existingUserRole.id);
     if (activateError) throw new Error(activateError.message);
-    return existingUserRole.id;
+    return { userRoleId: existingUserRole.id, roleKey: String(role.role_key) };
   }
 
   const { data: insertedUserRole, error: insertRoleError } = await Postgres
@@ -324,7 +327,7 @@ async function ensureEmployeeRoleAssigned(
     .single();
   if (insertRoleError) throw new Error(insertRoleError.message);
   if (!insertedUserRole?.id) throw new Error('No se pudo crear la asignaciÃƒÂ³n de rol EMPLOYEE');
-  return insertedUserRole.id;
+  return { userRoleId: insertedUserRole.id, roleKey: String(role.role_key) };
 }
 
 async function ensureEmployeeScopeAssigned(
@@ -992,10 +995,6 @@ function normalizeTimestamp(value: any): string | null {
   return parsed.toISOString();
 }
 
-function sha256Hex(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
-}
-
 function stripDiacritics(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -1499,7 +1498,10 @@ router.post('/mass-import/structure', async (req: Request, res: Response) => {
         state_id: locationStateId,
         city_id: locationCityId,
         address_line1: normalizeText(row.company_address_line1),
-        time_zone: normalizeText(row.work_location_time_zone) || 'America/Guayaquil',
+        time_zone: normalizeText(row.work_location_time_zone) || await resolveEffectiveAttendanceTimeZone(pool, {
+          tenantId,
+          companyId: companyUpsert.id,
+        }),
         is_active: normalizeBool(row.is_active, true),
       }, 'work_locations');
 
@@ -1598,7 +1600,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
       Postgres.from('work_groups').select('id, legacy_id').eq('tenant_id', tenantId),
       Postgres.from('work_locations').select('id, legacy_id').eq('tenant_id', tenantId),
       Postgres.from('employee_profiles').select('id, legacy_id').eq('tenant_id', tenantId),
-      Postgres.from('roles').select('id, role_key').eq('tenant_id', tenantId).eq('is_active', true),
+      Postgres.from('roles').select('id, role_key, is_employee_self_service').eq('tenant_id', tenantId).eq('is_active', true),
       Postgres.from('scope_types').select('id, scope_type_key').eq('is_active', true),
     ]);
 
@@ -1646,6 +1648,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
     const workLocationByCode = new Map((workLocations.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
     const employeeProfileByCode = new Map((employeeProfiles.data || []).map((row: any) => [String(row.legacy_id || ''), row.id]));
     const roleByKey = new Map((roles.data || []).map((row: any) => [String(row.role_key || '').toUpperCase(), row.id]));
+    const defaultEmployeeRole = (roles.data || []).find((row: any) => row.is_employee_self_service === true);
     const scopeTypeByKey = new Map((scopeTypes.data || []).map((row: any) => [String(row.scope_type_key || '').toUpperCase(), row.id]));
 
     const assignmentByEmployeeCode = new Map<string, StagedEmployeeCompanyAssignment[]>();
@@ -1670,11 +1673,11 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
       employee_companies_updated: 0,
     };
 
-    const defaultPassword = 'titanium2026';
     const seenSanitizedUsernames = new Set<string>();
     const seenSanitizedEmails = new Set<string>();
     let sanitizedUsernameCount = 0;
     let sanitizedEmailCount = 0;
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
 
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
@@ -1771,8 +1774,11 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
       }
 
       const rawPassword = normalizeText(row.password);
-      const selectedPassword = rawPassword && rawPassword.length >= 8 ? rawPassword : defaultPassword;
-      const encryptedPassword = sha256Hex(selectedPassword);
+      if (!rawPassword || rawPassword.length < passwordPolicy.passwordMinLength) {
+        throw new Error(`Fila ${rowNo}: password es obligatorio y debe tener al menos ${passwordPolicy.passwordMinLength} caracteres`);
+      }
+      const selectedPassword = rawPassword;
+      const encryptedPassword = await hashPassword(selectedPassword);
       let userId = userRecord?.id as string | undefined;
       let authUserId = userRecord?.auth_user_id as string | undefined;
 
@@ -1803,6 +1809,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
             phone: normalizeText(row.phone),
             preferred_language_code: normalizeText(row.preferred_language_code),
             password: encryptedPassword,
+            must_change_password: true,
             is_active: normalizeBool(row.is_active, true),
             created_by: actor,
           })
@@ -1823,6 +1830,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
             phone: normalizeText(row.phone),
             preferred_language_code: normalizeText(row.preferred_language_code),
             password: encryptedPassword,
+            must_change_password: true,
             is_active: normalizeBool(row.is_active, true),
             updated_by: actor,
             updated_at: new Date().toISOString(),
@@ -1835,6 +1843,7 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
           const authUpdatePayload: any = {
             email,
             password: selectedPassword,
+            must_change_password: true,
             user_metadata: {
               username,
               display_name: normalizeText(row.display_name) || `${employeeName} ${employeeLastname}`,
@@ -1859,7 +1868,8 @@ router.post('/mass-import/employees', async (req: Request, res: Response) => {
         .eq('id', employeeId);
       if (linkEmployeeError) throw new Error(linkEmployeeError.message || `No se pudo vincular user al empleado ${employeeCode}`);
 
-      const roleKey = (normalizeText(row.user_role_key) || 'EMPLOYEE').toUpperCase();
+      const roleKey = (normalizeText(row.user_role_key) || String(defaultEmployeeRole?.role_key || '')).toUpperCase();
+      if (!roleKey) throw new Error(`Fila ${rowNo}: no existe un rol configurado para autoservicio de empleados`);
       const roleId = roleByKey.get(roleKey);
       if (!roleId) throw new Error(`Fila ${rowNo}: role_key ${roleKey} no existe en roles`);
 
@@ -3829,7 +3839,7 @@ router.get('/employee-users/catalogs', async (req: Request, res: Response) => {
         .from('roles')
         .select('id, role_key, role_name')
         .eq('tenant_id', tenantId)
-        .eq('role_key', 'EMPLOYEE')
+    .eq('is_employee_self_service', true)
         .eq('is_active', true)
         .maybeSingle(),
     ]);
@@ -3878,7 +3888,7 @@ router.get('/employee-users', async (req: Request, res: Response) => {
         .from('roles')
         .select('id')
         .eq('tenant_id', tenantId)
-        .eq('role_key', 'EMPLOYEE')
+        .eq('is_employee_self_service', true)
         .eq('is_active', true)
         .maybeSingle();
 
@@ -3957,8 +3967,9 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
     if (!email || !String(email).trim()) {
       return res.status(400).json({ error: 'email es obligatorio' });
     }
-    if (password && String(password).trim().length > 0 && String(password).trim().length < 8) {
-      return res.status(400).json({ error: 'password debe tener al menos 8 caracteres' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (password && String(password).trim().length > 0 && String(password).trim().length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({ error: `password debe tener al menos ${passwordPolicy.passwordMinLength} caracteres` });
     }
 
     const { data: employee, error: employeeError } = await Postgres
@@ -3997,7 +4008,7 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
             AND ur.is_active = true
             AND (ur.valid_from IS NULL OR ur.valid_from <= now())
             AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-            AND r.role_key = 'EMPLOYEE'
+            AND r.is_employee_access_target = true
           LIMIT 1
         `,
         [tenantId, existingUser.id]
@@ -4048,6 +4059,7 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
         };
         if (password && String(password).trim()) {
           authUpdatePayload.password = String(password).trim();
+          authUpdatePayload.must_change_password = true;
         }
         const { error: authUpdateError } = await Postgres.auth.admin.updateUserById(existingUser.auth_user_id, authUpdatePayload);
         if (authUpdateError) return res.status(500).json({ error: authUpdateError.message });
@@ -4102,6 +4114,18 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
         return res.status(500).json({ error: insertUserError?.message || 'No se pudo crear el usuario en tabla users' });
       }
 
+      const { error: syncPasswordError } = await Postgres.auth.admin.updateUserById(authUserId, {
+        password: String(password).trim(),
+        must_change_password: true,
+      });
+      if (syncPasswordError) {
+        await Postgres.from('users').delete().eq('id', insertedUser.id);
+        return res.status(500).json({
+          error: 'No se pudo guardar de forma segura la contraseña inicial',
+          details: syncPasswordError.message,
+        });
+      }
+
       targetUserId = insertedUser.id;
       created = true;
 
@@ -4117,7 +4141,8 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
     }
 
     if (!targetUserId) return res.status(500).json({ error: 'No se pudo resolver el usuario a asociar' });
-    const userRoleId = await ensureEmployeeRoleAssigned(Postgres, tenantId, targetUserId, actor);
+    const employeeRoleAssignment = await ensureEmployeeRoleAssigned(Postgres, tenantId, targetUserId, actor);
+    const userRoleId = employeeRoleAssignment.userRoleId;
     await ensureEmployeeScopeAssigned(Postgres, tenantId, userRoleId, employeeId, actor);
 
     return res.status(200).json({
@@ -4125,7 +4150,7 @@ router.put('/employee-users/:employee_id', async (req: Request, res: Response) =
       employee_id: employeeId,
       user_id: targetUserId,
       created,
-      role_key: 'EMPLOYEE',
+      role_key: employeeRoleAssignment.roleKey,
       scope_key: 'EMPLOYEE',
       scope_entity_id: employeeId,
       message: created

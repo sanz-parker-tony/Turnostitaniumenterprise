@@ -1,6 +1,8 @@
 ﻿import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
 import { withDocs } from '../lib/swagger-docs.js';
+import { resolveEffectiveAttendanceTimeZone } from '../lib/effective-settings.js';
+import { hasUnrestrictedEmployeeDataScope, resolveAuthorizedEmployeeIds } from '../lib/user-data-scope.js';
 
 const router = Router();
 
@@ -51,59 +53,8 @@ async function resolveRequestUserContext(req: Request): Promise<{ user_id: strin
   return { user_id: row.user_id, tenant_id: row.tenant_id };
 }
 
-async function resolveUserRoleKeys(tenantId: string, userId: string): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT UPPER(COALESCE(r.role_key, '')) AS role_key
-      FROM public.user_roles ur
-      INNER JOIN public.roles r
-        ON r.id = ur.role_id
-       AND r.tenant_id = ur.tenant_id
-       AND r.is_active = true
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-    `,
-    [tenantId, userId]
-  );
-
-  return result.rows
-    .map((row) => String(row.role_key || '').trim().toUpperCase())
-    .filter(Boolean);
-}
-
 async function resolveManagedEmployeeIdsForSecurityScope(tenantId: string, userId: string): Promise<string[]> {
-  const result = await pool.query(
-    `
-      SELECT DISTINCT ura.employee_id::text AS employee_id
-      FROM public.user_roles ur
-      INNER JOIN public.roles r
-        ON r.id = ur.role_id
-       AND r.tenant_id = ur.tenant_id
-       AND r.is_active = true
-      INNER JOIN public.user_role_employee_assignments ura
-        ON ura.tenant_id = ur.tenant_id
-       AND ura.user_role_id = ur.id
-       AND ura.is_active = true
-      INNER JOIN public.employees e
-        ON e.id = ura.employee_id
-       AND e.tenant_id = ura.tenant_id
-       AND e.is_active = true
-      WHERE ur.tenant_id = $1::uuid
-        AND ur.user_id = $2::uuid
-        AND ur.is_active = true
-        AND (ur.valid_from IS NULL OR ur.valid_from <= now())
-        AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-        AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
-    `,
-    [tenantId, userId]
-  );
-
-  return result.rows
-    .map((row) => String(row.employee_id || '').trim())
-    .filter(Boolean);
+  return resolveAuthorizedEmployeeIds(pool, tenantId, userId);
 }
 
 function normalizeNullableText(value: any): string | null {
@@ -473,8 +424,7 @@ const getTimePunchDebugCatalogs = withDocs(
       }
       const tenantId = userContext.tenant_id;
 
-      const roleKeys = await resolveUserRoleKeys(tenantId, userContext.user_id);
-      const isRestrictedRole = roleKeys.some((key) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
+      const isRestrictedRole = !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds = isRestrictedRole
         ? await resolveManagedEmployeeIdsForSecurityScope(tenantId, userContext.user_id)
         : [];
@@ -612,8 +562,7 @@ const getTimePunchUnpaired = withDocs(
       const dateFromTs = dateFrom ? `${dateFrom}T00:00:00` : null;
       const dateToTs = dateTo ? `${dateTo}T23:59:59` : null;
 
-      const roleKeys = await resolveUserRoleKeys(tenantId, userContext.user_id);
-      const isRestrictedRole = roleKeys.some((key) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
+      const isRestrictedRole = !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds = isRestrictedRole
         ? await resolveManagedEmployeeIdsForSecurityScope(tenantId, userContext.user_id)
         : [];
@@ -697,8 +646,7 @@ const sendTimePunchInconsistencyNotifications = withDocs(
         return res.status(400).json({ error: 'date_to debe tener formato YYYY-MM-DD' });
       }
 
-      const roleKeys = await resolveUserRoleKeys(tenantId, userContext.user_id);
-      const isRestrictedRole = roleKeys.some((key) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
+      const isRestrictedRole = !(await hasUnrestrictedEmployeeDataScope(pool, tenantId, userContext.user_id));
       const managedEmployeeIds = isRestrictedRole
         ? await resolveManagedEmployeeIdsForSecurityScope(tenantId, userContext.user_id)
         : [];
@@ -1074,7 +1022,11 @@ router.post('/', async (req: Request, res: Response) => {
     const employeeId = normalizeNullableText(req.body?.employee_id);
     const timeClockDeviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchDatetime = normalizeNullableText(req.body?.punch_datetime);
-    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || 'America/Guayaquil';
+    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || await resolveEffectiveAttendanceTimeZone(pool, {
+      tenantId,
+      companyId,
+      employeeId,
+    });
     const punchKey = parseRequiredInt(req.body?.punch_key);
     const punchSourceId = normalizeNullableText(req.body?.punch_source_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);
@@ -1171,7 +1123,11 @@ router.put('/:id', async (req: Request, res: Response) => {
     const employeeId = normalizeNullableText(req.body?.employee_id);
     const timeClockDeviceId = normalizeNullableText(req.body?.time_clock_device_id);
     const punchDatetime = normalizeNullableText(req.body?.punch_datetime);
-    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || 'America/Guayaquil';
+    const punchTimeZone = normalizeNullableText(req.body?.punch_time_zone) || await resolveEffectiveAttendanceTimeZone(pool, {
+      tenantId,
+      companyId,
+      employeeId,
+    });
     const punchKey = parseRequiredInt(req.body?.punch_key);
     const punchSourceId = normalizeNullableText(req.body?.punch_source_id);
     const timePunchStatusId = normalizeNullableText(req.body?.time_punch_status_id);

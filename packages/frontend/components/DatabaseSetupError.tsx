@@ -120,10 +120,7 @@ export function DatabaseSetupError() {
             </h3>
             <div className="space-y-1 text-sm">
               <p className="text-blue-800">
-                <span className="font-semibold">Correo electrónico:</span> system.admin@titanium-labs.com
-              </p>
-              <p className="text-blue-800">
-                <span className="font-semibold">Contraseña:</span> Titanium2026!
+                Utiliza el correo y la contraseña bootstrap configurados durante la instalación.
               </p>
               <p className="text-xs text-blue-600 mt-2">
                 ⚠️ Deberás cambiar la contraseña en el primer login

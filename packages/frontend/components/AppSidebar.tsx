@@ -55,7 +55,7 @@ const getDynamicIcon = (iconName: string) => {
 
 export function AppSidebar() {
   const { profile } = useAuth();
-  const { menuScreens, isLoading } = usePermissions();
+  const { menuScreens, isLoading, loadError, reload } = usePermissions();
   const { isMobile, setOpenMobile } = useSidebar();
   const [currentPath, setCurrentPath] = useState('');
   const [openGroup, setOpenGroup] = useState<string>('');
@@ -174,7 +174,16 @@ export function AppSidebar() {
           <div className="flex items-center justify-center p-8">
             <div className="text-sm text-muted-foreground text-center">
               <p className="font-medium mb-1">No hay pantallas disponibles</p>
-              <p className="text-xs">Contacta al administrador</p>
+              <p className="text-xs">{loadError || 'Contacta al administrador'}</p>
+              {loadError && (
+                <button
+                  type="button"
+                  onClick={() => void reload()}
+                  className="mt-3 rounded border px-2 py-1 text-xs"
+                >
+                  Reintentar
+                </button>
+              )}
             </div>
           </div>
         ) : (

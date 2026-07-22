@@ -26,6 +26,7 @@ import { StandardDateInput } from '@/components/ui/standard-date-input';
 import { formatClientDateTime, formatStandardDate } from '@/utils/date-time';
 import SystemAdminPageHeader from '@/components/shared/SystemAdminPageHeader';
 import HeaderRefreshButton from '@/components/shared/HeaderRefreshButton';
+import { useAuthenticationPolicy } from '@/lib/authentication-policy';
 
 // ============================================================================
 // TIPOS
@@ -172,6 +173,7 @@ function shortId(value?: string | null): string {
 // ============================================================================
 
 export function UsersManagement() {
+  const { policy: authenticationPolicy, error: authenticationPolicyError } = useAuthenticationPolicy();
   const { profile } = useAuth();
 
   // Datos principales
@@ -576,7 +578,8 @@ export function UsersManagement() {
     const passwordProvided = Boolean(userForm.password || userForm.confirm_password);
     if (!editingUser || passwordProvided) {
       if (!userForm.password) errors.password = 'La contraseña es obligatoria';
-      else if (userForm.password.length < 8) errors.password = 'Mínimo 8 caracteres';
+      else if (!authenticationPolicy) errors.password = authenticationPolicyError || 'Política de autenticación no disponible';
+      else if (userForm.password.length < authenticationPolicy.passwordMinLength) errors.password = `Mínimo ${authenticationPolicy.passwordMinLength} caracteres`;
       else if (userForm.password !== userForm.confirm_password) errors.confirm_password = 'Las contraseñas no coinciden';
     }
     setUserFormErrors(errors);
@@ -880,7 +883,8 @@ export function UsersManagement() {
   };
 
   const handlePasswordReset = async () => {
-    if (!newPassword || newPassword.length < 8) { setPasswordError('Mínimo 8 caracteres'); return; }
+    if (!authenticationPolicy) { setPasswordError(authenticationPolicyError || 'Política de autenticación no disponible'); return; }
+    if (!newPassword || newPassword.length < authenticationPolicy.passwordMinLength) { setPasswordError(`Mínimo ${authenticationPolicy.passwordMinLength} caracteres`); return; }
     if (newPassword !== confirmPassword) { setPasswordError('Las contraseñas no coinciden'); return; }
     setPasswordSaving(true);
     setPasswordError('');
@@ -1422,7 +1426,7 @@ export function UsersManagement() {
                     </label>
                     <div className="relative">
                       <input type={showUserPassword ? 'text' : 'password'} value={userForm.password} onChange={e => setUserForm(f => ({ ...f, password: e.target.value }))}
-                        placeholder={editingUser ? 'Dejar vacío para no cambiar' : 'Mínimo 8 caracteres'} className={`w-full px-3 py-2 pr-10 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
+                        placeholder={editingUser ? 'Dejar vacío para no cambiar' : authenticationPolicy ? `Mínimo ${authenticationPolicy.passwordMinLength} caracteres` : 'Cargando política...'} className={`w-full px-3 py-2 pr-10 border rounded-lg text-sm ${userFormErrors.password ? 'border-red-400' : 'border-gray-300'}`} />
                       <button type="button" onClick={() => setShowUserPassword(value => !value)}
                         className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
                         aria-label={showUserPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
@@ -1647,7 +1651,7 @@ export function UsersManagement() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Nueva Contraseña</label>
                 <div className="relative">
                   <input type={showResetPassword ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)}
-                    placeholder="Mínimo 8 caracteres" className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm" />
+                    placeholder={authenticationPolicy ? `Mínimo ${authenticationPolicy.passwordMinLength} caracteres` : 'Cargando política...'} className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg text-sm" />
                   <button type="button" onClick={() => setShowResetPassword(value => !value)}
                     className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-gray-500 hover:text-gray-700"
                     aria-label={showResetPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}

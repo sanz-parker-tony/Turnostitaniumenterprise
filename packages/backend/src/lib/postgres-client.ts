@@ -1,6 +1,8 @@
 import jwt from 'jsonwebtoken';
-import { createHash, randomUUID } from 'crypto';
+import { randomUUID } from 'crypto';
 import { pool } from './db.js';
+import { hashPassword, passwordHashNeedsUpgrade, verifyPassword } from './password-security.js';
+import { loadAuthenticationPolicy } from './authentication-policy.js';
 
 type Json = string | number | boolean | null | { [key: string]: Json } | Json[];
 
@@ -24,6 +26,7 @@ interface AuthUser {
   created_at?: string;
   email_confirmed_at?: string | null;
   user_metadata?: Record<string, any>;
+  auth_version?: number;
 }
 
 type Filter =
@@ -34,12 +37,20 @@ type Filter =
   | { kind: 'in'; column: string; value: any[] }
   | { kind: 'raw'; sql: string; values?: any[] };
 
-const jwtSecret = process.env.JWT_SECRET || 'turnos-titanium-dev-secret';
-const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '12h';
 let usersPasswordColumnCache: 'password' | 'pasword' | null | undefined;
 
-function sha256Hex(value: string): string {
-  return createHash('sha256').update(value, 'utf8').digest('hex');
+function requiredAuthEnvironment(name: string, minLength = 1): string {
+  const value = String(process.env[name] || '').trim();
+  if (value.length < minLength) {
+    throw new Error(`${name} debe estar configurado${minLength > 1 ? ` con al menos ${minLength} caracteres` : ''}`);
+  }
+  return value;
+}
+
+export function assertAuthConfiguration(): void {
+  requiredAuthEnvironment('JWT_SECRET', 32);
+  requiredAuthEnvironment('JWT_ISSUER');
+  requiredAuthEnvironment('JWT_AUDIENCE');
 }
 
 async function getUsersPasswordColumn(): Promise<'password' | 'pasword' | null> {
@@ -440,59 +451,72 @@ class QueryBuilder<T = any> implements PromiseLike<CompatResult<T>> {
   }
 }
 
-function createAccessToken(user: AuthUser): string {
+async function createAccessToken(user: AuthUser): Promise<string> {
+  const jwtSecret = requiredAuthEnvironment('JWT_SECRET', 32);
+  const jwtIssuer = requiredAuthEnvironment('JWT_ISSUER');
+  const jwtAudience = requiredAuthEnvironment('JWT_AUDIENCE');
+  const policy = await loadAuthenticationPolicy(pool);
   return jwt.sign(
     {
       sub: user.id,
       email: user.email,
+      av: Number(user.auth_version || 1),
     },
     jwtSecret,
-    { expiresIn: jwtExpiresIn as jwt.SignOptions['expiresIn'] }
+    {
+      algorithm: 'HS256',
+      expiresIn: `${policy.sessionTimeoutMinutes}m`,
+      issuer: jwtIssuer,
+      audience: jwtAudience,
+      jwtid: randomUUID(),
+    }
   );
 }
 
 async function verifyToken(token: string): Promise<AuthUser | null> {
   try {
-    const decoded = jwt.verify(token, jwtSecret) as jwt.JwtPayload;
+    const decoded = jwt.verify(token, requiredAuthEnvironment('JWT_SECRET', 32), {
+      algorithms: ['HS256'],
+      issuer: requiredAuthEnvironment('JWT_ISSUER'),
+      audience: requiredAuthEnvironment('JWT_AUDIENCE'),
+      clockTolerance: 5,
+    }) as jwt.JwtPayload;
     const userId = String(decoded.sub || '');
-    if (!userId) return null;
+    const tokenAuthVersion = Number(decoded.av);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userId)) return null;
+    if (!Number.isInteger(tokenAuthVersion) || tokenAuthVersion < 1) return null;
 
     const { rows } = await pool.query(
       `
-        SELECT id, auth_user_id, email, username, display_name, tenant_id, created_at
-        FROM users
-        WHERE (auth_user_id = $1 OR id = $1)
-          AND is_active = TRUE
+        SELECT user_row.id, user_row.auth_user_id, user_row.email, user_row.username,
+               user_row.display_name, user_row.tenant_id, user_row.created_at,
+               user_row.auth_version, user_row.must_change_password
+        FROM public.users user_row
+        JOIN public.tenants tenant
+          ON tenant.id = user_row.tenant_id
+         AND tenant.is_active = true
+        WHERE user_row.auth_user_id = $1::uuid
+          AND user_row.is_active = true
         LIMIT 1
       `,
       [userId]
     );
 
     if (!rows[0]) return null;
-    const resolvedAuthUserId = rows[0].auth_user_id || rows[0].id;
-
-    // Si no estaba vinculado, normalizamos auth_user_id para mantener consistencia.
-    if (!rows[0].auth_user_id) {
-      await pool.query(
-        `
-          UPDATE users
-          SET auth_user_id = $1, updated_at = NOW()
-          WHERE id = $2 AND auth_user_id IS NULL
-        `,
-        [resolvedAuthUserId, rows[0].id]
-      );
-    }
+    if (Number(rows[0].auth_version || 1) !== tokenAuthVersion) return null;
 
     return {
-      id: resolvedAuthUserId,
+      id: rows[0].auth_user_id,
       email: rows[0].email,
       created_at: rows[0].created_at,
       email_confirmed_at: null,
+      auth_version: Number(rows[0].auth_version || 1),
       user_metadata: {
         username: rows[0].username,
         display_name: rows[0].display_name,
         tenant_id: rows[0].tenant_id,
         user_id: rows[0].id,
+        must_change_password: Boolean(rows[0].must_change_password),
       },
     };
   } catch {
@@ -502,6 +526,7 @@ async function verifyToken(token: string): Promise<AuthUser | null> {
 
 async function signInWithPassword(email: string, password: string): Promise<CompatResult<{ session: any; user: AuthUser }>> {
   try {
+    const policy = await loadAuthenticationPolicy(pool);
     const passwordColumn = await getUsersPasswordColumn();
     if (!passwordColumn) {
       return {
@@ -510,54 +535,101 @@ async function signInWithPassword(email: string, password: string): Promise<Comp
       };
     }
 
-    const passwordHash = sha256Hex(password);
     const { rows } = await pool.query(
       `
-        SELECT id, auth_user_id, email, username, display_name, tenant_id, created_at
-        FROM users
-        WHERE (lower(email) = lower($1) OR lower(username) = lower($1))
-          AND lower(${quoteIdent(passwordColumn)}) = lower($2)
-          AND is_active = TRUE
-        LIMIT 1
+        SELECT user_row.id, user_row.auth_user_id, user_row.email, user_row.username,
+               user_row.display_name, user_row.tenant_id, user_row.created_at,
+               user_row.auth_version,
+               user_row.must_change_password,
+               user_row.failed_login_attempts,
+               user_row.locked_until,
+               user_row.${quoteIdent(passwordColumn)} AS password_hash
+        FROM public.users user_row
+        JOIN public.tenants tenant
+          ON tenant.id = user_row.tenant_id
+         AND tenant.is_active = true
+        WHERE (lower(user_row.email) = lower($1) OR lower(user_row.username) = lower($1))
+          AND user_row.is_active = true
+        LIMIT 2
       `,
-      [email, passwordHash]
+      [email]
     );
 
-    if (!rows[0]) {
+    const candidate = rows.length === 1 ? rows[0] : null;
+    if (candidate?.locked_until && new Date(candidate.locked_until).getTime() > Date.now()) {
       return {
         data: null,
         error: { message: 'Invalid login credentials', code: 'AUTH_INVALID_CREDENTIALS' },
       };
     }
 
-    const resolvedAuthUserId = rows[0].auth_user_id || rows[0].id;
-
-    // Si auth_user_id viene vacío, lo vinculamos al id del usuario.
-    if (!rows[0].auth_user_id) {
+    if (candidate?.locked_until) {
       await pool.query(
-        `
-          UPDATE users
-          SET auth_user_id = $1, updated_at = NOW()
-          WHERE id = $2 AND auth_user_id IS NULL
-        `,
-        [resolvedAuthUserId, rows[0].id]
+        `UPDATE public.users
+         SET failed_login_attempts = 0, locked_until = NULL, updated_at = now()
+         WHERE id = $1::uuid AND locked_until <= now()`,
+        [candidate.id]
       );
+      candidate.failed_login_attempts = 0;
+      candidate.locked_until = null;
     }
 
+    if (!candidate || !(await verifyPassword(password, candidate.password_hash))) {
+      if (candidate) {
+        await pool.query(
+          `
+            UPDATE public.users
+            SET failed_login_attempts = failed_login_attempts + 1,
+                locked_until = CASE
+                  WHEN failed_login_attempts + 1 >= $2::integer
+                    THEN now() + make_interval(mins => $3::integer)
+                  ELSE NULL
+                END,
+                updated_at = now()
+            WHERE id = $1::uuid
+          `,
+          [candidate.id, policy.maxLoginAttempts, policy.loginLockoutMinutes]
+        );
+      }
+      return {
+        data: null,
+        error: { message: 'Invalid login credentials', code: 'AUTH_INVALID_CREDENTIALS' },
+      };
+    }
+
+    if (passwordHashNeedsUpgrade(candidate.password_hash)) {
+      await pool.query(
+        `
+          UPDATE public.users
+          SET ${quoteIdent(passwordColumn)} = $1, updated_at = now()
+          WHERE id = $2::uuid
+        `,
+        [await hashPassword(password), candidate.id]
+      );
+    }
+    await pool.query(
+      `UPDATE public.users
+       SET last_login_at = now(), failed_login_attempts = 0, locked_until = NULL, updated_at = now()
+       WHERE id = $1::uuid`,
+      [candidate.id]
+    );
+
     const user: AuthUser = {
-      id: resolvedAuthUserId,
-      email: rows[0].email,
-      created_at: rows[0].created_at,
+      id: candidate.auth_user_id,
+      email: candidate.email,
+      created_at: candidate.created_at,
       email_confirmed_at: null,
+      auth_version: Number(candidate.auth_version || 1),
       user_metadata: {
-        username: rows[0].username,
-        display_name: rows[0].display_name,
-        tenant_id: rows[0].tenant_id,
-        user_id: rows[0].id,
+        username: candidate.username,
+        display_name: candidate.display_name,
+        tenant_id: candidate.tenant_id,
+        user_id: candidate.id,
+        must_change_password: Boolean(candidate.must_change_password),
       },
     };
 
-    const accessToken = createAccessToken(user);
+    const accessToken = await createAccessToken(user);
 
     return {
       data: {
@@ -625,6 +697,7 @@ class AuthAdminCompat {
             created_at: nowIso,
             email_confirmed_at: payload.email_confirm ? nowIso : null,
             user_metadata: payload.user_metadata || {},
+            auth_version: 1,
           },
         },
         error: null,
@@ -636,7 +709,7 @@ class AuthAdminCompat {
 
   async updateUserById(
     userId: string,
-    payload: { email?: string; password?: string }
+    payload: { email?: string; password?: string; must_change_password?: boolean }
   ): Promise<CompatResult<{ user: AuthUser }>> {
     try {
       const passwordColumn = await getUsersPasswordColumn();
@@ -652,8 +725,23 @@ class AuthAdminCompat {
         if (!passwordColumn) {
           return { data: null, error: { message: 'No existe columna password/pasword en users' } };
         }
+        const policy = await loadAuthenticationPolicy(pool);
+        if (payload.password.length < policy.passwordMinLength) {
+          return {
+            data: null,
+            error: {
+              message: `La contrasena debe tener al menos ${policy.passwordMinLength} caracteres`,
+              code: 'AUTH_PASSWORD_POLICY',
+            },
+          };
+        }
         sets.push(`${quoteIdent(passwordColumn)} = $${i++}`);
-        values.push(sha256Hex(payload.password));
+        values.push(await hashPassword(payload.password));
+        sets.push('auth_version = auth_version + 1');
+      }
+      if (payload.must_change_password != null) {
+        sets.push(`must_change_password = $${i++}`);
+        values.push(Boolean(payload.must_change_password));
       }
       sets.push(`updated_at = NOW()`);
 
@@ -667,7 +755,7 @@ class AuthAdminCompat {
           UPDATE users
           SET ${sets.join(', ')}
           WHERE auth_user_id = $${i}
-          RETURNING id, auth_user_id, email, username, display_name, tenant_id, created_at
+          RETURNING id, auth_user_id, email, username, display_name, tenant_id, created_at, auth_version
         `,
         values
       );
@@ -683,6 +771,7 @@ class AuthAdminCompat {
             email: rows[0].email,
             created_at: rows[0].created_at,
             email_confirmed_at: null,
+            auth_version: Number(rows[0].auth_version || 1),
             user_metadata: {
               username: rows[0].username,
               display_name: rows[0].display_name,
@@ -703,7 +792,7 @@ class AuthAdminCompat {
       await pool.query(
         `
           UPDATE users
-          SET is_active = FALSE, updated_at = NOW()
+          SET is_active = FALSE, auth_version = auth_version + 1, updated_at = NOW()
           WHERE auth_user_id = $1
         `,
         [userId]

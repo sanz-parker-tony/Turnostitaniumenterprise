@@ -9,7 +9,6 @@ import { buildApiUrl } from '../../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import ScreenPageShell from '@/components/ScreenPageShell';
 import { createClient } from '@/utils/backend/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -59,7 +58,6 @@ function getApiStatusFromTab(tab: TabKey): 'PENDING' | 'APPROVED' | 'REJECTED' {
 }
 
 export default function ApprovalsPage() {
-  const { profile } = useAuth();
   const [requests, setRequests] = useState<ApprovalRequestRow[]>([]);
   const [discountMethods, setDiscountMethods] = useState<CatalogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -68,8 +66,6 @@ export default function ApprovalsPage() {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [draftById, setDraftById] = useState<Record<string, { justify_method_id: string; approval_notes: string }>>({});
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUseApprovals = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -113,11 +109,10 @@ export default function ApprovalsPage() {
   };
 
   useEffect(() => {
-    if (!canUseApprovals) return;
     void loadRequests();
     void loadCatalogs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, canUseApprovals]);
+  }, [activeTab]);
 
   const openEditor = (row: ApprovalRequestRow) => {
     setDraftById((prev) => ({
@@ -231,20 +226,6 @@ export default function ApprovalsPage() {
   }, [requests, searchTerm]);
 
   const displayDateTime = (value: string) => formatClientDateTime(value);
-
-  if (!canUseApprovals) {
-    return (
-      <ScreenPageShell
-        screenKey="REQUESTS_MANAGEMENT"
-        title="Bandeja de Aprobaciones"
-        description="Revisión y decisión de solicitudes de justificación"
-      >
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-          Esta pantalla está habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
-        </div>
-      </ScreenPageShell>
-    );
-  }
 
   return (
     <ScreenPageShell

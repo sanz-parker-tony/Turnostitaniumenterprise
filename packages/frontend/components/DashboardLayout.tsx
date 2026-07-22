@@ -18,8 +18,7 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { profile } = useAuth();
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const isEmployee = roleKey === 'EMPLOYEE';
+  const isEmployee = profile?.is_employee_self_service === true;
 
   return (
     <SidebarProvider>

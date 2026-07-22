@@ -12,7 +12,6 @@ import ChangePasswordModal from './components/ChangePasswordModal';
 import TenantSetupWizard from './components/TenantSetupWizard';
 import { DashboardLayout } from './components/DashboardLayout';
 import { Toaster } from 'sonner';
-import { ApiClient } from './lib/api-client';
 
 function LoadingScreen({ label, detail }: { label: string; detail: string }) {
   return (
@@ -27,10 +26,9 @@ function LoadingScreen({ label, detail }: { label: string; detail: string }) {
 }
 
 const DEFAULT_DASHBOARD_ROUTE = '/dashboard';
-const EMPLOYEE_DEFAULT_ROUTE = '/kiosk/timeclock';
-
-function getDefaultRouteByRoles(roleKeys: string[]) {
-  return roleKeys.includes('EMPLOYEE') ? EMPLOYEE_DEFAULT_ROUTE : DEFAULT_DASHBOARD_ROUTE;
+function getConfiguredHomeRoute(profile: any) {
+  const configured = String(profile?.ui_home_route || '').trim();
+  return configured.startsWith('/') ? configured : DEFAULT_DASHBOARD_ROUTE;
 }
 
 function AppContent() {
@@ -53,7 +51,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (!user || !session?.access_token) return;
+    if (!user || !session?.access_token || profile?.ui_dashboard_mode !== 'PLATFORM') return;
 
     const bootstrapKey = 'bootstrap_screens_done_v4';
     if (sessionStorage.getItem(bootstrapKey)) return;
@@ -91,7 +89,7 @@ function AppContent() {
       .catch((error) => {
         console.warn('[BOOTSTRAP] Error en bootstrap de pantallas:', error);
       });
-  }, [user, session?.access_token]);
+  }, [user, session?.access_token, profile?.ui_dashboard_mode]);
 
   useEffect(() => {
     if (!user && !isLoading) {
@@ -146,16 +144,22 @@ function AppContent() {
 
       if (window.location.pathname === '/login') {
         if (!primaryRoleKey && roleKeys.length === 0) return;
-        const landingPath = getDefaultRouteByRoles(roleKeys);
+        let cachedProfile: any = null;
+        try {
+          cachedProfile = JSON.parse(localStorage.getItem('user_profile') || 'null');
+        } catch {
+          cachedProfile = null;
+        }
+        const landingPath = getConfiguredHomeRoute(profile || cachedProfile);
         window.history.replaceState({}, '', landingPath);
         setCurrentPath(landingPath);
         window.dispatchEvent(new PopStateEvent('popstate'));
       }
     }
-  }, [user, profile?.role_key, userRoles, isLoading]);
+  }, [user, profile?.role_key, profile?.ui_home_route, userRoles, isLoading]);
 
   useEffect(() => {
-    if (!user || isLoading || !session?.access_token) {
+    if (!user || isLoading || !session?.access_token || !profile) {
       console.log('[WIZARD] Esperando datos antes de verificar:', {
         hasUser: !!user,
         hasProfile: !!profile,
@@ -167,79 +171,35 @@ function AppContent() {
 
     let isMounted = true;
 
-    const resolveTenantId = async (): Promise<string | null> => {
-      if (profile?.tenant_id) {
-        return profile.tenant_id;
-      }
-
-      const cachedProfile = localStorage.getItem('user_profile');
-      if (cachedProfile) {
-        try {
-          const parsed = JSON.parse(cachedProfile);
-          if (parsed?.tenant_id) {
-            console.log('[WIZARD] tenant_id recuperado desde cache local.');
-            return parsed.tenant_id;
-          }
-        } catch (error) {
-          console.warn('[WIZARD] user_profile invalido en localStorage:', error);
-        }
-      }
-
-      const { data, error } = await ApiClient
-        .from('users_with_primary_role')
-        .select('tenant_id')
-        .eq('auth_user_id', user.id)
-        .limit(1)
-        .single();
-
-      if (error) {
-        console.warn('[WIZARD] No se pudo resolver tenant_id por auth_user_id:', error);
-        return null;
-      }
-
-      return data?.tenant_id ?? null;
-    };
-
     const checkWizardStatus = async () => {
+      // El onboarding crea el tenant y su primer administrador. Por diseño solo
+      // corresponde al perfil de administración de plataforma configurado en BD.
+      // Un administrador de tenant ya pertenece a una organización existente y
+      // nunca debe ser enviado a este asistente.
+      if (profile.ui_dashboard_mode !== 'PLATFORM') {
+        setWizardCompleted(true);
+        setShowWizard(false);
+        setCheckingWizard(false);
+        return;
+      }
+
       try {
         setCheckingWizard(true);
         console.log('[WIZARD] Verificando estado del onboarding...');
-        const tenantId = await resolveTenantId();
-        if (!tenantId) {
-          console.warn('[WIZARD] tenant_id no disponible. Mostrando wizard por seguridad.');
-          setWizardCompleted(false);
-          setShowWizard(true);
-          return;
-        }
-
-        console.log('[WIZARD] Tenant ID del usuario:', tenantId);
-
-        const { data, error } = await ApiClient
-          .from('tenant_onboarding')
-          .select('onboarding_status, current_step, completion_percentage')
-          .eq('tenant_id', tenantId)
-          .limit(1)
-          .single();
+        const response = await fetch(buildApiUrl('/bootstrap/wizard-state'), {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const data = await response.json().catch(() => ({}));
 
         if (!isMounted) return;
 
-        if (error) {
-          if (error.code === 'PGRST116') {
-            console.log('[WIZARD] No hay registro de onboarding. Mostrando wizard.');
-            setWizardCompleted(false);
-            setShowWizard(true);
-            return;
-          }
-
-          console.error('[WIZARD] Error al verificar wizard:', error);
-          setWizardCompleted(false);
-          setShowWizard(true);
-          return;
+        if (!response.ok) {
+          throw new Error(data?.error || 'No se pudo verificar el onboarding');
         }
 
         console.log('[WIZARD] Estado actual:', data);
 
-        const completed = data?.onboarding_status === 'COMPLETED';
+        const completed = data?.onboardingStatus === 'COMPLETED';
         setWizardCompleted(completed);
         setShowWizard(!completed);
       } catch (error) {
@@ -259,7 +219,7 @@ function AppContent() {
     return () => {
       isMounted = false;
     };
-  }, [user, profile?.tenant_id, isLoading, session?.access_token]);
+  }, [user, profile, isLoading, session?.access_token]);
 
   const handlePasswordChanged = async () => {
     setMustChangePassword(false);

@@ -8,7 +8,6 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/AuthContext';
 import { formatClientDateTime } from '@/utils/date-time';
 
 type StatusFilter = 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
@@ -52,10 +51,6 @@ function approvalStatusBadgeClass(statusKey: string | null | undefined, statusLa
 }
 
 export default function RequestsApprovalsManagement() {
-  const { profile } = useAuth();
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
-
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -118,11 +113,6 @@ export default function RequestsApprovalsManagement() {
   };
 
   const load = async () => {
-    if (!canUse) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
 
     setLoading(true);
     try {
@@ -148,7 +138,7 @@ export default function RequestsApprovalsManagement() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUse, status]);
+  }, [status]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -192,14 +182,6 @@ export default function RequestsApprovalsManagement() {
       setWorkingId(null);
     }
   };
-
-  if (!canUse) {
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-        Esta pantalla esta habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">

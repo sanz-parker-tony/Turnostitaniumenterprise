@@ -7,7 +7,11 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createDbClient, authLogin } from './lib/postgres-client.js';
 import { pool } from './lib/db.js';
+import { authorizeConfiguredApiRequest } from './lib/api-authorization.js';
+import { resolveEffectiveAttendanceTimeZone } from './lib/effective-settings.js';
 import { getTenantDashboardEventVersion, waitForTenantDashboardEvent } from './lib/dashboard-events.js';
+import { loadAuthenticationPolicy } from './lib/authentication-policy.js';
+import { authorizeDataAccess, type DataOperation } from './lib/data-access-authorization.js';
 
 // Importar funciones de bootstrap
 import {
@@ -104,31 +108,25 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     return next();
   }
 
-  const authHeader = req.headers.authorization;
-
-  console.log('Ã°Å¸â€Â [requireAuth] Authorization header:', authHeader ? `Bearer ${authHeader.substring(7, 20)}...` : 'MISSING');
-
-  if (!authHeader?.startsWith('Bearer ')) {
-    console.error('Ã¢ÂÅ’ [requireAuth] Missing or invalid Authorization header');
+  const authHeader = String(req.headers.authorization || '').trim();
+  const bearerMatch = authHeader.match(/^Bearer\s+([A-Za-z0-9._~-]+)$/i);
+  if (!bearerMatch) {
     return res.status(401).json({
       code: 401,
-      error: 'Authorization header missing or invalid',
-      message: 'Missing authorization header',
+      error: 'Unauthorized',
+      message: 'Credencial de acceso ausente o inválida',
     });
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = bearerMatch[1];
 
   if (!token || token.length < 20) {
-    console.error('Ã¢ÂÅ’ [requireAuth] Token vacÃƒÂ­o o muy corto');
     return res.status(401).json({
       code: 401,
-      error: 'Invalid token',
-      message: 'Token is empty or malformed',
+      error: 'Unauthorized',
+      message: 'Credencial de acceso inválida',
     });
   }
-
-  console.log('Ã°Å¸â€Â [requireAuth] Token length:', token.length);
 
   const PostgresAdmin = getPostgresClient();
 
@@ -136,32 +134,52 @@ export const requireAuth = async (req: Request, res: Response, next: NextFunctio
     const { data: { user }, error } = await PostgresAdmin.auth.getUser(token);
 
     if (error) {
-      console.error('Ã¢ÂÅ’ [requireAuth] Error de autenticaciÃƒÂ³n:', error.message);
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
-        message: error.message,
+        message: 'La sesión no es válida o ha expirado',
       });
     }
 
     if (!user) {
-      console.error('Ã¢ÂÅ’ [requireAuth] Usuario no encontrado en el token');
       return res.status(401).json({
         code: 401,
         error: 'Unauthorized',
-        message: 'User not found',
+        message: 'La sesión no es válida o ha expirado',
       });
     }
 
-    console.log('Ã¢Å“â€¦ [requireAuth] Usuario autenticado:', user.email);
     (req as any).user = user;
-    next();
-  } catch (err: any) {
-    console.error('Ã°Å¸â€™Â¥ [requireAuth] Error inesperado:', err);
-    return res.status(500).json({
-      code: 500,
-      error: 'Internal server error',
-      message: err.message,
+
+    const requestPath = String(req.originalUrl || req.path || '').split('?', 1)[0];
+    const passwordChangeAllowed = requestPath === '/users/change-password' || requestPath === '/auth/me';
+    if (user.user_metadata?.must_change_password === true && !passwordChangeAllowed) {
+      return res.status(403).json({
+        code: 'PASSWORD_CHANGE_REQUIRED',
+        error: 'Forbidden',
+        message: 'Debe cambiar la contraseña temporal antes de continuar',
+      });
+    }
+
+    const authorization = await authorizeConfiguredApiRequest(req, user.id);
+    if (!authorization.allowed) {
+      return res.status(403).json({
+        code: 403,
+        error: 'Forbidden',
+        message: 'El usuario no posee la acción requerida para esta operación',
+        required_permission: authorization.configured
+          ? `${authorization.screenKey}:${authorization.actionKey}`
+          : 'API_RULE_NOT_CONFIGURED',
+      });
+    }
+
+    return next();
+  } catch (err) {
+    console.error('[requireAuth] No se pudo validar la sesión o sus permisos', err);
+    return res.status(503).json({
+      code: 503,
+      error: 'Authentication service unavailable',
+      message: 'No fue posible validar la sesión de forma segura',
     });
   }
 };
@@ -205,8 +223,8 @@ router.get('/bootstrap/ping', (req: Request, res: Response) => {
 // BOOTSTRAP ENDPOINTS
 // ============================================================================
 
-router.post('/bootstrap/ensure-system-admin', ensureSystemAdmin);
-router.post('/bootstrap/ensure-main-tenant', ensureMainTenant);
+router.post('/bootstrap/ensure-system-admin', requireAuth, ensureSystemAdmin);
+router.post('/bootstrap/ensure-main-tenant', requireAuth, ensureMainTenant);
 
 router.get('/bootstrap/wizard-state', requireAuth, getWizardState);
 router.get('/bootstrap/token', getBootstrapToken);
@@ -261,21 +279,90 @@ router.get('/bootstrap/tenant-info', requireAuth, async (req: Request, res: Resp
 router.get('/users/profile', requireAuth, async (req: Request, res: Response) => {
   try {
     const user = (req as any).user;
-    const Postgres = getPostgresClient();
+    const { rows } = await pool.query(
+      `
+        SELECT
+          u.id,
+          u.auth_user_id,
+          u.tenant_id,
+          t.tenant_name,
+          u.username,
+          u.email,
+          u.display_name,
+          u.preferred_language_code,
+          u.last_login_at,
+          u.created_at,
+          primary_role.role_key,
+          primary_role.role_name,
+          primary_role.role_scope,
+          (primary_role.role_scope = 'SYSTEM' AND primary_role.is_system_role = true) AS is_super_admin,
+          primary_role.data_scope,
+          primary_role.is_tenant_administrator,
+          primary_role.is_employee_self_service,
+          primary_role.ui_dashboard_mode,
+          primary_role.ui_home_route,
+          COALESCE(role_list.role_keys, ARRAY[]::text[]) AS role_keys
+        FROM public.users u
+        JOIN public.tenants t
+          ON t.id = u.tenant_id
+         AND t.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT
+            r.role_key,
+            r.role_name,
+            r.role_scope,
+            r.is_system_role,
+            r.data_scope,
+            r.is_tenant_administrator,
+            r.is_employee_self_service,
+            r.ui_dashboard_mode,
+            r.ui_home_route
+          FROM public.user_roles ur
+          JOIN public.roles r
+            ON r.id = ur.role_id
+           AND r.is_active = true
+          WHERE ur.user_id = u.id
+            AND ur.tenant_id = u.tenant_id
+            AND ur.is_active = true
+          ORDER BY ur.created_at ASC, ur.id ASC
+          LIMIT 1
+        ) primary_role ON true
+        LEFT JOIN LATERAL (
+          SELECT array_agg(DISTINCT r.role_key ORDER BY r.role_key) AS role_keys
+          FROM public.user_roles ur
+          JOIN public.roles r
+            ON r.id = ur.role_id
+           AND r.is_active = true
+          WHERE ur.user_id = u.id
+            AND ur.tenant_id = u.tenant_id
+            AND ur.is_active = true
+        ) role_list ON true
+        WHERE u.auth_user_id = $1::uuid
+          AND u.is_active = true
+        LIMIT 1
+      `,
+      [user.id]
+    );
 
-    const { data: profile, error } = await Postgres
-      .from('users')
-      .select('*')
-      .eq('auth_user_id', user.id)
-      .single();
-
-    if (error || !profile) {
+    const profile = rows[0];
+    if (!profile) {
       return res.status(404).json({ error: 'Profile not found' });
     }
 
+    await pool.query(
+      `
+        UPDATE public.users
+        SET last_login_at = now(),
+            updated_by = $2,
+            updated_at = now()
+        WHERE id = $1::uuid
+      `,
+      [profile.id, user.id]
+    );
+
     return res.json({ profile });
-  } catch (error) {
-    return res.status(500).json({ error: 'Internal server error' });
+  } catch (error: any) {
+    return res.status(500).json({ error: error?.message || 'Internal server error' });
   }
 });
 
@@ -289,8 +376,11 @@ router.post('/users/change-password', requireAuth, async (req: Request, res: Res
         error: 'La contraseña actual, la nueva contraseña y su confirmación son obligatorias.',
       });
     }
-    if (String(newPassword).length < 8) {
-      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (String(newPassword).length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({
+        error: `La nueva contraseña debe tener al menos ${passwordPolicy.passwordMinLength} caracteres.`,
+      });
     }
     if (String(newPassword) !== String(confirmPassword)) {
       return res.status(400).json({ error: 'La nueva contraseña y su confirmación no coinciden.' });
@@ -311,16 +401,12 @@ router.post('/users/change-password', requireAuth, async (req: Request, res: Res
 
     const { error: updateError } = await Postgres.auth.admin.updateUserById(user.id, {
       password: String(newPassword),
+      must_change_password: false,
     });
 
     if (updateError) {
       return res.status(500).json({ error: 'No se pudo actualizar la contraseña.' });
     }
-
-    await Postgres
-      .from('users')
-      .update({ must_change_password: false })
-      .eq('auth_user_id', user.id);
 
     return res.json({ success: true, message: 'Contraseña actualizada correctamente.' });
   } catch (error: any) {
@@ -537,7 +623,7 @@ router.get('/dashboard/tenant-admin-summary', requireAuth, async (req: Request, 
              AND r.is_active = true
             WHERE ura.tenant_id = $1
               AND ura.is_active = true
-              AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+              AND r.is_employee_access_target = true
           )
           SELECT
             (SELECT COUNT(*)::int FROM users WHERE tenant_id = $1 AND is_active = true) AS active_users,
@@ -985,28 +1071,6 @@ router.get('/dashboard/system-admin-summary', requireAuth, async (req: Request, 
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const roleCheck = await pool.query(
-      `
-        SELECT 1
-        FROM users u
-        JOIN user_roles ur
-          ON ur.user_id = u.id
-         AND ur.is_active = true
-        JOIN roles r
-          ON r.id = ur.role_id
-         AND r.is_active = true
-        WHERE u.auth_user_id = $1
-          AND u.is_active = true
-          AND r.role_key = 'SYSTEM_ADMIN'
-        LIMIT 1
-      `,
-      [authUserId]
-    );
-
-    if (!roleCheck.rows[0]) {
-      return res.status(403).json({ error: 'Acceso solo permitido para SYSTEM_ADMIN' });
-    }
-
     const now = new Date();
     const parsedYear = Number(req.query.year);
     const safeYear = Number.isFinite(parsedYear) && parsedYear >= 2000 && parsedYear <= 2100
@@ -1321,7 +1385,7 @@ router.get('/dashboard/system-admin-summary', requireAuth, async (req: Request, 
               ON r.id = ur.role_id
              AND r.is_active = true
             WHERE ura.is_active = true
-              AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+              AND r.is_employee_access_target = true
           ),
           device_status AS (
             SELECT
@@ -1466,7 +1530,7 @@ router.get('/dashboard/system-admin-summary', requireAuth, async (req: Request, 
               ON r.id = ur.role_id
              AND r.is_active = true
             WHERE ura.is_active = true
-              AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
+              AND r.is_employee_access_target = true
           )
           SELECT
             e.employee_code,
@@ -1565,7 +1629,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           u.display_name,
           u.tenant_id,
           t.tenant_name,
-          ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys
+          ARRAY_AGG(DISTINCT UPPER(COALESCE(r.role_key, ''))) FILTER (WHERE r.role_key IS NOT NULL) AS role_keys,
+          BOOL_OR(UPPER(COALESCE(r.data_scope, '')) = 'ALL') AS has_unrestricted_data_scope
         FROM public.users u
         LEFT JOIN public.tenants t
           ON t.id = u.tenant_id
@@ -1591,16 +1656,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     }
 
     const roleKeys = (context.role_keys || []).map((key: string) => String(key || '').trim().toUpperCase());
-    const canViewSupervisorDashboard = roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(key));
-    if (!canViewSupervisorDashboard) {
-      return res.status(403).json({ error: 'Dashboard disponible para Supervisor/RRHH' });
-    }
-
     const tenantId = String(context.tenant_id);
     const userId = String(context.user_id);
-    const unrestrictedTenantAdmin = roleKeys.includes('TENANT_ADMIN') && !roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN'].includes(key));
+    const unrestrictedDataScope = context.has_unrestricted_data_scope === true;
 
-    const assignedEmployeesSql = unrestrictedTenantAdmin
+    const assignedEmployeesSql = unrestrictedDataScope
       ? `
           SELECT DISTINCT ON (e.id)
             e.id AS employee_id,
@@ -1708,10 +1768,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND ur.is_active = true
             AND (ur.valid_from IS NULL OR ur.valid_from <= now())
             AND (ur.valid_to IS NULL OR ur.valid_to >= now())
-            AND UPPER(COALESCE(r.role_key, '')) IN ('SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN')
           ORDER BY e.id, ec.created_at DESC NULLS LAST
         `;
-    const scopedParams = unrestrictedTenantAdmin ? [tenantId] : [tenantId, userId];
+    const scopedParams = unrestrictedDataScope ? [tenantId] : [tenantId, userId];
 
     const assignedCountQuery = pool.query(
       `
@@ -1930,10 +1989,10 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.employee_id,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY'))[1] AS work_entry_punch_id,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT'))[1] AS work_exit_punch_id,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS work_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS work_exit
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START'))[1] AS work_entry_punch_id,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END'))[1] AS work_exit_punch_id,
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS work_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS work_exit
           FROM public.employee_time_punches p
           WHERE p.tenant_id = $1::uuid
             AND p.is_active = true
@@ -1960,6 +2019,22 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           tp.work_minutes,
           ps.work_entry AS first_entry,
           ps.work_exit AS last_exit,
+          (ps.work_entry IS NULL AND NOT tp.has_approved_leave) AS is_absence,
+          (
+            ps.work_entry IS NOT NULL
+            AND ps.work_entry > (tp.shift_date + (tp.work_start_minutes || ' minutes')::interval + (tp.entry_grace_minutes || ' minutes')::interval)
+            AND approved_late.id IS NULL
+          ) AS is_late_arrival,
+          (
+            ps.work_exit IS NOT NULL
+            AND ps.work_exit < (tp.shift_date + (tp.work_end_minutes || ' minutes')::interval - (tp.exit_grace_minutes || ' minutes')::interval)
+            AND approved_early.id IS NULL
+          ) AS is_early_departure,
+          (
+            tp.has_approved_leave
+            OR approved_late.id IS NOT NULL
+            OR approved_early.id IS NOT NULL
+          ) AS is_justified,
           CASE
             WHEN tp.has_approved_leave THEN 'JUSTIFICADO'
             WHEN tp.is_holiday AND tp.work_on_holidays = false THEN 'NORMAL'
@@ -1992,10 +2067,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND r.employee_id = tp.employee_id
             AND r.is_active = true
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
-            AND (
-              UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
-              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
-            )
+            AND ae.tracks_late_arrival = true
             AND r.target_punch_id = ps.work_entry_punch_id
           LIMIT 1
         ) approved_late ON true
@@ -2010,10 +2082,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND r.employee_id = tp.employee_id
             AND r.is_active = true
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO')
-            AND (
-              UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
-              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
-            )
+            AND ae.tracks_early_departure = true
             AND r.target_punch_id = ps.work_exit_punch_id
           LIMIT 1
         ) approved_early ON true
@@ -2077,6 +2146,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ae.work_on_holidays,
             mv.lookup_key AS movement_key,
             mv.lookup_label AS movement_label,
+            mv.movement_kind,
+            mv.punch_direction,
+            mv.work_boundary,
             am.id AS attendance_movement_id,
             am.movement_short_name AS attendance_movement_short_name,
             am.movement_name AS attendance_movement_name,
@@ -2091,7 +2163,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             ON dwl.id = d.work_location_id
            AND dwl.tenant_id = d.tenant_id
           LEFT JOIN LATERAL (
-            SELECT lv.lookup_key, lv.lookup_label
+            SELECT
+              lv.lookup_key,
+              lv.lookup_label,
+              NULLIF(lv.metadata->>'movement_kind', '') AS movement_kind,
+              NULLIF(lv.metadata->>'direction', '') AS punch_direction,
+              NULLIF(lv.metadata->>'work_boundary', '') AS work_boundary
             FROM public.lookup_values lv
             INNER JOIN public.lookup_groups lg
               ON lg.id = lv.lookup_group_id
@@ -2168,11 +2245,42 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           anomaly_justification.request_status_label AS anomaly_justification_status_label,
           approved_punch_change.id AS approved_punch_change_request_id,
           (approved_punch_change.id IS NOT NULL) AS has_approved_punch_change,
+          (
+            l.work_boundary = 'START'
+            AND s.start_time IS NOT NULL
+            AND COALESCE(sw.work_minutes, 0) > 0
+            AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
+            AND NOT (
+              late_justification.id IS NOT NULL
+              AND UPPER(COALESCE(late_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
+            )
+          ) AS is_late_arrival,
+          (
+            l.work_boundary = 'END'
+            AND s.start_time IS NOT NULL
+            AND COALESCE(sw.work_minutes, 0) > 0
+            AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
+            AND NOT (
+              early_departure_justification.id IS NOT NULL
+              AND UPPER(COALESCE(early_departure_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
+            )
+          ) AS is_early_departure,
+          (
+            approved_leave.id IS NOT NULL
+            OR (
+              late_justification.id IS NOT NULL
+              AND UPPER(COALESCE(late_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
+            )
+            OR (
+              early_departure_justification.id IS NOT NULL
+              AND UPPER(COALESCE(early_departure_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
+            )
+          ) AS is_justified,
           CASE
-            WHEN l.movement_key IN ('LUNCH_OUT', 'LUNCH_IN')
+            WHEN l.movement_kind = 'LUNCH'
              AND COALESCE(sw.lunch_window_minutes, 0) <= 0
               THEN 'NO_APLICA'
-            WHEN l.movement_key IN ('LUNCH_OUT', 'LUNCH_IN')
+            WHEN l.movement_kind = 'LUNCH'
              AND sw.lunch_start_minutes IS NOT NULL
              AND sw.lunch_end_minutes IS NOT NULL
              AND (
@@ -2180,28 +2288,28 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
                OR l.punch_datetime > (p.shift_date + (sw.lunch_end_minutes || ' minutes')::interval)
              )
               THEN 'LUNCH_FUERA_HORARIO'
-            WHEN l.movement_key = 'LUNCH_OUT'
+            WHEN l.movement_kind = 'LUNCH' AND l.punch_direction = 'OUT'
               THEN 'LUNCH_INICIO'
-            WHEN l.movement_key = 'LUNCH_IN'
+            WHEN l.movement_kind = 'LUNCH' AND l.punch_direction = 'IN'
               THEN 'LUNCH_FIN'
-            WHEN l.movement_key = 'PERMISSION_OUT'
+            WHEN l.movement_kind = 'PERMISSION' AND l.punch_direction = 'OUT'
               THEN 'PERMISO_SALIDA'
-            WHEN l.movement_key = 'PERMISSION_IN'
+            WHEN l.movement_kind = 'PERMISSION' AND l.punch_direction = 'IN'
               THEN 'PERMISO_RETORNO'
-            WHEN l.movement_key = 'ENTRY'
+            WHEN l.work_boundary = 'START'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
              AND late_justification.id IS NOT NULL
              AND UPPER(COALESCE(late_justification.request_status_key, '')) IN ('APPROVED', 'APROBADO')
               THEN 'ATRASO_JUSTIFICADO'
-            WHEN l.movement_key = 'ENTRY'
+            WHEN l.work_boundary = 'START'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
              AND late_justification.id IS NOT NULL
               THEN 'ATRASO_JUSTIFICACION_PENDIENTE'
-            WHEN l.movement_key = 'EXIT'
+            WHEN l.work_boundary = 'END'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
@@ -2212,12 +2320,12 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
               THEN 'FERIADO'
             WHEN p.id IS NULL OR s.id IS NULL OR COALESCE(sw.work_minutes, 0) <= 0
               THEN 'NO_LABORAL'
-            WHEN l.movement_key = 'ENTRY'
+            WHEN l.work_boundary = 'START'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime::time > (s.start_time + (COALESCE(s.entry_grace_minutes, 0) || ' minutes')::interval)
               THEN 'ATRASO'
-            WHEN l.movement_key = 'EXIT'
+            WHEN l.work_boundary = 'END'
              AND s.start_time IS NOT NULL
              AND COALESCE(sw.work_minutes, 0) > 0
              AND l.punch_datetime < (p.shift_date + s.start_time + (COALESCE(sw.work_minutes, 0) || ' minutes')::interval - (COALESCE(s.exit_grace_minutes, 0) || ' minutes')::interval)
@@ -2333,10 +2441,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND r.employee_id = l.employee_id
             AND r.is_active = true
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'APPROVED', 'APROBADO')
-            AND (
-              UPPER(COALESCE(ae.event_name, '')) = 'ATRASO'
-              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'ATRASO')
-            )
+            AND ae.tracks_late_arrival = true
             AND r.target_punch_id = l.id
           ORDER BY
             CASE WHEN UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO') THEN 0 ELSE 1 END,
@@ -2360,10 +2465,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND r.employee_id = l.employee_id
             AND r.is_active = true
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'APPROVED', 'APROBADO')
-            AND (
-              UPPER(COALESCE(ae.event_name, '')) = 'SALIDA ANTICIPADA'
-              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('SAN', 'SALIDA ANTICIPADA')
-            )
+            AND ae.tracks_early_departure = true
             AND r.target_punch_id = l.id
           ORDER BY
             CASE WHEN UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO') THEN 0 ELSE 1 END,
@@ -2387,7 +2489,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             AND r.employee_id = l.employee_id
             AND r.is_active = true
             AND r.target_punch_id = l.id
-            AND UPPER(COALESCE(ae.event_short_name, '')) IN ('LFH', 'LUNCH_FUERA_HORARIO')
+            AND ae.tracks_lunch_schedule_violation = true
             AND UPPER(COALESCE(rs.lookup_key, '')) IN ('PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'APPROVED', 'APROBADO')
           ORDER BY
             CASE WHEN UPPER(COALESCE(rs.lookup_key, '')) IN ('APPROVED', 'APROBADO') THEN 0 ELSE 1 END,
@@ -2548,8 +2650,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -2725,8 +2827,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -2884,8 +2986,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -3049,8 +3151,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS punch_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae
             ON ae.employee_id = p.employee_id
@@ -3327,8 +3429,8 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             p.punch_datetime::date AS shift_date,
             MIN(p.punch_datetime) AS first_punch,
             MAX(p.punch_datetime) AS last_punch,
-            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS first_entry,
-            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS last_exit
+            MIN(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS first_entry,
+            MAX(p.punch_datetime) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS last_exit
           FROM public.employee_time_punches p
           INNER JOIN assigned_employees ae ON ae.employee_id = p.employee_id
           CROSS JOIN bounds period
@@ -3340,6 +3442,15 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         attendance AS (
           SELECT
             scheduled.*,
+            (COALESCE(punches.first_entry, punches.first_punch) IS NULL) AS is_absence,
+            (
+              COALESCE(punches.first_entry, punches.first_punch) IS NOT NULL
+              AND COALESCE(punches.first_entry, punches.first_punch) > (scheduled.shift_date + (scheduled.work_start_minutes || ' minutes')::interval + (scheduled.entry_grace_minutes || ' minutes')::interval)
+            ) AS is_late_arrival,
+            (
+              COALESCE(punches.last_exit, punches.last_punch) IS NOT NULL
+              AND COALESCE(punches.last_exit, punches.last_punch) < (scheduled.shift_date + (scheduled.work_end_minutes || ' minutes')::interval - (scheduled.exit_grace_minutes || ' minutes')::interval)
+            ) AS is_early_departure,
             CASE
               WHEN COALESCE(punches.first_entry, punches.first_punch) IS NULL THEN 'FALTA'
               WHEN COALESCE(punches.first_entry, punches.first_punch) > (scheduled.shift_date + (scheduled.work_start_minutes || ' minutes')::interval + (scheduled.entry_grace_minutes || ' minutes')::interval) THEN 'ATRASO'
@@ -3362,6 +3473,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             attendance.area_name,
             attendance.shift_date,
             attendance.issue_key,
+            attendance.is_absence,
+            attendance.is_late_arrival,
+            attendance.is_early_departure,
             0::int AS ordinary_minutes,
             0::int AS night_minutes,
             0::int AS extra_50_minutes,
@@ -3374,9 +3488,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
             buckets.bucket_end,
             buckets.label,
             COUNT(metrics_by_day.employee_id)::int AS planned,
-            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'ATRASO')::int AS late,
-            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'FALTA')::int AS absences,
-            COUNT(*) FILTER (WHERE metrics_by_day.issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COUNT(*) FILTER (WHERE metrics_by_day.is_late_arrival)::int AS late,
+            COUNT(*) FILTER (WHERE metrics_by_day.is_absence)::int AS absences,
+            COUNT(*) FILTER (WHERE metrics_by_day.is_early_departure)::int AS early_departures,
             COALESCE(SUM(metrics_by_day.ordinary_minutes), 0)::int AS ordinary_minutes,
             COALESCE(SUM(metrics_by_day.night_minutes), 0)::int AS night_minutes,
             COALESCE(SUM(metrics_by_day.extra_50_minutes), 0)::int AS extra_50_minutes,
@@ -3402,9 +3516,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           SELECT
             area_name AS name,
             NULL::text AS employee_code,
-            COUNT(*) FILTER (WHERE issue_key = 'ATRASO')::int AS late,
-            COUNT(*) FILTER (WHERE issue_key = 'FALTA')::int AS absences,
-            COUNT(*) FILTER (WHERE issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COUNT(*) FILTER (WHERE is_late_arrival)::int AS late,
+            COUNT(*) FILTER (WHERE is_absence)::int AS absences,
+            COUNT(*) FILTER (WHERE is_early_departure)::int AS early_departures,
             COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
             COALESCE(SUM(night_minutes), 0)::int AS night_minutes,
             COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
@@ -3416,9 +3530,9 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
           SELECT
             employee_name AS name,
             employee_code,
-            COUNT(*) FILTER (WHERE issue_key = 'ATRASO')::int AS late,
-            COUNT(*) FILTER (WHERE issue_key = 'FALTA')::int AS absences,
-            COUNT(*) FILTER (WHERE issue_key = 'SALIDA_ANTICIPADA')::int AS early_departures,
+            COUNT(*) FILTER (WHERE is_late_arrival)::int AS late,
+            COUNT(*) FILTER (WHERE is_absence)::int AS absences,
+            COUNT(*) FILTER (WHERE is_early_departure)::int AS early_departures,
             COALESCE(SUM(ordinary_minutes), 0)::int AS ordinary_minutes,
             COALESCE(SUM(night_minutes), 0)::int AS night_minutes,
             COALESCE(SUM(extra_50_minutes), 0)::int AS extra_50_minutes,
@@ -3522,21 +3636,11 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
     const extra50Minutes = Number(surchargeSummary.extra_50_minutes || 0);
     const extra100Minutes = Number(surchargeSummary.extra_100_minutes || 0);
     const surchargeTotalMinutes = ordinaryMinutes + nightMinutes + extra50Minutes + extra100Minutes;
-    const isApprovedStatus = (value: unknown) => ['APPROVED', 'APROBADO'].includes(String(value || '').toUpperCase());
-    const todayLate = latestPunches.filter((row: any) => ['ATRASO', 'ATRASO_JUSTIFICACION_PENDIENTE'].includes(String(row.event_key || '').toUpperCase())).length;
-    const todayEarlyDepartures = latestPunches.filter((row: any) => (
-      String(row.event_key || '').toUpperCase() === 'SALIDA_ANTICIPADA'
-      && !isApprovedStatus(row.early_departure_justification_status_key)
-    )).length;
-    const todayPunchJustified = latestPunches.filter((row: any) => (
-      String(row.event_key || '').toUpperCase() === 'ATRASO_JUSTIFICADO'
-      || (
-        String(row.event_key || '').toUpperCase() === 'SALIDA_ANTICIPADA'
-        && isApprovedStatus(row.early_departure_justification_status_key)
-      )
-    )).length;
+    const todayLate = latestPunches.filter((row: any) => row.is_late_arrival === true).length;
+    const todayEarlyDepartures = latestPunches.filter((row: any) => row.is_early_departure === true).length;
+    const todayPunchJustified = latestPunches.filter((row: any) => row.is_justified === true).length;
     const todayLeaveJustified = todayIssues.filter((row: any) => (
-      row.event_key === 'JUSTIFICADO'
+      row.has_approved_leave === true
       && !row.first_entry
       && !row.last_exit
     )).length;
@@ -3559,7 +3663,7 @@ router.get('/dashboard/supervisor-summary', requireAuth, async (req: Request, re
         assigned_departments: Number(base.assigned_departments || 0),
         today_scheduled_employees: Number(todayScheduled.today_scheduled_employees || 0),
         today_scheduled_areas: Number(todayScheduled.today_scheduled_areas || 0),
-        today_absences: todayIssues.filter((row: any) => row.event_key === 'FALTA').length,
+        today_absences: todayIssues.filter((row: any) => row.is_absence === true).length,
         today_late: todayLate,
         today_early_departures: todayEarlyDepartures,
         today_justified: todayPunchJustified + todayLeaveJustified,
@@ -3630,12 +3734,6 @@ router.get('/dashboard/supervisor-events', requireAuth, async (req: Request, res
     const context = contextResult.rows[0];
     if (!context?.tenant_id) {
       return res.status(403).json({ error: 'No se pudo resolver contexto de supervisor' });
-    }
-
-    const roleKeys = (context.role_keys || []).map((key: string) => String(key || '').trim().toUpperCase());
-    const canViewSupervisorDashboard = roleKeys.some((key: string) => ['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN', 'TENANT_ADMIN'].includes(key));
-    if (!canViewSupervisorDashboard) {
-      return res.status(403).json({ error: 'Dashboard disponible para Supervisor/RRHH' });
     }
 
     const sinceVersion = Number.isFinite(Number(req.query.since)) ? Math.max(0, Math.trunc(Number(req.query.since))) : 0;
@@ -3730,7 +3828,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           ec.device_user_code,
           ec.hire_date,
           ec.termination_date,
-          ec.work_on_holidays
+          ec.work_on_holidays,
+          public.resolve_attendance_timezone(u.tenant_id, c.id, wl.id, e.id) AS attendance_timezone
         FROM public.users u
         INNER JOIN public.employees e
           ON e.user_id = u.id
@@ -3817,8 +3916,13 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const monthEndExclusive = new Date(currentYear, currentMonth, 1);
     const monthStartIso = monthStart.toISOString().slice(0, 10);
     const monthEndExclusiveIso = monthEndExclusive.toISOString().slice(0, 10);
+    const attendanceTimeZone = await resolveEffectiveAttendanceTimeZone(pool, {
+      tenantId,
+      companyId: companyId || null,
+      employeeId,
+    });
     const todayIso = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Guayaquil',
+      timeZone: attendanceTimeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -3961,11 +4065,13 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             p.id,
             p.punch_datetime,
             p.punch_time_zone,
-            (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
-            TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
+            (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date AS punch_date,
+            TO_CHAR(p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id), 'HH24:MI') AS punch_time_local,
             p.punch_key,
             mv.lookup_key AS movement_key,
             mv.lookup_label AS movement_label,
+            NULLIF(mv.metadata->>'icon_key', '') AS movement_icon_key,
+            NULLIF(mv.metadata->>'direction', '') AS movement_direction,
             p.time_punch_status_id,
             st.lookup_key AS time_punch_status_key,
             st.lookup_label AS time_punch_status_label,
@@ -3989,11 +4095,13 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             p.id,
             p.punch_datetime,
             p.punch_time_zone,
-            (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
-            TO_CHAR(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'), 'HH24:MI') AS punch_time_local,
+            (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date AS punch_date,
+            TO_CHAR(p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id), 'HH24:MI') AS punch_time_local,
             p.punch_key,
             mv.lookup_key AS movement_key,
             mv.lookup_label AS movement_label,
+            NULLIF(mv.metadata->>'icon_key', '') AS movement_icon_key,
+            NULLIF(mv.metadata->>'direction', '') AS movement_direction,
             p.time_punch_status_id,
             st.lookup_key AS time_punch_status_key,
             st.lookup_label AS time_punch_status_label,
@@ -4217,6 +4325,12 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             ae.id AS attendance_event_id,
             ae.event_name,
             ae.event_short_name,
+            ae.tracks_late_arrival,
+            ae.tracks_early_departure,
+            ae.tracks_absence,
+            ae.tracks_odd_punch,
+            ae.counts_as_non_working_time,
+            ae.is_employee_incident,
             direction.lookup_key AS direction_key,
             direction.lookup_label AS direction_label,
             event_type.lookup_key AS event_type_key,
@@ -4238,11 +4352,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           WHERE calc.tenant_id = $1::uuid
             AND calc.employee_id = $2::uuid
             AND COALESCE(
-              (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
               make_date(calc.year, calc.month, calc.day)
             ) >= $3::date
             AND COALESCE(
-              (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
               make_date(calc.year, calc.month, calc.day)
             ) < $4::date
             AND calc.is_active = true
@@ -4290,13 +4404,19 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           SELECT
             calc.id AS calculation_id,
             COALESCE(
-              (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
               make_date(calc.year, calc.month, calc.day)
             ) AS incident_date,
             calc.event_datetime,
             ae.id AS attendance_event_id,
             ae.event_name,
             ae.event_short_name,
+            ae.tracks_late_arrival,
+            ae.tracks_early_departure,
+            ae.tracks_absence,
+            ae.tracks_odd_punch,
+            ae.counts_as_non_working_time,
+            ae.is_employee_incident,
             event_type.lookup_key AS event_type_key,
             direction.lookup_key AS direction_key,
             CASE
@@ -4338,17 +4458,21 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             WHERE punch.tenant_id = calc.tenant_id
               AND punch.employee_id = calc.employee_id
               AND punch.is_active = true
-              AND (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date = COALESCE(
-                (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              AND (punch.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(punch.punch_time_zone, punch.tenant_id, punch.employee_id))::date = COALESCE(
+                (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
                 make_date(calc.year, calc.month, calc.day)
               )
-              AND (
-                (UPPER(COALESCE(ae.event_short_name, '')) = 'ATR' AND public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'ENTRY')
-                OR (UPPER(COALESCE(ae.event_short_name, '')) = 'SAN' AND public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'EXIT')
+              AND EXISTS (
+                SELECT 1
+                FROM public.attendance_event_punch_keys punch_rule
+                WHERE punch_rule.tenant_id = calc.tenant_id
+                  AND punch_rule.attendance_event_id = ae.id
+                  AND punch_rule.punch_key_lookup_id = punch.punch_key_lookup_id
+                  AND punch_rule.is_active = true
               )
             ORDER BY
-              CASE WHEN UPPER(COALESCE(ae.event_short_name, '')) = 'ATR' THEN punch.punch_datetime END ASC,
-              CASE WHEN UPPER(COALESCE(ae.event_short_name, '')) = 'SAN' THEN punch.punch_datetime END DESC,
+              CASE WHEN ae.punch_match_order = 'FIRST' THEN punch.punch_datetime END ASC,
+              CASE WHEN ae.punch_match_order = 'LAST' THEN punch.punch_datetime END DESC,
               punch.id
             LIMIT 1
           ) incident_punch ON true
@@ -4368,9 +4492,15 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
                 (incident_punch.id IS NOT NULL AND r.target_punch_id = incident_punch.id)
                 OR (
                   incident_punch.id IS NULL
-                  AND UPPER(COALESCE(ae.event_short_name, '')) NOT IN ('ATR', 'SAN', 'LEX', 'LFH')
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM public.attendance_event_punch_keys configured_rule
+                    WHERE configured_rule.tenant_id = calc.tenant_id
+                      AND configured_rule.attendance_event_id = ae.id
+                      AND configured_rule.is_active = true
+                  )
                   AND COALESCE(
-                    (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+                    (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
                     make_date(calc.year, calc.month, calc.day)
                   ) BETWEEN r.start_datetime::date AND COALESCE(r.end_datetime, r.start_datetime)::date
                 )
@@ -4393,14 +4523,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               AND change_request.employee_id = calc.employee_id
               AND change_request.is_active = true
               AND COALESCE(
-                (target.punch_datetime AT TIME ZONE COALESCE(NULLIF(target.punch_time_zone, ''), 'America/Guayaquil'))::date,
+                (target.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(target.punch_time_zone, target.tenant_id, target.employee_id))::date,
                 CASE
                   WHEN COALESCE(change_request.requested_values ->> 'punch_datetime', '') <> ''
-                    THEN ((change_request.requested_values ->> 'punch_datetime')::timestamptz AT TIME ZONE 'America/Guayaquil')::date
+                    THEN ((change_request.requested_values ->> 'punch_datetime')::timestamptz AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date
                   ELSE NULL
                 END
               ) = COALESCE(
-                (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+                (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
                 make_date(calc.year, calc.month, calc.day)
               )
             ORDER BY change_request.created_at DESC
@@ -4410,17 +4540,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             AND calc.employee_id = $2::uuid
             AND calc.is_active = true
             AND COALESCE(
-              (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
               make_date(calc.year, calc.month, calc.day)
             ) >= $3::date
             AND COALESCE(
-              (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+              (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
               make_date(calc.year, calc.month, calc.day)
             ) < $4::date
-            AND (
-              UPPER(COALESCE(event_type.lookup_key, '')) IN ('ATR', 'FAL', 'INC', 'LEX', 'LFH', 'SAN', 'TNL')
-              OR UPPER(COALESCE(ae.event_short_name, '')) IN ('ATR', 'FAL', 'INC', 'LEX', 'LFH', 'SAN', 'TNL')
-            )
+            AND ae.is_employee_incident = true
           ORDER BY incident_date DESC, calc.event_datetime DESC NULLS LAST, ae.event_name
           LIMIT 200
         `,
@@ -4430,7 +4557,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         `
           WITH odd_days AS (
             SELECT
-              (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS incident_date,
+              (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date AS incident_date,
               COUNT(*)::int AS punch_count,
               (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC))[1] AS last_punch_id,
               (ARRAY_AGG(p.punch_datetime ORDER BY p.punch_datetime DESC))[1] AS last_punch_datetime,
@@ -4440,8 +4567,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             WHERE p.tenant_id = $1::uuid
               AND p.employee_id = $2::uuid
               AND p.is_active = true
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date >= $3::date
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date < $4::date
+              AND (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date >= $3::date
+              AND (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date < $4::date
             GROUP BY incident_date
             HAVING MOD(COUNT(*), 2) = 1
           )
@@ -4466,7 +4593,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             FROM public.attendance_events event
             WHERE event.tenant_id = $1::uuid
               AND event.is_active = true
-              AND UPPER(COALESCE(event.event_short_name, '')) = 'INC'
+              AND event.tracks_odd_punch = true
             ORDER BY event.created_at ASC NULLS LAST, event.id
             LIMIT 1
           ) ae ON true
@@ -4507,10 +4634,10 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               AND r.employee_id = $2::uuid
               AND r.is_active = true
               AND COALESCE(
-                (target.punch_datetime AT TIME ZONE COALESCE(NULLIF(target.punch_time_zone, ''), 'America/Guayaquil'))::date,
+                (target.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(target.punch_time_zone, target.tenant_id, target.employee_id))::date,
                 CASE
                   WHEN COALESCE(r.requested_values ->> 'punch_datetime', '') <> ''
-                    THEN ((r.requested_values ->> 'punch_datetime')::timestamptz AT TIME ZONE 'America/Guayaquil')::date
+                    THEN ((r.requested_values ->> 'punch_datetime')::timestamptz AT TIME ZONE public.resolve_attendance_timezone(r.tenant_id, NULL, NULL, r.employee_id))::date
                   ELSE NULL
                 END
               ) = od.incident_date
@@ -4525,7 +4652,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               AND calc.attendance_event_id = ae.id
               AND calc.is_active = true
               AND COALESCE(
-                (calc.event_datetime AT TIME ZONE 'America/Guayaquil')::date,
+                (calc.event_datetime AT TIME ZONE public.resolve_attendance_timezone(calc.tenant_id, NULL, NULL, calc.employee_id))::date,
                 make_date(calc.year, calc.month, calc.day)
               ) = od.incident_date
           )
@@ -4604,19 +4731,19 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           ),
           punch_summary AS (
             SELECT
-              (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date AS shift_date,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY'))[1] AS work_entry_punch_id,
-            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT'))[1] AS work_exit_punch_id,
-              MIN(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))
-                FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'ENTRY') AS work_entry,
-              MAX(p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))
-                FILTER (WHERE public.punch_key_lookup_key(p.punch_key_lookup_id) = 'EXIT') AS work_exit
+              (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date AS shift_date,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime ASC) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START'))[1] AS work_entry_punch_id,
+            (ARRAY_AGG(p.id ORDER BY p.punch_datetime DESC) FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END'))[1] AS work_exit_punch_id,
+              MIN(p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))
+                FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'START') AS work_entry,
+              MAX(p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))
+                FILTER (WHERE public.punch_key_semantic(p.punch_key_lookup_id, 'work_boundary') = 'END') AS work_exit
             FROM public.employee_time_punches p
             WHERE p.tenant_id = $1::uuid
               AND p.employee_id = $2::uuid
               AND p.is_active = true
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date >= $3::date
-              AND (p.punch_datetime AT TIME ZONE COALESCE(NULLIF(p.punch_time_zone, ''), 'America/Guayaquil'))::date < $4::date
+              AND (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date >= $3::date
+              AND (p.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(p.punch_time_zone, p.tenant_id, p.employee_id))::date < $4::date
             GROUP BY shift_date
           ),
           daily AS (
@@ -4636,7 +4763,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           issues AS (
             SELECT
               daily.shift_date AS incident_date,
+              issue.attendance_event_id,
               issue.event_short_name,
+              issue.tracks_late_arrival,
+              issue.tracks_early_departure,
+              issue.tracks_absence,
               issue.minutes::int AS minutes,
               issue.expected_at,
               issue.actual_at,
@@ -4645,54 +4776,49 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
               issue.target_punch_id
             FROM daily
             CROSS JOIN LATERAL (
-              VALUES
-                (
-                  'ATR'::text,
-                  CASE
-                    WHEN daily.work_entry IS NOT NULL
-                     AND daily.work_entry > daily.expected_entry_at + (daily.entry_grace_minutes || ' minutes')::interval
-                      THEN GREATEST(0, EXTRACT(EPOCH FROM (daily.work_entry - daily.expected_entry_at)) / 60)::int
-                    ELSE 0
-                  END,
-                  daily.expected_entry_at,
-                  daily.work_entry,
-                  daily.expected_entry_at,
-                  daily.work_entry,
-                  daily.work_entry_punch_id
-                ),
-                (
-                  'SAN'::text,
-                  CASE
-                    WHEN daily.work_exit IS NOT NULL
-                     AND daily.work_exit < daily.expected_exit_at - (daily.exit_grace_minutes || ' minutes')::interval
-                      THEN GREATEST(0, EXTRACT(EPOCH FROM (daily.expected_exit_at - daily.work_exit)) / 60)::int
-                    ELSE 0
-                  END,
-                  daily.expected_exit_at,
-                  daily.work_exit,
-                  daily.work_exit,
-                  daily.expected_exit_at,
-                  daily.work_exit_punch_id
-                ),
-                (
-                  'FAL'::text,
-                  CASE
-                    WHEN daily.work_entry IS NULL
-                     AND daily.work_exit IS NULL
-                     AND (
-                       daily.shift_date < $7::date
-                       OR (now() AT TIME ZONE 'America/Guayaquil') > daily.expected_exit_at
-                     )
-                      THEN daily.planned_work_minutes
-                    ELSE 0
-                  END,
-                  daily.expected_entry_at,
-                  NULL::timestamp,
-                  daily.expected_entry_at,
-                  daily.expected_exit_at,
-                  NULL::uuid
-                )
-            ) AS issue(event_short_name, minutes, expected_at, actual_at, start_at, end_at, target_punch_id)
+              SELECT
+                behavior.id AS attendance_event_id,
+                behavior.event_short_name,
+                behavior.tracks_late_arrival,
+                behavior.tracks_early_departure,
+                behavior.tracks_absence,
+                CASE
+                  WHEN behavior.tracks_late_arrival
+                   AND daily.work_entry IS NOT NULL
+                   AND daily.work_entry > daily.expected_entry_at + (daily.entry_grace_minutes || ' minutes')::interval
+                    THEN GREATEST(0, EXTRACT(EPOCH FROM (daily.work_entry - daily.expected_entry_at)) / 60)::int
+                  WHEN behavior.tracks_early_departure
+                   AND daily.work_exit IS NOT NULL
+                   AND daily.work_exit < daily.expected_exit_at - (daily.exit_grace_minutes || ' minutes')::interval
+                    THEN GREATEST(0, EXTRACT(EPOCH FROM (daily.expected_exit_at - daily.work_exit)) / 60)::int
+                  WHEN behavior.tracks_absence
+                   AND daily.work_entry IS NULL
+                   AND daily.work_exit IS NULL
+                   AND (
+                     daily.shift_date < $7::date
+                     OR (now() AT TIME ZONE public.resolve_attendance_timezone($1::uuid, NULL, NULL, $2::uuid)) > daily.expected_exit_at
+                   )
+                    THEN daily.planned_work_minutes
+                  ELSE 0
+                END AS minutes,
+                CASE WHEN behavior.tracks_early_departure THEN daily.expected_exit_at ELSE daily.expected_entry_at END AS expected_at,
+                CASE
+                  WHEN behavior.tracks_late_arrival THEN daily.work_entry
+                  WHEN behavior.tracks_early_departure THEN daily.work_exit
+                  ELSE NULL::timestamp
+                END AS actual_at,
+                CASE WHEN behavior.tracks_early_departure THEN daily.work_exit ELSE daily.expected_entry_at END AS start_at,
+                CASE WHEN behavior.tracks_late_arrival THEN daily.work_entry ELSE daily.expected_exit_at END AS end_at,
+                CASE
+                  WHEN behavior.tracks_late_arrival THEN daily.work_entry_punch_id
+                  WHEN behavior.tracks_early_departure THEN daily.work_exit_punch_id
+                  ELSE NULL::uuid
+                END AS target_punch_id
+              FROM public.attendance_events behavior
+              WHERE behavior.tenant_id = $1::uuid
+                AND behavior.is_active = true
+                AND (behavior.tracks_late_arrival OR behavior.tracks_early_departure OR behavior.tracks_absence)
+            ) issue
             WHERE issue.minutes > 0
           )
           SELECT
@@ -4708,15 +4834,19 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
             issues.target_punch_id,
             ae.id AS attendance_event_id,
             ae.event_name,
+            ae.tracks_late_arrival,
+            ae.tracks_early_departure,
+            ae.tracks_absence,
+            ae.tracks_odd_punch,
             suggested.justification_type_id,
             request.id AS request_id,
             request.request_status_key,
             request.request_status_label
           FROM issues
           INNER JOIN public.attendance_events ae
-            ON ae.tenant_id = $1::uuid
+            ON ae.id = issues.attendance_event_id
+           AND ae.tenant_id = $1::uuid
            AND ae.is_active = true
-           AND UPPER(COALESCE(ae.event_short_name, '')) = issues.event_short_name
           LEFT JOIN LATERAL (
             SELECT jt.id AS justification_type_id
             FROM public.justification_types jt
@@ -4845,14 +4975,14 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
           ),
           work_entries AS (
             SELECT
-              (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date AS punch_date,
-              MIN(punch.punch_datetime) FILTER (WHERE public.punch_key_lookup_key(punch.punch_key_lookup_id) = 'ENTRY') AS work_entry
+              (punch.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(punch.punch_time_zone, punch.tenant_id, punch.employee_id))::date AS punch_date,
+              MIN(punch.punch_datetime) FILTER (WHERE public.punch_key_semantic(punch.punch_key_lookup_id, 'work_boundary') = 'START') AS work_entry
             FROM public.employee_time_punches punch
             WHERE punch.tenant_id = $1::uuid
               AND punch.employee_id = $2::uuid
               AND punch.is_active = true
-              AND (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date >= $3::date
-              AND (punch.punch_datetime AT TIME ZONE COALESCE(NULLIF(punch.punch_time_zone, ''), 'America/Guayaquil'))::date < $4::date
+              AND (punch.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(punch.punch_time_zone, punch.tenant_id, punch.employee_id))::date >= $3::date
+              AND (punch.punch_datetime AT TIME ZONE public.attendance_timezone_for_punch(punch.punch_time_zone, punch.tenant_id, punch.employee_id))::date < $4::date
             GROUP BY punch_date
           ),
           evaluated AS (
@@ -4880,12 +5010,12 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
                 WHEN day_row.evaluated_date = $7::date
                  AND COALESCE(bounds.planned_work_minutes, 0) > 0
                  AND entry.work_entry IS NULL
-                 AND (now() AT TIME ZONE 'America/Guayaquil') >= (
+                 AND (now() AT TIME ZONE public.resolve_attendance_timezone($1::uuid, NULL, NULL, $2::uuid)) >= (
                    day_row.evaluated_date
                    + (bounds.work_start_minutes || ' minutes')::interval
                    - INTERVAL '1 minute'
                  )
-                 AND (now() AT TIME ZONE 'America/Guayaquil') <= (
+                 AND (now() AT TIME ZONE public.resolve_attendance_timezone($1::uuid, NULL, NULL, $2::uuid)) <= (
                    day_row.evaluated_date + (bounds.work_end_minutes || ' minutes')::interval
                  )
                   THEN 'PUNCH_REQUIRED'
@@ -5022,21 +5152,11 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const isNonWorkingPenaltyIncident = (row: any): boolean => {
       const incidentDate = normalizeDateOnly(row?.incident_date);
       if (!incidentDate || !nonWorkingDates.has(incidentDate)) return false;
-      const shortName = String(row?.event_short_name || row?.event_type_key || '').toUpperCase();
-      const eventName = String(row?.event_name || '').toUpperCase();
-      return ['ATR', 'FAL', 'SAN'].includes(shortName)
-        || eventName.includes('ATRAS')
-        || eventName.includes('FALTA')
-        || eventName.includes('SALIDA ANTICIP');
+      return row?.tracks_late_arrival === true
+        || row?.tracks_absence === true
+        || row?.tracks_early_departure === true;
     };
     const impactRows = attendanceImpactResult.rows || [];
-    const eventText = (row: any): string =>
-      `${row?.event_short_name || ''} ${row?.event_name || ''}`.toUpperCase();
-    const isEventMatch = (row: any, shortNames: string[], nameTokens: string[]): boolean => {
-      const text = eventText(row);
-      const shortName = String(row?.event_short_name || '').toUpperCase();
-      return shortNames.includes(shortName) || nameTokens.some((token) => text.includes(token));
-    };
 
     const plusEvents = [
       {
@@ -5079,11 +5199,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       },
     ];
     const additionalMinusEvents = impactRows
-      .filter((row: any) => isEventMatch(
-        row,
-        ['LEX', 'LFH', 'TNL', 'INC'],
-        ['LUNCH EXCED', 'LUNCH FUERA', 'TIEMPO NO LABORADO', 'INCONSIST'],
-      ))
+      .filter((row: any) => row?.counts_as_non_working_time === true)
       .map((row: any) => ({
         key: `attendance_event_${row.attendance_event_id}`,
         attendance_event_id: row.attendance_event_id,
@@ -5097,9 +5213,9 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       .filter((row: any) => !isNonWorkingPenaltyIncident(row))
       .map((row: any) => {
       const shortName = String(row.event_short_name || '').toUpperCase();
-      const detail = shortName === 'ATR'
+      const detail = row.tracks_late_arrival === true
         ? `Entrada esperada ${row.start_time || '--:--'}; marcación de entrada ${row.end_time || '--:--'}.`
-        : shortName === 'SAN'
+        : row.tracks_early_departure === true
           ? `Marcación de salida ${row.start_time || '--:--'}; salida esperada ${row.end_time || '--:--'}.`
           : `No se registraron marcaciones para el turno ${row.start_time || '--:--'} a ${row.end_time || '--:--'}.`;
       return {
@@ -5136,7 +5252,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       .map((row: any) => {
       const incidentDate = normalizeDateOnly(row.incident_date);
       const shortName = String(row.event_short_name || '').toUpperCase();
-      const isPunchIssue = shortName === 'INC';
+      const isPunchIssue = row.tracks_odd_punch === true;
       const derived = derivedByDateAndEvent.get(`${incidentDate}|${shortName}`);
       return {
         id: row.calculation_id,
@@ -5220,8 +5336,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
         event_datetime: null,
         attendance_event_id: row.attendance_event_id,
         event_name: 'Marcaciones impares',
-        event_short_name: row.event_short_name || 'INC',
-        event_type_key: 'INC',
+        event_short_name: row.event_short_name,
+        event_type_key: row.event_short_name,
         minutes: 0,
         notes: `${Number(row.punch_count || 0)} marcaciones registradas en el día`,
         is_approved: false,
@@ -5249,35 +5365,8 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
       return String(left.event_name || '').localeCompare(String(right.event_name || ''));
     });
 
-    const iconFromPunch = (movementKey: string, movementLabel: string): string => {
-      const icons: Record<string, string> = {
-        ENTRY: 'DoorOpen',
-        LUNCH_OUT: 'Utensils',
-        LUNCH_IN: 'UtensilsCrossed',
-        EXIT: 'DoorClosed',
-        PERMISSION_OUT: 'ArrowRightCircle',
-        PERMISSION_IN: 'ArrowLeftCircle',
-      };
-      if (icons[movementKey]) return icons[movementKey];
-      const normalized = String(movementLabel || '').toLowerCase();
-      if (normalized.includes('permiso') && (normalized.includes('retorno') || normalized.includes('regreso'))) return 'ArrowLeftCircle';
-      if (normalized.includes('permiso') && normalized.includes('salida')) return 'ArrowRightCircle';
-      if (normalized.includes('almuerzo') || normalized.includes('lunch') || normalized.includes('comida')) {
-        if (normalized.includes('retorno') || normalized.includes('regreso')) return 'UtensilsCrossed';
-        return 'Utensils';
-      }
-      if (normalized.includes('entrada') || normalized.includes('inicio')) return 'DoorOpen';
-      if (normalized.includes('salida') || normalized.includes('fin')) return 'DoorClosed';
-      return 'Fingerprint';
-    };
-    const isStartPunch = (movementKey: string, movementLabel: string): boolean => {
-      if (['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT'].includes(movementKey)) return true;
-      if (['EXIT', 'LUNCH_IN', 'PERMISSION_IN'].includes(movementKey)) return false;
-      const normalized = String(movementLabel || '').toLowerCase();
-      if (normalized.includes('entrada') || normalized.includes('inicio')) return true;
-      if (normalized.includes('salida') || normalized.includes('retorno') || normalized.includes('fin')) return false;
-      return true;
-    };
+    const iconFromPunch = (row: any): string => String(row?.movement_icon_key || 'Fingerprint');
+    const isStartPunch = (row: any): boolean => row?.movement_direction === 'IN';
 
     const iconFromRequest = (row: any): string => {
       const src = `${row?.justification_name || ''} ${row?.event_name || ''} ${row?.justify_method_key || ''} ${row?.justify_method_label || ''}`.toLowerCase();
@@ -5292,11 +5381,10 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     const calendarPunches = (monthPunchesResult.rows || []).flatMap((row: any) => {
       const dateKey = normalizeDateOnly(row?.punch_date || row?.punch_datetime);
       if (!dateKey || dateKey < monthStartIso || dateKey >= monthEndExclusiveIso) return [];
-      const movementKey = String(row?.movement_key || '').toUpperCase();
-      const isStart = isStartPunch(movementKey, String(row?.movement_label || ''));
+      const isStart = isStartPunch(row);
       return [{
         date: dateKey,
-        icon_key: iconFromPunch(movementKey, String(row?.movement_label || '')),
+        icon_key: iconFromPunch(row),
         title: row?.movement_label || `Marcacion ${row?.punch_key ?? ''}`.trim(),
         subtitle: row?.punch_time_local || String(row?.punch_datetime || '').slice(11, 16),
         bg_color: isStart ? '#DCFCE7' : '#FEE2E2',
@@ -5509,6 +5597,7 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
     return res.status(200).json({
       success: true,
       tenant_id: tenantId,
+      attendance_timezone: context.attendance_timezone,
       month: {
         year: currentYear,
         month: currentMonth,
@@ -5593,6 +5682,16 @@ router.get('/dashboard/employee-summary', requireAuth, async (req: Request, res:
  *       401:
  *         description: Credenciales invalidas
  */
+router.get('/auth/policy', async (_req: Request, res: Response) => {
+  try {
+    const policy = await loadAuthenticationPolicy(pool);
+    return res.json({ password_min_length: policy.passwordMinLength });
+  } catch (error) {
+    console.error('[auth/policy] No se pudo cargar la politica de autenticacion', error);
+    return res.status(503).json({ error: 'No fue posible cargar la politica de autenticacion' });
+  }
+});
+
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body || {};
@@ -5664,8 +5763,11 @@ router.post('/auth/change-password', async (req: Request, res: Response) => {
         error: 'El usuario, la contraseña actual, la nueva contraseña y su confirmación son obligatorios.',
       });
     }
-    if (String(newPassword).length < 8) {
-      return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 8 caracteres.' });
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (String(newPassword).length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({
+        error: `La nueva contraseña debe tener al menos ${passwordPolicy.passwordMinLength} caracteres.`,
+      });
     }
     if (String(newPassword) !== String(confirmPassword)) {
       return res.status(400).json({ error: 'La nueva contraseña y su confirmación no coinciden.' });
@@ -5685,16 +5787,11 @@ router.post('/auth/change-password', async (req: Request, res: Response) => {
     const Postgres = getPostgresClient();
     const { error: updateError } = await Postgres.auth.admin.updateUserById(
       currentCredentials.user.id,
-      { password: String(newPassword) }
+      { password: String(newPassword), must_change_password: false }
     );
     if (updateError) {
       return res.status(500).json({ error: 'No se pudo actualizar la contraseña.' });
     }
-
-    await Postgres
-      .from('users')
-      .update({ must_change_password: false })
-      .eq('auth_user_id', currentCredentials.user.id);
 
     return res.json({ success: true, message: 'Contraseña actualizada correctamente.' });
   } catch (error: any) {
@@ -5714,7 +5811,7 @@ router.get('/auth/me', requireAuth, async (req: Request, res: Response) => {
 // DIAGNOSTIC ENDPOINTS
 // ============================================================================
 
-router.get('/auth/diagnostics', async (req: Request, res: Response) => {
+router.get('/auth/diagnostics', requireAuth, async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgresClient();
 
@@ -5741,8 +5838,28 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
       });
     }
 
-    const systemAdmin = authUsers?.users?.find((u: any) => u.email === 'system.admin@titanium-labs.com');
-    const systemAdminPublic = publicUsers?.find((u: any) => u.email === 'system.admin@titanium-labs.com');
+    const systemAdminResult = await pool.query(
+      `
+        SELECT user_row.id, user_row.auth_user_id, user_row.email
+        FROM public.users user_row
+        JOIN public.user_roles user_role
+          ON user_role.user_id = user_row.id
+         AND user_role.tenant_id = user_row.tenant_id
+         AND user_role.is_active = true
+        JOIN public.roles role_row
+          ON role_row.id = user_role.role_id
+         AND role_row.is_active = true
+         AND role_row.role_scope = 'SYSTEM'
+         AND role_row.is_system_role = true
+        WHERE user_row.is_active = true
+        ORDER BY user_row.created_at
+        LIMIT 1
+      `
+    );
+    const systemAdminPublic = systemAdminResult.rows[0] || null;
+    const systemAdmin = authUsers?.users?.find(
+      (candidate: any) => String(candidate.id) === String(systemAdminPublic?.auth_user_id || '')
+    );
 
     return res.json({
       success: true,
@@ -5783,14 +5900,20 @@ router.get('/auth/diagnostics', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/auth/create-system-admin', async (req: Request, res: Response) => {
+router.post('/auth/create-system-admin', requireAuth, async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgresClient();
 
     const body = req.body || {};
-    const email = body.email || 'system.admin@titanium-labs.com';
-    const password = body.password || 'Titanium2026!';
-    const displayName = body.displayName || 'System Administrator';
+    const email = String(body.email || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    const displayName = String(body.displayName || '').trim();
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (!email || password.length < passwordPolicy.passwordMinLength || !displayName) {
+      return res.status(400).json({
+        error: `email, displayName y password de al menos ${passwordPolicy.passwordMinLength} caracteres son obligatorios`,
+      });
+    }
 
     console.log(`Ã°Å¸â€Â§ Intentando crear usuario ${email}...`);
 
@@ -5897,6 +6020,7 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
 
     const { error: syncPasswordError } = await Postgres.auth.admin.updateUserById(userId, {
       password,
+      must_change_password: true,
     });
     if (syncPasswordError) {
       return res.status(500).json({
@@ -5913,7 +6037,8 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       .from('roles')
       .select('id')
       .eq('tenant_id', systemTenant.id)
-      .eq('role_key', 'SYSTEM_ADMIN')
+      .eq('role_scope', 'SYSTEM')
+      .eq('is_system_role', true)
       .single();
 
     if (roleError || !systemAdminRole) {
@@ -5960,7 +6085,6 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
       },
       credentials: {
         email: email,
-        password: password,
         note: 'Ã¢Å¡Â Ã¯Â¸Â IMPORTANTE: Cambia esta contraseÃƒÂ±a despuÃƒÂ©s del primer login',
       },
       nextSteps: [
@@ -5978,11 +6102,17 @@ router.post('/auth/create-system-admin', async (req: Request, res: Response) => 
   }
 });
 
-router.post('/auth/reset-system-admin-password', async (req: Request, res: Response) => {
+router.post('/auth/reset-system-admin-password', requireAuth, async (req: Request, res: Response) => {
   try {
     const Postgres = getPostgresClient();
-    const email = 'system.admin@titanium-labs.com';
-    const password = 'Titanium2026!';
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const passwordPolicy = await loadAuthenticationPolicy(pool);
+    if (!email || password.length < passwordPolicy.passwordMinLength) {
+      return res.status(400).json({
+        error: `email y password de al menos ${passwordPolicy.passwordMinLength} caracteres son obligatorios`,
+      });
+    }
 
     const { data: listData, error: listError } = await Postgres.auth.admin.listUsers();
     if (listError) {
@@ -5997,8 +6127,9 @@ router.post('/auth/reset-system-admin-password', async (req: Request, res: Respo
       });
     }
 
-    const { error: updateError } = await Postgres.auth.admin.updateUserById(existing.id, {
-      password,
+      const { error: updateError } = await Postgres.auth.admin.updateUserById(existing.id, {
+        password,
+        must_change_password: true,
     });
     if (updateError) {
       return res.status(500).json({ error: updateError.message });
@@ -6008,7 +6139,7 @@ router.post('/auth/reset-system-admin-password', async (req: Request, res: Respo
       success: true,
       credentials: {
         email,
-        password,
+        note: 'La contraseña fue reemplazada y deberá cambiarse en el próximo inicio de sesión.',
       },
     });
   } catch (error: any) {
@@ -6036,22 +6167,65 @@ router.post('/db/query', requireAuth, async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'table es requerido' });
     }
 
+    const normalizedAction = String(action || 'select').trim().toUpperCase();
+    const supportedOperations = new Set<DataOperation>(['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'UPSERT']);
+    if (!supportedOperations.has(normalizedAction as DataOperation)) {
+      return res.status(400).json({ error: 'Operacion de datos no soportada' });
+    }
+    const authUserId = String((req as any).user?.id || '');
+    const dataAuthorization = await authorizeDataAccess(
+      pool,
+      authUserId,
+      table,
+      normalizedAction as DataOperation
+    );
+    if (!dataAuthorization.configured || !dataAuthorization.allowed) {
+      return res.status(403).json({
+        error: 'Acceso denegado para la tabla u operacion solicitada',
+        required_permission:
+          dataAuthorization.screenKey && dataAuthorization.actionKey
+            ? `${dataAuthorization.screenKey}:${dataAuthorization.actionKey}`
+            : undefined,
+      });
+    }
+    const enforceTenant = dataAuthorization.tableHasTenantId && !dataAuthorization.unrestrictedTenantScope;
+    if (enforceTenant && !dataAuthorization.tenantId) {
+      return res.status(403).json({ error: 'No se pudo resolver el alcance tenant del usuario' });
+    }
+
+    const scopePayload = (value: any): any => {
+      if (!enforceTenant || value == null || typeof value !== 'object') return value;
+      if (Array.isArray(value)) return value.map(scopePayload);
+      const scoped = { ...value };
+      if (normalizedAction === 'UPDATE') {
+        delete scoped.tenant_id;
+      } else {
+        scoped.tenant_id = dataAuthorization.tenantId;
+      }
+      return scoped;
+    };
+    const authorizedPayload = scopePayload(payload);
+
     let query: any = Postgres.from(table);
 
-    if (action === 'insert') {
-      query = query.insert(payload);
+    if (normalizedAction === 'INSERT') {
+      query = query.insert(authorizedPayload);
       if (select) query = query.select(select);
-    } else if (action === 'update') {
-      query = query.update(payload);
+    } else if (normalizedAction === 'UPDATE') {
+      query = query.update(authorizedPayload);
       if (select) query = query.select(select);
-    } else if (action === 'delete') {
+    } else if (normalizedAction === 'DELETE') {
       query = query.delete();
       if (select) query = query.select(select);
-    } else if (action === 'upsert') {
-      query = query.upsert(payload, upsertOptions || {});
+    } else if (normalizedAction === 'UPSERT') {
+      query = query.upsert(authorizedPayload, upsertOptions || {});
       if (select) query = query.select(select);
     } else {
       query = query.select(select || '*');
+    }
+
+    if (enforceTenant) {
+      query = query.eq('tenant_id', dataAuthorization.tenantId);
     }
 
     if (Array.isArray(filters)) {
@@ -6108,8 +6282,8 @@ router.put('/tenants/:id/languages', requireAuth, updateTenantLanguages);
 router.get('/lookup-values/data-types', requireAuth, getDataTypes);
 
 // System tenant endpoints
-router.get('/tenant/settings', getSystemTenantSettings);
-router.put('/tenant/settings', updateSystemTenantSettings);
+router.get('/tenant/settings', requireAuth, getSystemTenantSettings);
+router.put('/tenant/settings', requireAuth, updateSystemTenantSettings);
 
 // ============================================================================
 // MAINTENANCE ENDPOINTS - Todos los routers de mantenimiento

@@ -86,10 +86,15 @@ async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
   };
 }
 
-async function hasRole(ctx: AuthContext, roleKey: 'SYSTEM_ADMIN' | 'TENANT_ADMIN'): Promise<boolean> {
+async function getAdministrativeCapabilities(ctx: AuthContext): Promise<{
+  isSystemAdministrator: boolean;
+  isTenantAdministrator: boolean;
+}> {
   const result = await pool.query(
     `
-      SELECT 1
+      SELECT
+        COALESCE(bool_or(r.role_scope = 'SYSTEM' AND r.is_system_role = true), false) AS is_system_administrator,
+        COALESCE(bool_or(r.is_tenant_administrator = true), false) AS is_tenant_administrator
       FROM user_roles ur
       JOIN roles r
         ON r.id = ur.role_id
@@ -97,13 +102,14 @@ async function hasRole(ctx: AuthContext, roleKey: 'SYSTEM_ADMIN' | 'TENANT_ADMIN
       WHERE ur.user_id = $1
         AND ur.tenant_id = $2
         AND ur.is_active = true
-        AND r.role_key = $3
-      LIMIT 1
     `,
-    [ctx.userId, ctx.tenantId, roleKey]
+    [ctx.userId, ctx.tenantId]
   );
 
-  return result.rows.length > 0;
+  return {
+    isSystemAdministrator: Boolean(result.rows[0]?.is_system_administrator),
+    isTenantAdministrator: Boolean(result.rows[0]?.is_tenant_administrator),
+  };
 }
 
 type TableReference = {
@@ -186,8 +192,9 @@ router.get('/', async (req: Request, res: Response) => {
     );
 
     const ctx = await resolveAuthContext(req);
-    const isSystemAdmin = ctx ? await hasRole(ctx, 'SYSTEM_ADMIN') : false;
-    const isTenantAdmin = ctx ? await hasRole(ctx, 'TENANT_ADMIN') : false;
+    const capabilities = ctx ? await getAdministrativeCapabilities(ctx) : null;
+    const isSystemAdmin = capabilities?.isSystemAdministrator === true;
+    const isTenantAdmin = capabilities?.isTenantAdministrator === true;
 
     // Compatibilidad: permitir group=<LOOKUP_GROUP_KEY> ademas de group_id=<uuid>
     if (!groupId && groupKey) {
@@ -386,14 +393,13 @@ router.post('/', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    const isSystemAdmin = capabilities.isSystemAdministrator;
+    const isTenantAdmin = capabilities.isTenantAdministrator;
     const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede crear valores de catalogo' });
+      return res.status(403).json({ error: 'Su perfil no puede crear valores de catálogo' });
     }
 
     const body = req.body;
@@ -512,7 +518,7 @@ router.post('/', async (req: Request, res: Response) => {
         sort_order: sort_order ?? 0,
         is_active: is_active ?? true,
         metadata: effectiveMetadata,
-        created_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`
+        created_by: ctx.authUserId
       })
       .select()
       .single();
@@ -563,14 +569,13 @@ router.put('/:id', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    const isSystemAdmin = capabilities.isSystemAdministrator;
+    const isTenantAdmin = capabilities.isTenantAdministrator;
     const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede actualizar valores de catalogo' });
+      return res.status(403).json({ error: 'Su perfil no puede actualizar valores de catálogo' });
     }
 
     const id = req.params.id;
@@ -634,7 +639,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
     if (!isSystemAdmin) {
       if (existingValue.tenant_id !== ctx.tenantId) {
-        return res.status(403).json({ error: 'TENANT_ADMIN solo puede editar valores de su tenant' });
+        return res.status(403).json({ error: 'Solo puede editar valores pertenecientes a su tenant' });
       }
 
       if (!groupData?.allows_tenant_items) {
@@ -646,7 +651,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       lookup_label: lookup_label.trim(),
       lookup_short_label: lookup_short_label.trim(),
       is_active: is_active ?? true,
-      updated_by: isSystemAdmin ? 'SYSTEM_ADMIN' : `TENANT_ADMIN:${ctx.tenantId}`,
+      updated_by: ctx.authUserId,
       updated_at: new Date().toISOString()
     };
 
@@ -734,14 +739,13 @@ router.delete('/:id', async (req: Request, res: Response) => {
     const ctx = await resolveAuthContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
 
-    const [isSystemAdmin, isTenantAdmin] = await Promise.all([
-      hasRole(ctx, 'SYSTEM_ADMIN'),
-      hasRole(ctx, 'TENANT_ADMIN'),
-    ]);
+    const capabilities = await getAdministrativeCapabilities(ctx);
+    const isSystemAdmin = capabilities.isSystemAdministrator;
+    const isTenantAdmin = capabilities.isTenantAdministrator;
     const roleKeys = await getRoleKeys(ctx);
 
     if (!isSystemAdmin && !isTenantAdmin) {
-      return res.status(403).json({ error: 'Solo SYSTEM_ADMIN o TENANT_ADMIN puede eliminar valores de catalogo' });
+      return res.status(403).json({ error: 'Su perfil no puede eliminar valores de catálogo' });
     }
 
     const id = String(req.params.id || '').trim();
@@ -780,7 +784,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     if (!isSystemAdmin) {
       if (!existingValue.tenant_id || existingValue.tenant_id !== ctx.tenantId) {
-        return res.status(403).json({ error: 'TENANT_ADMIN solo puede eliminar valores de su tenant' });
+        return res.status(403).json({ error: 'Solo puede eliminar valores pertenecientes a su tenant' });
       }
 
       if (!groupData?.allows_tenant_items) {

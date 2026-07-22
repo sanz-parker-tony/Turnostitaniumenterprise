@@ -9,23 +9,6 @@
  * 4. Si roles vacíos → /login con warning
  */
 
-// ============================================================================
-// MAPEO DE ROLES A HOME SCREEN
-// ============================================================================
-
-/**
- * ESTÁNDAR DEFINITIVO:
- * - EMPLOYEE inicia en marcación, sin reemplazar su dashboard
- * - Los demás roles van a /dashboard
- */
-export const ROLE_HOME_ROUTES = {
-  TENANT_ADMIN: '/dashboard',
-  SYSTEM_ADMIN: '/dashboard',
-  RRHH_ADMIN: '/dashboard',
-  SUPERVISOR: '/dashboard',
-  EMPLOYEE: '/kiosk/timeclock',
-} as const;
-
 // Fallback si el rol no está en el mapeo
 export const DEFAULT_DASHBOARD_HOME = '/dashboard';
 
@@ -162,36 +145,17 @@ export const SCREEN_ROUTE_MAP: Record<string, string> = {
  * @param roles - Array de role_key del usuario, con el rol principal primero
  * @returns Ruta de destino post-login
  */
-export function getHomeRouteByRoles(roles: string[]): string {
-  // Validación: roles vacíos → login
-  if (!roles || roles.length === 0) {
+export function getConfiguredHomeRoute(
+  configuredHomeRoute: string | null | undefined,
+  hasAssignedRole = true
+): string {
+  if (!hasAssignedRole) {
     console.warn('[ROLE-ROUTER] Roles vacíos, redirigiendo a /login');
     return '/login';
   }
 
-  const primaryRoleKey = String(roles[0] || '').trim().toUpperCase();
-
-  if (primaryRoleKey === 'EMPLOYEE') {
-    console.log('[ROLE-ROUTER] Redirigiendo EMPLOYEE a marcación');
-    return ROLE_HOME_ROUTES.EMPLOYEE;
-  }
-
-  console.log('[ROLE-ROUTER] Redirigiendo a /dashboard (roles:', roles.join(', ') + ')');
-  return DEFAULT_DASHBOARD_HOME;
-}
-
-// ============================================================================
-// FUNCIÓN: Determinar si un usuario debe ir a KIOSK
-// ============================================================================
-
-/**
- * Determina si un usuario debe ser redirigido a KIOSK
- * 
- * @param roles - Array de role_key del usuario
- * @returns true si el usuario es EMPLOYEE
- */
-export function isKioskUser(roles: string[]): boolean {
-  return roles.includes('EMPLOYEE');
+  const configured = String(configuredHomeRoute || '').trim();
+  return configured.startsWith('/') ? configured : DEFAULT_DASHBOARD_HOME;
 }
 
 // ============================================================================

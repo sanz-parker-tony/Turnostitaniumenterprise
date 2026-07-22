@@ -255,21 +255,8 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
     } catch (error) {
       console.error('Error cargando idiomas:', error);
       
-      // Fallback a datos estáticos en caso de error
-      const mockLanguages: SystemLanguage[] = [
-        { code: 'es', language_name: 'Español', is_active: true },
-        { code: 'en', language_name: 'English', is_active: true },
-        { code: 'pt', language_name: 'Português', is_active: true },
-        { code: 'fr', language_name: 'Français', is_active: true },
-      ];
-      
-      setLanguages(mockLanguages);
-      
-      if (!formData.defaultLanguage) {
-        setFormData(prev => ({ ...prev, defaultLanguage: 'es' }));
-      }
-      
-      toast.error('Error cargando idiomas. Usando idiomas por defecto.');
+      setLanguages([]);
+      toast.error('No se pudo cargar el catálogo de idiomas configurado en la base de datos.');
     } finally {
       setLoadingLanguages(false);
     }
@@ -283,12 +270,11 @@ export default function WizardStepTenant({ onComplete, onGoBack }: WizardStepTen
       if (exists) {
         setFormData(prev => ({ ...prev, timezone: detected }));
       } else {
-        // Default a America/Guayaquil si no se detecta
-        setFormData(prev => ({ ...prev, timezone: 'America/Guayaquil' }));
+        setFormData(prev => ({ ...prev, timezone: '' }));
       }
     } catch (error) {
       console.error('Error detectando zona horaria:', error);
-      setFormData(prev => ({ ...prev, timezone: 'America/Guayaquil' }));
+      setFormData(prev => ({ ...prev, timezone: '' }));
     }
   };
 

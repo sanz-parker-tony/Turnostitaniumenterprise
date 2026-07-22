@@ -13,8 +13,9 @@ import Link from 'next/link';
 import logoTurnos from 'figma:asset/17ccf6801f7c83b8bea74fbd52400e5b6ac4d64a.png';
 
 export default function KioskLayout({ children }: { children: ReactNode }) {
-  const { user, userRoles, isLoading } = useAuth();
+  const { user, profile, isLoading } = useAuth();
   const router = useRouter();
+  const isEmployeeSelfService = profile?.is_employee_self_service === true;
 
   useEffect(() => {
     // Redirect si no hay sesión
@@ -24,12 +25,11 @@ export default function KioskLayout({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Validar que tenga rol EMPLOYEE
-    if (!isLoading && userRoles && !userRoles.includes('EMPLOYEE')) {
-      console.warn('[KIOSK] Usuario sin rol EMPLOYEE, redirect /dashboard');
+    if (!isLoading && profile && !isEmployeeSelfService) {
+      console.warn('[KIOSK] El perfil no tiene habilitado el autoservicio, redirect /dashboard');
       router.push('/dashboard');
     }
-  }, [user, userRoles, isLoading, router]);
+  }, [user, profile, isEmployeeSelfService, isLoading, router]);
 
   // Loading state
   if (isLoading) {
@@ -44,7 +44,7 @@ export default function KioskLayout({ children }: { children: ReactNode }) {
   }
 
   // Sin acceso
-  if (!userRoles?.includes('EMPLOYEE')) {
+  if (!isEmployeeSelfService) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
         <div className="text-center max-w-md bg-gray-800 p-8 rounded-lg">

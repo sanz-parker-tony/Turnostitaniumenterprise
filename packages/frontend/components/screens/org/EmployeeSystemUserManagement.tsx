@@ -4,6 +4,7 @@ import { buildApiUrl } from '../../../utils/api-config';
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Eye, EyeOff, KeyRound, RefreshCw, Save, Search, Shield } from 'lucide-react';
 import { publicApiToken } from '../../../utils/backend/info';
+import { useAuthenticationPolicy } from '../../../lib/authentication-policy';
 
 interface EmployeeUserRow {
   employee_id: string;
@@ -38,6 +39,7 @@ function suggestUsername(row: EmployeeUserRow): string {
 }
 
 export function EmployeeSystemUserManagement() {
+  const { policy: authenticationPolicy, error: authenticationPolicyError } = useAuthenticationPolicy();
   const [rows, setRows] = useState<EmployeeUserRow[]>([]);
   const [languages, setLanguages] = useState<LanguageOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -140,8 +142,12 @@ export function EmployeeSystemUserManagement() {
       setError('Password es obligatorio para crear el usuario por primera vez');
       return;
     }
-    if (form.password.trim() && form.password.trim().length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres');
+    if (!authenticationPolicy) {
+      setError(authenticationPolicyError || 'La política de autenticación todavía no está disponible');
+      return;
+    }
+    if (form.password.trim() && form.password.trim().length < authenticationPolicy.passwordMinLength) {
+      setError(`La contraseña debe tener al menos ${authenticationPolicy.passwordMinLength} caracteres`);
       return;
     }
     if (form.password.trim() !== form.confirm_password.trim()) {

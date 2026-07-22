@@ -8,14 +8,27 @@ import { fileURLToPath } from 'url';
 import mainRouter from './index.js';
 import { setupSwagger } from './swagger.js';
 import { startDashboardDbListener, stopDashboardDbListener } from './lib/dashboard-db-listener.js';
+import { assertAuthConfiguration } from './lib/postgres-client.js';
 
 // Cargar variables de entorno desde packages/backend/.env.local
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-config({ path: path.resolve(__dirname, '../.env.local') });
+config({
+  path: path.resolve(__dirname, '../.env.local'),
+  override: process.env.NODE_ENV !== 'production',
+});
 
 const app = express();
 const PORT = process.env.PORT || process.env.BACKEND_PORT || 3001;
+assertAuthConfiguration();
+
+const allowedOrigins = String(process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+if (allowedOrigins.length === 0) {
+  throw new Error('FRONTEND_URL debe contener al menos un origen permitido');
+}
 
 // ============================================================================
 // MIDDLEWARE
@@ -23,7 +36,10 @@ const PORT = process.env.PORT || process.env.BACKEND_PORT || 3001;
 
 app.use(
   cors({
-    origin: '*',
+    origin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error('Origen no autorizado por CORS'));
+    },
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Bootstrap-Token'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     credentials: true,

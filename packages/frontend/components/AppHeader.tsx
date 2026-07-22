@@ -110,14 +110,14 @@ export function AppHeader() {
 
   // Obtener información de la pantalla actual
   const currentScreen = getScreenByPath(currentPath);
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
+  const isEmployee = profile?.is_employee_self_service === true;
   const compactUserName = String(profile?.display_name || profile?.email || 'Usuario').trim();
 
   useEffect(() => {
     let mounted = true;
 
     const loadEmployeeHeader = async () => {
-      if (roleKey !== 'EMPLOYEE' || !session?.access_token) {
+      if (!isEmployee || !session?.access_token) {
         if (mounted) {
           setEmployeeOrganizationRoute('');
           setEmployeeHeaderIdentity({ fullName: '', code: '', company: '' });
@@ -159,7 +159,7 @@ export function AppHeader() {
     return () => {
       mounted = false;
     };
-  }, [roleKey, session?.access_token]);
+  }, [isEmployee, session?.access_token]);
 
   const handleLogout = async () => {
     await signOut();
@@ -266,7 +266,7 @@ export function AppHeader() {
     <>
       <header
         ref={headerRef}
-        className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-1 border-b px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow sm:gap-2 sm:px-4 ${roleKey === 'EMPLOYEE' ? 'sm:h-[72px]' : 'sm:h-16'} ${
+        className={`sticky top-0 z-30 flex h-16 shrink-0 items-center gap-1 border-b px-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 bg-background/95 transition-shadow sm:gap-2 sm:px-4 ${isEmployee ? 'sm:h-[72px]' : 'sm:h-16'} ${
           isElevated ? 'shadow-sm' : 'shadow-none'
         }`}
       >
@@ -282,9 +282,9 @@ export function AppHeader() {
           <img src={titaniumLogo} alt="Turnos Titanium" className="h-9 w-9 shrink-0 rounded-md" />
           <span className="block min-w-0 flex-1 leading-none">
             <span className="block truncate text-sm font-bold leading-tight text-slate-900">
-              {roleKey === 'EMPLOYEE' ? employeeHeaderIdentity.fullName || compactUserName : compactUserName}
+              {isEmployee ? employeeHeaderIdentity.fullName || compactUserName : compactUserName}
             </span>
-            {roleKey === 'EMPLOYEE' ? (
+            {isEmployee ? (
               <span className="mt-1 block truncate text-[10px] font-normal leading-tight text-slate-500">
                 Código: {employeeHeaderIdentity.code || '-'} · Empresa: {employeeHeaderIdentity.company || '-'}
               </span>
@@ -292,7 +292,7 @@ export function AppHeader() {
           </span>
         </button>
 
-        {roleKey === 'EMPLOYEE' ? (
+        {isEmployee ? (
           <button
             type="button"
             onClick={handleNavigateHome}
@@ -316,7 +316,7 @@ export function AppHeader() {
         )}
         
         {/* Breadcrumbs */}
-        <Breadcrumb className={roleKey === 'EMPLOYEE' ? 'hidden' : 'hidden min-w-0 overflow-hidden sm:block'}>
+        <Breadcrumb className={isEmployee ? 'hidden' : 'hidden min-w-0 overflow-hidden sm:block'}>
           <BreadcrumbList className="min-w-0 flex-nowrap overflow-hidden">
             <BreadcrumbItem>
               <BreadcrumbLink 
@@ -433,7 +433,7 @@ export function AppHeader() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              {roleKey === 'EMPLOYEE' ? (
+              {isEmployee ? (
                 <>
                   <DropdownMenuItem onClick={handleNavigateProfile} className="cursor-pointer">
                     <Info className="mr-2 h-4 w-4" />

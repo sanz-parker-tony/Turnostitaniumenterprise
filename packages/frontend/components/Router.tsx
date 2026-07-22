@@ -87,11 +87,9 @@ function InvalidRouteFallback({ path }: { path: string }) {
 }
 
 export function Router() {
-  const { menuScreens, isLoading } = usePermissions();
+  const { menuScreens, isLoading, loadError, reload } = usePermissions();
   const { profile } = useAuth();
   const [currentPath, setCurrentPath] = useState('');
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const isApprovalRole = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
 
   const normalizePath = (path: string) => {
     if (!path) return '';
@@ -142,8 +140,21 @@ export function Router() {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <div className="text-center">
-          <p className="text-lg text-muted-foreground">No tienes permisos para acceder a ninguna pantalla.</p>
-          <p className="text-sm text-muted-foreground mt-2">Contacta al administrador del sistema.</p>
+          <p className="text-lg text-muted-foreground">
+            {loadError ? 'No se pudo cargar el menú autorizado.' : 'No tienes permisos para acceder a ninguna pantalla.'}
+          </p>
+          <p className="text-sm text-muted-foreground mt-2">
+            {loadError || 'Contacta al administrador del sistema.'}
+          </p>
+          {loadError && (
+            <button
+              type="button"
+              onClick={() => void reload()}
+              className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+            >
+              Reintentar
+            </button>
+          )}
         </div>
       </div>
     );
@@ -191,7 +202,7 @@ export function Router() {
     // ── Empleados ────────────────────────────────────────────────────────────
     '/dashboard/employees/shift-planning': <EmployeeShiftPlanningManagement />,
     '/dashboard/employees/shift-change-approvals': <ShiftChangeApprovalsManagement />,
-    '/dashboard/employees/manage': isApprovalRole ? <TimePunchChangeApprovalsManagement /> : <TimePunchesManagement />,
+    '/dashboard/employees/manage': <TimePunchesManagement />,
     '/dashboard/employees/requests': <RequestsApprovalsManagement />,
     '/dashboard/employees/time-punch-change-approvals': <TimePunchChangeApprovalsManagement />,
     '/dashboard/attendance/shifts': <EmployeeShiftPlanningManagement />,
@@ -252,7 +263,7 @@ export function Router() {
   const configuredComponent = menuScreen ? screenComponentMap[menuScreen.screen_key] : null;
   const isShellRoute = currentPath === '/dashboard';
   const isKioskRoute = currentPath === '/kiosk/punch' || currentPath === '/kiosk/timeclock';
-  const isEmployeeSelfServiceRoute = roleKey === 'EMPLOYEE' && currentPath === '/dashboard/profile';
+  const isEmployeeSelfServiceRoute = profile?.is_employee_self_service === true && currentPath === '/dashboard/profile';
   const isConfiguredRoute = Boolean(menuScreen);
 
   if (configuredComponent) {

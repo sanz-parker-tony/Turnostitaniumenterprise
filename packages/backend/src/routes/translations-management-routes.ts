@@ -39,6 +39,23 @@ function isGroup(value: string): value is TranslationGroup {
   return VALID_GROUPS.includes(value as TranslationGroup);
 }
 
+async function loadTranslations(
+  Postgres: any,
+  table: string,
+  select: string,
+  foreignKey: string,
+  ids: string[],
+  languageCode: string
+): Promise<{ data: any[]; error: any }> {
+  if (ids.length === 0) return { data: [], error: null };
+  const { data, error } = await Postgres
+    .from(table)
+    .select(select)
+    .eq('language_code', languageCode)
+    .in(foreignKey, ids);
+  return { data: data || [], error };
+}
+
 router.get('/catalogs/languages', async (_req: Request, res: Response) => {
   try {
     const Postgres = getPostgres();
@@ -84,11 +101,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('system_menu_group_translations')
-        .select('id, menu_group_id, language_code, menu_group_name, menu_group_short_name')
-        .eq('language_code', languageCode)
-        .in('menu_group_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'system_menu_group_translations',
+        'id, menu_group_id, language_code, menu_group_name, menu_group_short_name',
+        'menu_group_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.menu_group_id, t]));
@@ -118,11 +135,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('screen_translations')
-        .select('id, screen_id, language_code, screen_name, menu_label')
-        .eq('language_code', languageCode)
-        .in('screen_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'screen_translations',
+        'id, screen_id, language_code, screen_name, menu_label',
+        'screen_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.screen_id, t]));
@@ -152,11 +169,10 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('action_translations')
-        .select('id, action_id, language_code, action_name')
-        .eq('language_code', languageCode)
-        .in('action_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'action_translations', 'id, action_id, language_code, action_name',
+        'action_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.action_id, t]));
@@ -185,11 +201,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('lookup_group_translations')
-        .select('id, lookup_group_id, language_code, label, short_label')
-        .eq('language_code', languageCode)
-        .in('lookup_group_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'lookup_group_translations',
+        'id, lookup_group_id, language_code, label, short_label',
+        'lookup_group_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.lookup_group_id, t]));
@@ -225,11 +241,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('lookup_value_translations')
-        .select('id, lookup_value_id, language_code, label, short_label')
-        .eq('language_code', languageCode)
-        .in('lookup_value_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'lookup_value_translations',
+        'id, lookup_value_id, language_code, label, short_label',
+        'lookup_value_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.lookup_value_id, t]));
@@ -259,11 +275,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('system_report_translations')
-        .select('id, system_report_id, language_code, report_name, report_description, report_notes')
-        .eq('language_code', languageCode)
-        .in('system_report_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'system_report_translations',
+        'id, system_report_id, language_code, report_name, report_description, report_notes',
+        'system_report_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.system_report_id, t]));
@@ -300,11 +316,11 @@ router.get('/:group', async (req: Request, res: Response) => {
       if (baseError) return res.status(500).json({ error: baseError.message });
 
       const ids = (base || []).map((x: any) => x.id);
-      const { data: trans, error: transError } = await Postgres
-        .from('report_parameter_translations')
-        .select('id, report_parameter_id, language_code, parameter_label, parameter_description')
-        .eq('language_code', languageCode)
-        .in('report_parameter_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
+      const { data: trans, error: transError } = await loadTranslations(
+        Postgres, 'report_parameter_translations',
+        'id, report_parameter_id, language_code, parameter_label, parameter_description',
+        'report_parameter_id', ids, languageCode
+      );
       if (transError) return res.status(500).json({ error: transError.message });
 
       const transById = new Map((trans || []).map((t: any) => [t.report_parameter_id, t]));

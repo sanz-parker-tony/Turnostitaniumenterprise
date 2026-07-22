@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowRightLeft, CalendarDays, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -80,10 +79,6 @@ function approvalStatusBadgeClass(statusKey: string | null | undefined, statusLa
 }
 
 export default function ShiftChangeApprovalsManagement() {
-  const { profile } = useAuth();
-  const roleKey = String(profile?.role_key || '').trim().toUpperCase();
-  const canUse = roleKey === 'SUPERVISOR' || roleKey === 'RRHH_ADMIN' || roleKey === 'RHADMIN';
-
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
@@ -116,11 +111,6 @@ export default function ShiftChangeApprovalsManagement() {
   };
 
   const load = async () => {
-    if (!canUse) {
-      setRows([]);
-      setLoading(false);
-      return;
-    }
 
     setLoading(true);
     try {
@@ -146,7 +136,7 @@ export default function ShiftChangeApprovalsManagement() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUse, status]);
+  }, [status]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -223,14 +213,6 @@ export default function ShiftChangeApprovalsManagement() {
       setWorkingId(null);
     }
   };
-
-  if (!canUse) {
-    return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-        Esta pantalla esta habilitada solo para los roles SUPERVISOR, RRHH_ADMIN y RHADMIN.
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">

@@ -128,12 +128,7 @@ export default function BootstrapUserHelper() {
           {status === 'success' && (
             <div className="bg-green-50 border border-green-200 rounded p-2 space-y-1">
               <div className="text-xs font-mono text-green-900">
-                <div className="font-semibold">📧 Correo electrónico:</div>
-                <div className="pl-2">system.admin@titanium-labs.com</div>
-              </div>
-              <div className="text-xs font-mono text-green-900">
-                <div className="font-semibold">🔑 Contraseña:</div>
-                <div className="pl-2">Titanium2026!</div>
+                Las credenciales son las configuradas de forma segura durante la instalación.
               </div>
               <p className="text-xs text-orange-700 mt-2 pt-2 border-t border-green-200">
                 ⚠️ Cambia la contraseña después del primer login

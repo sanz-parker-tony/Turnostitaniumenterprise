@@ -397,7 +397,7 @@ export const MASSIVE_WORKBOOK_TEMPLATE_TABS: MassiveWorkbookTemplateTab[] = [
     columns: [
       { key: 'employee_code', required: true, type: 'codigo', description: 'Codigo del empleado de la pestana 11.', example: 'EMP-001' },
       { key: 'username', required: true, type: 'texto', description: 'Usuario de acceso. El sistema sanea espacios y caracteres no validos.', example: 'victor.sanchez' },
-      { key: 'password_plain_for_import', type: 'texto', description: 'Clave inicial en claro para importacion. Minimo 8 caracteres.', example: 'Titanium2026' },
+      { key: 'password_plain_for_import', type: 'texto', description: 'Clave inicial en claro para importación. Debe cumplir la política de autenticación vigente.', example: 'DefinidaPorElAdministrador' },
       { key: 'password', type: 'texto', description: 'Alternativa de clave inicial si no usa password_plain_for_import.', example: '' },
       { key: 'display_name', type: 'texto', description: 'Nombre visible del usuario.', example: 'Victor Sanchez' },
       { key: 'email', required: true, type: 'email', description: 'Correo electronico unico.', example: 'victor.sanchez@empresa.com' },

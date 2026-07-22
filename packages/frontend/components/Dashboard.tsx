@@ -6,7 +6,7 @@
 'use client';
 
 import { buildApiUrl } from '../utils/api-config';
-import { formatClientDateTime, formatClientTime24, formatStandardDate } from '../utils/date-time';
+import { formatClientDateTime, formatClientTime24, formatStandardDate, getClientTimeZone } from '../utils/date-time';
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePermissions } from '../contexts/PermissionsContext';
@@ -76,51 +76,15 @@ import KioskShiftChange from './kiosk/KioskShiftChange';
 import KioskTimePunchRequests from './kiosk/KioskTimePunchRequests';
 import { StandardDateInput, StandardTimeInput } from './ui/standard-date-input';
 
-const RoleInfo = ({ roleKey }: { roleKey: string | undefined }) => {
-  const roleInfo: Record<string, { title: string; description: string; icon: any; color: string }> = {
-    SYSTEM_ADMIN: {
-      title: 'Administrador del Sistema',
-      description: 'Acceso completo a configuracion de seguridad y administracion del sistema',
-      icon: Shield,
-      color: 'text-red-600',
-    },
-    TENANT_ADMIN: {
-      title: 'Administrador de Tenant',
-      description: 'Gestion de estructura organizacional, configuracion y mantenimiento',
-      icon: Settings,
-      color: 'text-purple-600',
-    },
-    RRHH_ADMIN: {
-      title: 'Administrador de RRHH',
-      description: 'Control de asistencias, reportes y gestion de empleados',
-      icon: Users,
-      color: 'text-blue-600',
-    },
-    SUPERVISOR: {
-      title: 'Supervisor',
-      description: 'Visualizacion de asistencias y reportes de su area',
-      icon: BarChart3,
-      color: 'text-green-600',
-    },
-    EMPLOYEE: {
-      title: 'Empleado',
-      description: 'Acceso al kiosco para registro de asistencia',
-      icon: Clock,
-      color: 'text-orange-600',
-    },
-  };
-
-  const info = roleInfo[roleKey || ''] || roleInfo.EMPLOYEE;
-  const Icon = info.icon;
-
+const RoleInfo = ({ roleName }: { roleName: string | undefined }) => {
   return (
     <div className="flex items-center gap-4 p-4 bg-white rounded-lg border">
       <div className="p-3 rounded-lg bg-gray-100">
-        <Icon className={`h-8 w-8 ${info.color}`} />
+        <Shield className="h-8 w-8 text-slate-600" />
       </div>
       <div className="flex-1">
-        <h3 className="font-semibold text-lg">{info.title}</h3>
-        <p className="text-sm text-muted-foreground">{info.description}</p>
+        <h3 className="font-semibold text-lg">{roleName || 'Perfil configurado'}</h3>
+        <p className="text-sm text-muted-foreground">La navegación y las operaciones disponibles se determinan por los permisos configurados.</p>
       </div>
     </div>
   );
@@ -402,17 +366,8 @@ function EmployeeHome({
     : recentPunches.flatMap((row: any) => {
       const date = toDateKey(row?.punch_datetime);
       if (!date) return [];
-      const movementKey = String(row?.movement_key || '').toUpperCase();
-      const icons: Record<string, string> = {
-        ENTRY: 'DoorOpen',
-        LUNCH_OUT: 'Utensils',
-        LUNCH_IN: 'UtensilsCrossed',
-        EXIT: 'DoorClosed',
-        PERMISSION_OUT: 'ArrowRightCircle',
-        PERMISSION_IN: 'ArrowLeftCircle',
-      };
-      const icon_key = icons[movementKey] || 'Fingerprint';
-      const isStart = ['ENTRY', 'LUNCH_OUT', 'PERMISSION_OUT'].includes(movementKey);
+      const icon_key = row?.movement_icon_key || 'Fingerprint';
+      const isStart = row?.movement_direction === 'IN';
       return [{
         date,
         icon_key,
@@ -473,7 +428,7 @@ function EmployeeHome({
       }];
     });
   const todayIso = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Guayaquil',
+    timeZone: payload?.attendance_timezone || getClientTimeZone(),
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -1009,25 +964,15 @@ function formatPunchTimeCompact(value: string | null | undefined): string {
 }
 
 function normalizeMovementLabel(row: any): string {
-  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
-  if (movementKey === 'ENTRY') return 'Entra a trabajo';
-  if (movementKey === 'LUNCH_OUT') return 'Inicio de lunch';
-  if (movementKey === 'LUNCH_IN') return 'Fin de lunch';
-  if (movementKey === 'EXIT') return 'Sale de trabajo';
-  if (movementKey === 'PERMISSION_OUT') return 'Sale de trabajo (permiso)';
-  if (movementKey === 'PERMISSION_IN') return 'Entra a trabajo (retorno de permiso)';
+  // El texto visible pertenece al catálogo de teclas de marcación.
 
   // Compatibilidad con marcaciones históricas si el catálogo aún no está disponible.
   const raw = String(row.movement_label || '').trim();
-  const key = raw.toUpperCase();
-  if (key === 'ENTRADA A TRABAJO' || key === 'ENTRADA TRABAJO') return 'Entrada de trabajo';
-  if (key === 'SALIDA') return 'Salida de trabajo';
   return raw || `Movimiento ${row.punch_key}`;
 }
 
 function isLunchPunch(row: any): boolean {
-  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
-  return movementKey === 'LUNCH_OUT' || movementKey === 'LUNCH_IN';
+  return row?.movement_kind === 'LUNCH';
 }
 
 function isLateEvent(eventKey: string | null | undefined): boolean {
@@ -1048,15 +993,13 @@ function formatLatestPunchDescription(row: any): string {
     return `${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)}${lunchWindow} - ${markingLocation}`;
   }
 
-  const movementKey = String(row?.movement_key || '').trim().toUpperCase();
-  if (movementKey === 'PERMISSION_OUT' || movementKey === 'PERMISSION_IN') {
+  if (row?.movement_kind === 'PERMISSION') {
     const parts = [`${formatPunchTimeCompact(row.punch_datetime)} ${normalizeMovementLabel(row)}`, markingLocation];
     if (row.has_approved_leave) parts.push(`Permiso: ${row.approved_leave_name || 'Aprobado'}`);
     return `${parts.slice(0, 2).join(' - ')}${parts.length > 2 ? ` | ${parts.slice(2).join(' | ')}` : ''}`;
   }
 
-  const movementLabel = String(row.movement_label || '').trim().toUpperCase();
-  const isWorkdayExit = movementKey === 'EXIT' || movementLabel === 'SALIDA';
+  const isWorkdayExit = row?.work_boundary === 'END';
   const shiftLabel = isWorkdayExit ? 'Salida turno' : 'Entrada turno';
   const shiftTime = isWorkdayExit ? row.shift_work_end_time : row.shift_start_time;
   const parts = [
@@ -2434,10 +2377,11 @@ export function Dashboard() {
   const { profile, session } = useAuth();
   const { menuScreens } = usePermissions();
 
-  const isEmployee = profile?.role_key === 'EMPLOYEE';
-  const isSystemAdmin = profile?.role_key === 'SYSTEM_ADMIN';
-  const isTenantAdmin = profile?.role_key === 'TENANT_ADMIN';
-  const isSupervisor = profile?.role_key === 'SUPERVISOR';
+  const dashboardMode = profile?.ui_dashboard_mode || 'GENERIC';
+  const isEmployee = dashboardMode === 'SELF';
+  const isSystemAdmin = dashboardMode === 'PLATFORM';
+  const isTenantAdmin = dashboardMode === 'TENANT';
+  const isSupervisor = dashboardMode === 'WORKFORCE';
 
   const [employeeLoading, setEmployeeLoading] = useState(false);
   const [employeeError, setEmployeeError] = useState<string | null>(null);
@@ -2445,7 +2389,7 @@ export function Dashboard() {
   const [employeeRefreshKey, setEmployeeRefreshKey] = useState(0);
   const [employeeRange, setEmployeeRange] = useState(() => {
     const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Guayaquil',
+      timeZone: getClientTimeZone(),
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -2724,18 +2668,6 @@ export function Dashboard() {
   ];
   const stats = isSystemAdmin ? systemAdminStats : defaultStats;
 
-  const getMenuGroupsByRole = (roleKey: string | undefined) => {
-    const menuMap: Record<string, string[]> = {
-      SYSTEM_ADMIN: ['SECURITY'],
-      TENANT_ADMIN: ['MAINT', 'CONFIG', 'ORG'],
-      RRHH_ADMIN: ['DASH', 'ATTENDANCE', 'REPORTS'],
-      SUPERVISOR: ['DASH', 'ATTENDANCE', 'REPORTS'],
-      EMPLOYEE: ['KIOSK'],
-    };
-    return menuMap[roleKey || ''] || [];
-  };
-
-  const expectedGroups = getMenuGroupsByRole(profile?.role_key);
   const systemAdminYearOptions = [systemAdminYear - 2, systemAdminYear - 1, systemAdminYear, systemAdminYear + 1]
     .filter((v, i, arr) => arr.indexOf(v) === i);
   const employeeCompanySummary = employeePayload?.employee_company || {};
@@ -2811,7 +2743,7 @@ export function Dashboard() {
       />
       </div>
 
-      {!isSystemAdmin && !isTenantAdmin && !isSupervisor && String(profile?.role_key || '').toUpperCase() !== 'EMPLOYEE' ? <RoleInfo roleKey={profile?.role_key} /> : null}
+      {!isSystemAdmin && !isTenantAdmin && !isSupervisor && !isEmployee ? <RoleInfo roleName={profile?.role_name} /> : null}
 
       {isSupervisor ? (
         supervisorError ? (

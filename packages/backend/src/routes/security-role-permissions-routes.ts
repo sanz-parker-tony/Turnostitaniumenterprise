@@ -44,7 +44,8 @@ async function ensureSystemAdmin(ctx: AuthContext): Promise<boolean> {
         AND ur.tenant_id = $2
         AND ur.is_active = true
         AND r.is_active = true
-        AND r.role_key = 'SYSTEM_ADMIN'
+        AND r.role_scope = 'SYSTEM'
+        AND r.is_system_role = true
       LIMIT 1
     `,
     [ctx.userId, ctx.tenantId]

@@ -24,7 +24,7 @@ SELECT pg_catalog.pg_advisory_xact_lock(
 DO $$
 DECLARE
   baseline_key constant text := 'system:factory-baseline:v1';
-  required_seed_version constant text := '2026-07-22-FACTORY-V4';
+  required_seed_version constant text := '2026-07-22-FACTORY-V12';
   baseline jsonb;
   current_table_count integer;
   snapshot_table_count integer;
@@ -92,6 +92,7 @@ BEGIN
       coalesce(unexpected_tables, 'ninguna');
   END IF;
 
+  PERFORM pg_catalog.set_config('search_path', 'pg_catalog', true);
   WITH schema_objects AS (
     SELECT format('table|%s', c.relname) AS definition
     FROM pg_catalog.pg_class c
@@ -134,6 +135,7 @@ BEGIN
   SELECT md5(string_agg(definition, E'\n' ORDER BY definition))
     INTO current_schema_fingerprint
   FROM schema_objects;
+  PERFORM pg_catalog.set_config('search_path', 'public, pg_catalog', true);
 
   IF current_schema_fingerprint IS DISTINCT FROM baseline->>'schema_fingerprint' THEN
     RAISE EXCEPTION
@@ -483,6 +485,45 @@ BEGIN
       AND screen_action.is_active = true
   ) <> 4 THEN
     RAISE EXCEPTION 'FACTORY RESET invalido: no se restauro el mantenimiento de movimientos';
+  END IF;
+
+  IF (SELECT count(*) FROM public.api_authorization_rules WHERE is_active) <> 376 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 376 reglas de autorización API';
+  END IF;
+
+  IF (SELECT count(*) FROM public.data_access_authorization_rules WHERE is_active) <> 141 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 141 reglas de acceso tabla-operación';
+  END IF;
+
+  IF (SELECT count(*) FROM public.attendance_event_punch_keys WHERE is_active) <> 6 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 6 relaciones evento-tecla';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key = 'PUNCH_KEY'
+      AND value.is_active
+      AND (
+        NULLIF(value.metadata->>'movement_kind', '') IS NULL
+        OR NULLIF(value.metadata->>'direction', '') IS NULL
+        OR NULLIF(value.metadata->>'icon_key', '') IS NULL
+        OR COALESCE(value.metadata->>'kiosk_column', '') NOT IN ('LEFT', 'RIGHT')
+      )
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: existen teclas sin semántica operativa o ubicación de kiosco';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM public.users WHERE auth_version < 1) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: existen usuarios con versión de autenticación inválida';
+  END IF;
+
+  IF NULLIF(public.resolve_attendance_timezone(
+       (SELECT id FROM public.tenants WHERE tenant_key = 'SYSTEM' LIMIT 1),
+       NULL, NULL, NULL
+     ), '') IS NULL THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se puede resolver la zona horaria de asistencia';
   END IF;
 
   RAISE NOTICE '============================================================';
