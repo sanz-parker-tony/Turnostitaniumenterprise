@@ -54,6 +54,7 @@ interface RequestRow {
   requested_values: Record<string, any> | null;
   request_status_key: string | null;
   request_status_label: string | null;
+  request_status_filter_key: string | null;
   supervisor_notes: string | null;
   approved_by_display_name: string | null;
   approved_by_username: string | null;
@@ -203,6 +204,7 @@ export default function KioskTimePunchRequests({
   const [rangeFrom, setRangeFrom] = useState(() => getInitialRange(deepLinkSearch).from);
   const [rangeTo, setRangeTo] = useState(() => getInitialRange(deepLinkSearch).to);
   const deepLinkHandled = useRef(false);
+  const rowsRequestSequence = useRef(0);
 
   const [popupOpen, setPopupOpen] = useState(() => getDeepLinkPopupState(deepLinkSearch).open);
   const [popupMode, setPopupMode] = useState<PopupMode>(() => getDeepLinkPopupState(deepLinkSearch).mode);
@@ -249,16 +251,39 @@ export default function KioskTimePunchRequests({
   };
 
   const loadRows = async () => {
+    const requestSequence = ++rowsRequestSequence.current;
     const qs = new URLSearchParams();
-    const linkedRequestId = deepLinkSearch !== undefined || typeof window !== 'undefined'
+    const linkedRequestId = !deepLinkHandled.current && (deepLinkSearch !== undefined || typeof window !== 'undefined')
       ? new URLSearchParams(deepLinkSearch ?? window.location.search).get('request_id')
       : null;
     if (linkedRequestId) qs.set('request_id', linkedRequestId);
-    qs.set('status', linkedRequestId ? 'ALL' : status);
+    const requestedStatus = linkedRequestId ? 'ALL' : status;
+    qs.set('status', requestedStatus);
     if (rangeFrom) qs.set('from', rangeFrom);
     if (rangeTo) qs.set('to', rangeTo);
     const payload = await request(`/time-punch-requests?${qs.toString()}`);
-    setRows((payload?.requests || []) as RequestRow[]);
+    if (requestSequence !== rowsRequestSequence.current) return;
+
+    const nextRows = (payload?.requests || []) as RequestRow[];
+    if (linkedRequestId) {
+      const linkedRow = nextRows.find((row) => row.id === linkedRequestId);
+      const linkedStatus = normalizeStatus(linkedRow?.request_status_filter_key);
+      setStatus(
+        ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(linkedStatus)
+          ? linkedStatus as StatusFilter
+          : 'ALL'
+      );
+      setRows(nextRows);
+      return;
+    }
+
+    setRows(
+      requestedStatus === 'ALL'
+        ? nextRows
+        : nextRows.filter(
+            (row) => normalizeStatus(row.request_status_filter_key) === requestedStatus
+          )
+    );
   };
 
   const loadAll = async () => {
@@ -296,8 +321,13 @@ export default function KioskTimePunchRequests({
 
   const filteredRows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) => {
+    const rowsForSelectedStatus = status === 'ALL'
+      ? rows
+      : rows.filter(
+          (row) => normalizeStatus(row.request_status_filter_key) === status
+        );
+    if (!q) return rowsForSelectedStatus;
+    return rowsForSelectedStatus.filter((row) => {
       const requested = JSON.stringify(row.requested_values || {}).toLowerCase();
       return (
         String(row.request_type_label || '').toLowerCase().includes(q) ||
@@ -306,7 +336,7 @@ export default function KioskTimePunchRequests({
         requested.includes(q)
       );
     });
-  }, [rows, query]);
+  }, [rows, query, status]);
 
   const requestTypeKeyById = useMemo(() => {
     const map = new Map<string, string>();
@@ -419,8 +449,16 @@ export default function KioskTimePunchRequests({
     const requestTypeKey = String(params.get('request_type_key') || 'CREATE_PUNCH').toUpperCase();
     const requestType = requestTypes.find((item) => String(item.lookup_key || '').toUpperCase() === requestTypeKey)
       || requestTypes[0];
-    const incidentDate = params.get('date') || '';
-    const punchDateTime = params.get('punch_datetime') || '';
+    const contextPunchId = params.get('context_punch_id') || '';
+    const contextPunch = recentPunches.find((item) => item.id === contextPunchId) || null;
+    const incidentDate = params.get('date') || toDateTimeLocal(
+      contextPunch?.punch_datetime || null,
+      contextPunch?.punch_time_zone || null
+    ).slice(0, 10);
+    const punchDateTime = params.get('punch_datetime') || toDateTimeLocal(
+      contextPunch?.punch_datetime || null,
+      contextPunch?.punch_time_zone || null
+    );
     const incidentName = params.get('incident') || 'Incidencia de marcación';
     const reason = params.get('reason') || `Regularización de ${incidentName} del ${incidentDate}.`;
 
@@ -428,15 +466,16 @@ export default function KioskTimePunchRequests({
     setPopupForm({
       ...emptyForm(requestType?.id || ''),
       incident_date: incidentDate,
+      target_punch_id: contextPunchId,
       reason,
       punch_datetime: punchDateTime,
-      punch_key: params.get('punch_key') || '',
+      punch_key: params.get('punch_key') || (contextPunch ? String(contextPunch.punch_key) : ''),
       notes: `Incidencia detectada el ${incidentDate}: ${incidentName}.`,
     });
     setSupportFile(null);
     setClearSupport(false);
     setPopupOpen(true);
-  }, [loading, rows, requestTypes, deepLinkSearch]);
+  }, [loading, rows, requestTypes, recentPunches, deepLinkSearch]);
 
   const closePopup = () => {
     setPopupOpen(false);

@@ -685,7 +685,7 @@ function safeRelativePhotoPath(photoPath: string): string {
 async function resolveCompanyAssetsStoragePath(
   Postgres: any,
   tenantId: string
-): Promise<{ absolutePath: string; configuredValue: string; source: 'TENANT' | 'SYSTEM' | 'FALLBACK' }> {
+): Promise<{ absolutePath: string; configuredValue: string; source: 'TENANT' | 'SYSTEM' }> {
   const { data: systemSetting, error: systemSettingError } = await Postgres
     .from('system_settings')
     .select('id, default_value')
@@ -698,7 +698,7 @@ async function resolveCompanyAssetsStoragePath(
   }
 
   let configuredValue = '';
-  let source: 'TENANT' | 'SYSTEM' | 'FALLBACK' = 'FALLBACK';
+  let source: 'TENANT' | 'SYSTEM' = 'SYSTEM';
 
   if (systemSetting?.id) {
     const { data: tenantOverride, error: tenantOverrideError } = await Postgres
@@ -723,8 +723,7 @@ async function resolveCompanyAssetsStoragePath(
   }
 
   if (!configuredValue) {
-    configuredValue = path.join('storage', 'company-assets');
-    source = 'FALLBACK';
+    throw new Error('No existe una configuracion activa para COMPANY_ASSETS_PATH');
   }
 
   const absolutePath = path.isAbsolute(configuredValue)

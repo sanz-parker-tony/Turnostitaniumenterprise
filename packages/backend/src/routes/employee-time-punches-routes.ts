@@ -136,91 +136,9 @@ async function ensurePunchInconsistencyNotificationTypeId(tenantId: string): Pro
     ['PUNCH_INCONSISTENCY_DETECTED', 'TIME_PUNCH_INCONSISTENCY_DETECTED']
   );
   if (existing) return existing;
-
-  const groupResult = await pool.query(
-    `
-      INSERT INTO public.lookup_groups (
-        id,
-        lookup_group_key,
-        lookup_group_label,
-        lookup_group_short_label,
-        allows_tenant_items,
-        is_active,
-        created_by
-      )
-      VALUES (
-        gen_random_uuid(),
-        'USER_NOTIFICATION_TYPE',
-        'Tipos de Notificacion Usuario',
-        'Tipo Notificacion',
-        false,
-        true,
-        'SYSTEM'
-      )
-      ON CONFLICT (lookup_group_key) DO UPDATE
-      SET is_active = true,
-          updated_by = 'SYSTEM',
-          updated_at = now()
-      RETURNING id
-    `
+  throw new Error(
+    'Falta configurar PUNCH_INCONSISTENCY_DETECTED en el catálogo USER_NOTIFICATION_TYPE'
   );
-
-  const groupId = groupResult.rows[0]?.id as string | undefined;
-  if (!groupId) {
-    throw new Error('No se pudo resolver lookup_group USER_NOTIFICATION_TYPE');
-  }
-
-  const valueResult = await pool.query(
-    `
-      INSERT INTO public.lookup_values (
-        id,
-        tenant_id,
-        lookup_group_id,
-        lookup_key,
-        lookup_label,
-        lookup_short_label,
-        lookup_scope,
-        sort_order,
-        is_active,
-        created_by
-      )
-      VALUES (
-        gen_random_uuid(),
-        NULL,
-        $1::uuid,
-        'PUNCH_INCONSISTENCY_DETECTED',
-        'Inconsistencia de Marcacion Detectada',
-        'Inconsistencia Marcacion',
-        'SYSTEM',
-        80,
-        true,
-        'SYSTEM'
-      )
-      ON CONFLICT ON CONSTRAINT uq_lookup_values DO UPDATE
-      SET
-        lookup_label = EXCLUDED.lookup_label,
-        lookup_short_label = EXCLUDED.lookup_short_label,
-        sort_order = EXCLUDED.sort_order,
-        is_active = true,
-        updated_by = 'SYSTEM',
-        updated_at = now()
-      RETURNING id
-    `,
-    [groupId]
-  );
-
-  const valueId = valueResult.rows[0]?.id as string | undefined;
-  if (!valueId) {
-    const fallback = await resolveLookupValueIdByGroupKeyAndKeys(
-      tenantId,
-      'USER_NOTIFICATION_TYPE',
-      ['PUNCH_INCONSISTENCY_DETECTED']
-    );
-    if (fallback) return fallback;
-    throw new Error('No se pudo crear tipo de notificacion de inconsistencias');
-  }
-
-  return valueId;
 }
 
 type UnpairedQueryArgs = {

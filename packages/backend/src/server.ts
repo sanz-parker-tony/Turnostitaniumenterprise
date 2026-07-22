@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import mainRouter from './index.js';
 import { setupSwagger } from './swagger.js';
 import { startDashboardDbListener, stopDashboardDbListener } from './lib/dashboard-db-listener.js';
+import { startNotificationDbListener, stopNotificationDbListener } from './lib/notification-db-listener.js';
 import { assertAuthConfiguration } from './lib/postgres-client.js';
 
 // Cargar variables de entorno desde packages/backend/.env.local
@@ -97,6 +98,7 @@ app.use((req, res) => {
 
 app.listen(PORT, () => {
   startDashboardDbListener();
+  startNotificationDbListener();
   console.log(`
 ╔════════════════════════════════════════════════════╗
 ║  🚀 Backend Local - Turnos Titanium Enterprise   ║
@@ -122,7 +124,7 @@ app.listen(PORT, () => {
 });
 
 const shutdown = async () => {
-  await stopDashboardDbListener();
+  await Promise.all([stopDashboardDbListener(), stopNotificationDbListener()]);
   process.exit(0);
 };
 

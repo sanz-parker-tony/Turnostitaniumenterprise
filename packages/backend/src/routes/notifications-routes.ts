@@ -1,7 +1,58 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../lib/db.js';
+import {
+  getUserNotificationEventVersion,
+  waitForUserNotificationEvent,
+} from '../lib/notification-events.js';
 
 const router = Router();
+
+type NotificationActionConfig = {
+  enabled?: boolean;
+  required?: boolean;
+  label?: string;
+  path?: string;
+  parameters?: Record<string, string | number | boolean>;
+  parameter_sources?: Record<string, string>;
+};
+
+function readObjectPath(source: Record<string, any>, path: string): unknown {
+  return String(path || '').split('.').filter(Boolean).reduce<unknown>((value, key) => {
+    if (!value || typeof value !== 'object') return undefined;
+    return (value as Record<string, unknown>)[key];
+  }, source);
+}
+
+function buildNotificationAction(row: Record<string, any>) {
+  const typeMetadata = row.notification_type_metadata;
+  const action = typeMetadata && typeof typeMetadata === 'object'
+    ? typeMetadata.action as NotificationActionConfig | undefined
+    : undefined;
+  const path = String(action?.path || '').trim();
+  if (action?.enabled !== true || !path.startsWith('/') || path.startsWith('//')) return null;
+
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(action.parameters || {})) {
+    if (value !== null && value !== undefined && String(value).trim()) query.set(key, String(value));
+  }
+
+  const source = {
+    ref_id: row.ref_id,
+    notification: row,
+    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+  };
+  for (const [parameter, sourcePath] of Object.entries(action.parameter_sources || {})) {
+    const value = readObjectPath(source, sourcePath);
+    if (value !== null && value !== undefined && String(value).trim()) query.set(parameter, String(value));
+  }
+
+  const queryString = query.toString();
+  return {
+    required: action.required === true,
+    label: String(action.label || 'Abrir'),
+    url: `${path}${queryString ? `?${queryString}` : ''}`,
+  };
+}
 
 function getActor(req: Request): string {
   const user = (req as any).user;
@@ -28,18 +79,6 @@ async function resolveRequestUserContext(req: Request): Promise<{ user_id: strin
   return { user_id: row.user_id, tenant_id: row.tenant_id };
 }
 
-const terminalRequestStatusesSql = `
-  'APPROVED', 'APROBADO', 'APROBADA',
-  'REJECTED', 'RECHAZADO', 'RECHAZADA',
-  'CANCELLED', 'CANCELED', 'CANCELADO', 'CANCELADA',
-  'COMPLETED', 'COMPLETE', 'CUMPLIDO', 'CUMPLIDA',
-  'FULFILLED', 'RESOLVED', 'RESUELTO', 'RESUELTA',
-  'CLOSED', 'CERRADO', 'CERRADA',
-  'PROCESSED', 'PROCESADO', 'PROCESADA',
-  'EXPIRED', 'EXPIRADO', 'EXPIRADA',
-  'VOID', 'ANULADO', 'ANULADA'
-`;
-
 /**
  * Las notificaciones de creación solo permanecen visibles mientras el asunto
  * siga pendiente. Las notificaciones de decisión y los avisos genéricos se
@@ -57,7 +96,7 @@ const currentNotificationSql = `
     OR (
       n.ref_table = 'employee_absence_requests'
       AND (
-        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        COALESCE(notification_type.metadata->>'visibility_policy', 'UNTIL_READ') <> 'WHILE_REFERENCE_OPEN'
         OR EXISTS (
           SELECT 1
           FROM public.employee_absence_requests request
@@ -65,14 +104,14 @@ const currentNotificationSql = `
           WHERE request.id = n.ref_id
             AND request.tenant_id = n.tenant_id
             AND request.is_active = true
-            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+            AND COALESCE(status.metadata->>'notification_lifecycle_state', 'OPEN') <> 'TERMINAL'
         )
       )
     )
     OR (
       n.ref_table = 'employee_shift_change_requests'
       AND (
-        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        COALESCE(notification_type.metadata->>'visibility_policy', 'UNTIL_READ') <> 'WHILE_REFERENCE_OPEN'
         OR EXISTS (
           SELECT 1
           FROM public.employee_shift_change_requests request
@@ -80,14 +119,14 @@ const currentNotificationSql = `
           WHERE request.id = n.ref_id
             AND request.tenant_id = n.tenant_id
             AND request.is_active = true
-            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+            AND COALESCE(status.metadata->>'notification_lifecycle_state', 'OPEN') <> 'TERMINAL'
         )
       )
     )
     OR (
       n.ref_table = 'employee_time_punch_change_requests'
       AND (
-        UPPER(COALESCE(notification_type.lookup_key, '')) LIKE '%_DECIDED'
+        COALESCE(notification_type.metadata->>'visibility_policy', 'UNTIL_READ') <> 'WHILE_REFERENCE_OPEN'
         OR EXISTS (
           SELECT 1
           FROM public.employee_time_punch_change_requests request
@@ -95,7 +134,7 @@ const currentNotificationSql = `
           WHERE request.id = n.ref_id
             AND request.tenant_id = n.tenant_id
             AND request.is_active = true
-            AND UPPER(COALESCE(status.lookup_key, status.lookup_label, '')) NOT IN (${terminalRequestStatusesSql})
+            AND COALESCE(status.metadata->>'notification_lifecycle_state', 'OPEN') <> 'TERMINAL'
         )
       )
     )
@@ -152,6 +191,27 @@ const currentNotificationSql = `
   )
 `;
 
+router.get('/events', async (req: Request, res: Response) => {
+  try {
+    const userContext = await resolveRequestUserContext(req);
+    if (!userContext?.tenant_id || !userContext?.user_id) {
+      return res.status(400).json({ error: 'No se pudo resolver contexto de usuario' });
+    }
+
+    const sinceValue = Number(req.query.since || 0);
+    const sinceVersion = Number.isFinite(sinceValue) ? Math.max(0, Math.trunc(sinceValue)) : 0;
+    const result = await waitForUserNotificationEvent(
+      userContext.tenant_id,
+      userContext.user_id,
+      sinceVersion
+    );
+
+    return res.status(200).json({ success: true, ...result, generated_at: new Date().toISOString() });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error interno' });
+  }
+});
+
 router.get('/me', async (req: Request, res: Response) => {
   try {
     const userContext = await resolveRequestUserContext(req);
@@ -180,8 +240,13 @@ router.get('/me', async (req: Request, res: Response) => {
             n.is_read,
             n.read_at,
             n.created_at,
+            n.updated_at,
             notification_type.lookup_key AS notification_type_key,
-            notification_type.lookup_label AS notification_type_label
+            notification_type.lookup_label AS notification_type_label,
+            notification_type.metadata AS notification_type_metadata,
+            COALESCE((notification_type.metadata->'action'->>'required')::boolean, false) AS action_required,
+            COALESCE(notification_type.metadata->'retain_while_status_keys', '[]'::jsonb)
+              ? COALESCE(n.metadata->>'request_status_key', '') AS retain_while_status_current
           FROM public.user_notifications n
           LEFT JOIN public.lookup_values notification_type
             ON notification_type.id = n.notification_type_id
@@ -192,22 +257,33 @@ router.get('/me', async (req: Request, res: Response) => {
         )
         SELECT
           current_notifications.*,
-          COUNT(*) FILTER (WHERE is_read = false) OVER ()::int AS current_unread_count
+          COUNT(*) FILTER (
+            WHERE is_read = false OR action_required = true OR retain_while_status_current = true
+          ) OVER ()::int AS current_unread_count
         FROM current_notifications
-        WHERE $3::boolean = true OR is_read = false
-        ORDER BY created_at DESC
+        WHERE $3::boolean = true
+           OR is_read = false
+           OR action_required = true
+           OR retain_while_status_current = true
+        ORDER BY COALESCE(updated_at, created_at) DESC
         LIMIT $4::int
       `,
       [userContext.tenant_id, userContext.user_id, includeRead, limit]
     );
 
     const unreadCount = Number(itemsResult.rows[0]?.current_unread_count || 0);
-    const notifications = itemsResult.rows.map(({ current_unread_count: _count, ...item }) => item);
+    const notifications = itemsResult.rows.map(({ current_unread_count: _count, notification_type_metadata: _typeMetadata, action_required: _actionRequired, retain_while_status_current: _retained, ...item }) => ({
+      ...item,
+      action: buildNotificationAction({ ...item, notification_type_metadata: _typeMetadata }),
+    }));
 
     return res.status(200).json({
       success: true,
       unread_count: unreadCount,
       notifications,
+      realtime: {
+        version: getUserNotificationEventVersion(userContext.tenant_id, userContext.user_id),
+      },
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -236,6 +312,12 @@ router.patch('/:notification_id/read', async (req: Request, res: Response) => {
           AND tenant_id = $2::uuid
           AND user_id = $3::uuid
           AND is_active = true
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.lookup_values notification_type
+            WHERE notification_type.id = user_notifications.notification_type_id
+              AND COALESCE((notification_type.metadata->'action'->>'required')::boolean, false) = true
+          )
         RETURNING id, is_read, read_at
       `,
       [notificationId, userContext.tenant_id, userContext.user_id, getActor(req)]
@@ -267,6 +349,12 @@ router.patch('/me/read-all', async (req: Request, res: Response) => {
           AND user_id = $2::uuid
           AND is_active = true
           AND is_read = false
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.lookup_values notification_type
+            WHERE notification_type.id = user_notifications.notification_type_id
+              AND COALESCE((notification_type.metadata->'action'->>'required')::boolean, false) = true
+          )
       `,
       [userContext.tenant_id, userContext.user_id, getActor(req)]
     );

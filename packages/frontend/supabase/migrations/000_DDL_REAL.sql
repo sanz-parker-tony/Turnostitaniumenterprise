@@ -1865,6 +1865,9 @@ CREATE TABLE public.users (
     CONSTRAINT users_email_check CHECK (((email)::text ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'::text))
 );
 
+COMMENT ON COLUMN public.user_notifications.metadata IS
+  'Contexto parametrizado de la notificación; incluye request_status_key y datos de resolución cuando realiza seguimiento de una solicitud.';
+
 
 --
 -- TOC entry 232 (class 1259 OID 35914)
@@ -6560,5 +6563,229 @@ COMMIT;
 --
 -- PostgreSQL database dump complete
 --
+
+-- ============================================================================
+-- Entrega en tiempo real y reconciliación del ciclo de vida de notificaciones
+-- ============================================================================
+
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.notify_user_notification_changed()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_row jsonb;
+  v_old_row jsonb;
+BEGIN
+  v_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  PERFORM pg_notify(
+    'user_notifications_changed',
+    jsonb_build_object(
+      'operation', TG_OP,
+      'tenant_id', v_row->>'tenant_id',
+      'user_id', v_row->>'user_id',
+      'notification_id', v_row->>'id',
+      'emitted_at', clock_timestamp()
+    )::text
+  );
+
+  IF TG_OP = 'UPDATE'
+     AND (OLD.tenant_id, OLD.user_id) IS DISTINCT FROM (NEW.tenant_id, NEW.user_id) THEN
+    v_old_row := to_jsonb(OLD);
+    PERFORM pg_notify(
+      'user_notifications_changed',
+      jsonb_build_object(
+        'operation', 'RECIPIENT_CHANGED',
+        'tenant_id', v_old_row->>'tenant_id',
+        'user_id', v_old_row->>'user_id',
+        'notification_id', v_old_row->>'id',
+        'emitted_at', clock_timestamp()
+      )::text
+    );
+  END IF;
+
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.notify_related_user_notifications_changed()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_row jsonb;
+  v_recipient record;
+BEGIN
+  v_row := CASE WHEN TG_OP = 'DELETE' THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+  FOR v_recipient IN
+    SELECT DISTINCT notification.tenant_id, notification.user_id, notification.id
+    FROM public.user_notifications notification
+    WHERE notification.tenant_id = NULLIF(v_row->>'tenant_id', '')::uuid
+      AND notification.is_active
+      AND (
+        (notification.ref_table = TG_TABLE_NAME AND notification.ref_id = NULLIF(v_row->>'id', '')::uuid)
+        OR (
+          TG_TABLE_NAME = 'employee_time_punches'
+          AND notification.ref_table = 'employee_time_punches'
+          AND notification.metadata->>'employee_id' = v_row->>'employee_id'
+        )
+      )
+  LOOP
+    PERFORM pg_notify(
+      'user_notifications_changed',
+      jsonb_build_object(
+        'operation', 'REFERENCE_CHANGED',
+        'tenant_id', v_recipient.tenant_id,
+        'user_id', v_recipient.user_id,
+        'notification_id', v_recipient.id,
+        'emitted_at', clock_timestamp()
+      )::text
+    );
+  END LOOP;
+
+  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.sync_requester_status_notification()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_request jsonb := to_jsonb(NEW);
+  v_requester_user_id uuid;
+  v_status_key text;
+  v_notification_type_id uuid;
+  v_notification_type_metadata jsonb;
+  v_status_content jsonb;
+  v_actor text;
+BEGIN
+  SELECT employee.user_id
+    INTO v_requester_user_id
+  FROM public.employees employee
+  WHERE employee.id = NULLIF(v_request->>'employee_id', '')::uuid
+    AND employee.tenant_id = NULLIF(v_request->>'tenant_id', '')::uuid
+    AND employee.is_active
+  LIMIT 1;
+
+  IF v_requester_user_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT NULLIF(status.metadata->>'notification_status_key', '')
+    INTO v_status_key
+  FROM public.lookup_values status
+  WHERE status.id = NULLIF(v_request->>'request_status_id', '')::uuid
+    AND status.is_active
+  LIMIT 1;
+
+  IF v_status_key IS NULL THEN
+    RAISE EXCEPTION 'El estado de la solicitud no tiene notification_status_key configurado';
+  END IF;
+
+  SELECT notification_type.id, notification_type.metadata
+    INTO v_notification_type_id, v_notification_type_metadata
+  FROM public.lookup_values notification_type
+  JOIN public.lookup_groups group_row
+    ON group_row.id = notification_type.lookup_group_id
+   AND group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+   AND group_row.is_active
+  WHERE notification_type.is_active
+    AND (notification_type.tenant_id IS NULL OR notification_type.tenant_id = NULLIF(v_request->>'tenant_id', '')::uuid)
+    AND notification_type.metadata->>'audience' = 'REQUESTER_STATUS'
+    AND notification_type.metadata->>'reference_table' = TG_TABLE_NAME
+  ORDER BY CASE WHEN notification_type.tenant_id = NULLIF(v_request->>'tenant_id', '')::uuid THEN 0 ELSE 1 END
+  LIMIT 1;
+
+  v_status_content := v_notification_type_metadata->'status_content'->v_status_key;
+  IF v_notification_type_id IS NULL
+     OR NULLIF(v_status_content->>'title', '') IS NULL
+     OR NULLIF(v_status_content->>'message', '') IS NULL
+     OR NULLIF(COALESCE(v_status_content->>'icon_key', v_notification_type_metadata->>'icon_key'), '') IS NULL THEN
+    RAISE EXCEPTION 'Configuración incompleta de notificación para %.%', TG_TABLE_NAME, v_status_key;
+  END IF;
+
+  v_actor := COALESCE(NULLIF(v_request->>'updated_by', ''), NULLIF(v_request->>'created_by', ''), 'DATABASE');
+
+  UPDATE public.user_notifications notification
+  SET title = v_status_content->>'title',
+      message = v_status_content->>'message',
+      icon_key = COALESCE(v_status_content->>'icon_key', v_notification_type_metadata->>'icon_key'),
+      metadata = COALESCE(notification.metadata, '{}'::jsonb)
+        || jsonb_build_object('request_status_key', v_status_key),
+      is_read = false,
+      read_at = NULL,
+      is_active = true,
+      updated_by = v_actor,
+      updated_at = now()
+  WHERE notification.tenant_id = NULLIF(v_request->>'tenant_id', '')::uuid
+    AND notification.user_id = v_requester_user_id
+    AND notification.notification_type_id = v_notification_type_id
+    AND notification.ref_table = TG_TABLE_NAME
+    AND notification.ref_id = NULLIF(v_request->>'id', '')::uuid
+    AND notification.is_active;
+
+  IF NOT FOUND THEN
+    INSERT INTO public.user_notifications (
+      id, tenant_id, user_id, notification_type_id, title, message,
+      icon_key, ref_table, ref_id, metadata, is_read, is_active, created_by
+    ) VALUES (
+      gen_random_uuid(), NULLIF(v_request->>'tenant_id', '')::uuid,
+      v_requester_user_id, v_notification_type_id,
+      v_status_content->>'title', v_status_content->>'message',
+      COALESCE(v_status_content->>'icon_key', v_notification_type_metadata->>'icon_key'),
+      TG_TABLE_NAME, NULLIF(v_request->>'id', '')::uuid,
+      jsonb_build_object('request_status_key', v_status_key), false, true, v_actor
+    );
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_user_notifications_realtime_notify ON public.user_notifications;
+CREATE TRIGGER trg_user_notifications_realtime_notify
+AFTER INSERT OR UPDATE OR DELETE ON public.user_notifications
+FOR EACH ROW EXECUTE FUNCTION public.notify_user_notification_changed();
+
+DROP TRIGGER IF EXISTS trg_absence_requests_notification_refresh ON public.employee_absence_requests;
+CREATE TRIGGER trg_absence_requests_notification_refresh
+AFTER UPDATE OR DELETE ON public.employee_absence_requests
+FOR EACH ROW EXECUTE FUNCTION public.notify_related_user_notifications_changed();
+
+DROP TRIGGER IF EXISTS trg_shift_change_requests_notification_refresh ON public.employee_shift_change_requests;
+CREATE TRIGGER trg_shift_change_requests_notification_refresh
+AFTER UPDATE OR DELETE ON public.employee_shift_change_requests
+FOR EACH ROW EXECUTE FUNCTION public.notify_related_user_notifications_changed();
+
+DROP TRIGGER IF EXISTS trg_time_punch_change_requests_notification_refresh ON public.employee_time_punch_change_requests;
+CREATE TRIGGER trg_time_punch_change_requests_notification_refresh
+AFTER UPDATE OR DELETE ON public.employee_time_punch_change_requests
+FOR EACH ROW EXECUTE FUNCTION public.notify_related_user_notifications_changed();
+
+DROP TRIGGER IF EXISTS trg_time_punches_notification_refresh ON public.employee_time_punches;
+CREATE TRIGGER trg_time_punches_notification_refresh
+AFTER INSERT OR UPDATE OR DELETE ON public.employee_time_punches
+FOR EACH ROW EXECUTE FUNCTION public.notify_related_user_notifications_changed();
+
+DROP TRIGGER IF EXISTS trg_absence_requests_requester_status_notification ON public.employee_absence_requests;
+CREATE TRIGGER trg_absence_requests_requester_status_notification
+AFTER INSERT OR UPDATE OF request_status_id ON public.employee_absence_requests
+FOR EACH ROW EXECUTE FUNCTION public.sync_requester_status_notification();
+
+DROP TRIGGER IF EXISTS trg_shift_change_requests_requester_status_notification ON public.employee_shift_change_requests;
+CREATE TRIGGER trg_shift_change_requests_requester_status_notification
+AFTER INSERT OR UPDATE OF request_status_id ON public.employee_shift_change_requests
+FOR EACH ROW EXECUTE FUNCTION public.sync_requester_status_notification();
+
+DROP TRIGGER IF EXISTS trg_time_punch_change_requests_requester_status_notification ON public.employee_time_punch_change_requests;
+CREATE TRIGGER trg_time_punch_change_requests_requester_status_notification
+AFTER INSERT OR UPDATE OF request_status_id ON public.employee_time_punch_change_requests
+FOR EACH ROW EXECUTE FUNCTION public.sync_requester_status_notification();
+
+COMMIT;
 
 

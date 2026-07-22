@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { cloneElement, useState, useEffect } from 'react';
 import { usePermissions } from '../contexts/PermissionsContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Dashboard } from './Dashboard';
@@ -90,6 +90,7 @@ export function Router() {
   const { menuScreens, isLoading, loadError, reload } = usePermissions();
   const { profile } = useAuth();
   const [currentPath, setCurrentPath] = useState('');
+  const [currentSearch, setCurrentSearch] = useState('');
 
   const normalizePath = (path: string) => {
     if (!path) return '';
@@ -102,10 +103,12 @@ export function Router() {
     if (typeof window !== 'undefined') {
       // Ruta inicial
       setCurrentPath(normalizePath(window.location.pathname));
+      setCurrentSearch(window.location.search);
       
       // Escuchar cambios de ruta
       const handleRouteChange = () => {
         setCurrentPath(normalizePath(window.location.pathname));
+        setCurrentSearch(window.location.search);
       };
       
       window.addEventListener('popstate', handleRouteChange);
@@ -268,13 +271,13 @@ export function Router() {
 
   if (configuredComponent) {
     console.log('âœ… Renderizando componente configurado para:', menuScreen?.screen_key);
-    return configuredComponent;
+    return cloneElement(configuredComponent, { key: `${currentPath}${currentSearch}` });
   }
 
   // Si la ruta existe en el mapa, renderizarla
   if (routeMap[currentPath] && (isConfiguredRoute || isShellRoute || isKioskRoute || isEmployeeSelfServiceRoute)) {
     console.log('✅ Renderizando componente para:', currentPath);
-    return routeMap[currentPath];
+    return cloneElement(routeMap[currentPath], { key: `${currentPath}${currentSearch}` });
   }
 
   // Si la ruta existe en permisos pero no tiene componente implementado

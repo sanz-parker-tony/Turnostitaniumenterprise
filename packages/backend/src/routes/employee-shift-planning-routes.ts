@@ -227,7 +227,15 @@ router.get('/catalogs', async (req: Request, res: Response) => {
             AND ec.is_active = true
         `;
 
-    const [employeesResult, shiftsResult, shiftTypesResult, combinationsResult, timezoneResult] = await Promise.all([
+    const [
+      employeesResult,
+      timezoneResult,
+      shiftsResult,
+      shiftTypesResult,
+      combinationsResult,
+      workPatternsResult,
+      patternShiftsResult,
+    ] = await Promise.all([
       pool.query(
         `
           WITH accessible_assignments AS (
@@ -336,7 +344,65 @@ router.get('/catalogs', async (req: Request, res: Response) => {
         `,
         assignmentParams
       ),
+      pool.query(
+        `
+          SELECT
+            id,
+            pattern_name,
+            cycle_length_days,
+            work_days_per_cycle,
+            rest_days_per_cycle,
+            is_active
+          FROM public.work_patterns
+          WHERE tenant_id = $1
+            AND is_active = true
+          ORDER BY pattern_name ASC, id ASC
+        `,
+        [tenantId]
+      ),
+      pool.query(
+        `
+          SELECT
+            pattern_shift.work_pattern_id,
+            pattern_shift.shift_id,
+            pattern_shift.sequence_number,
+            pattern_shift.cycle_day_number,
+            shift.shift_name,
+            shift.shift_short_name
+          FROM public.work_pattern_shifts pattern_shift
+          INNER JOIN public.work_patterns pattern
+            ON pattern.id = pattern_shift.work_pattern_id
+           AND pattern.tenant_id = pattern_shift.tenant_id
+           AND pattern.is_active = true
+          INNER JOIN public.shifts shift
+            ON shift.id = pattern_shift.shift_id
+           AND shift.tenant_id = pattern_shift.tenant_id
+           AND shift.is_active = true
+          WHERE pattern_shift.tenant_id = $1
+            AND pattern_shift.is_active = true
+          ORDER BY pattern_shift.work_pattern_id, pattern_shift.sequence_number
+        `,
+        [tenantId]
+      ),
     ]);
+
+    const patternShiftsByPattern = new Map<string, any[]>();
+    patternShiftsResult.rows.forEach((row) => {
+      const patternShifts = patternShiftsByPattern.get(row.work_pattern_id) || [];
+      patternShifts.push({
+        shift_id: row.shift_id,
+        sequence_number: Number(row.sequence_number),
+        cycle_day_number: Number(row.cycle_day_number),
+        shift_name: row.shift_name,
+        shift_short_name: row.shift_short_name,
+      });
+      patternShiftsByPattern.set(row.work_pattern_id, patternShifts);
+    });
+
+    const workPatterns = workPatternsResult.rows.map((row) => ({
+      ...row,
+      pattern_shifts: patternShiftsByPattern.get(row.id) || [],
+    }));
 
     const companiesMap = new Map<string, { id: string; company_name: string }>();
     const workLocationsMap = new Map<string, { id: string; name: string; company_id: string | null }>();
@@ -418,6 +484,7 @@ router.get('/catalogs', async (req: Request, res: Response) => {
       areas: Array.from(areasMap.values()),
       employee_profiles: Array.from(employeeProfilesMap.values()),
       work_groups: Array.from(workGroupsMap.values()),
+      work_patterns: workPatterns,
     });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });

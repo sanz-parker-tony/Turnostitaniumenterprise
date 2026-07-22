@@ -2,7 +2,7 @@
 
 import { buildApiUrl } from '../../utils/api-config';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftRight, CircleDot, FileText, Loader2, MessageSquareText, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, CircleDot, FileText, Loader2, MessageSquareText, RefreshCw, Send, Trash2 } from 'lucide-react';
 import * as LucideIcons from 'lucide-react';
 import { toast } from 'sonner';
 import { createClient } from '@/utils/backend/client';
@@ -1030,11 +1030,11 @@ export default function KioskShiftChange({
                             <span className="mt-1 line-clamp-2 text-[10px] opacity-80">
                               {draftShift?.shift_name || 'Selecciona una opción'}
                             </span>
-                            <div className="mt-2 grid w-full grid-cols-2 gap-1">
+                            <div className="mt-2 flex w-full items-center justify-center gap-1">
                               <button
                                 type="button"
                                 onClick={() => cycleDraftRequestedShift(plan)}
-                                className="rounded-md border border-current/25 bg-white/75 px-1 py-1 text-[10px] font-semibold"
+                                className="min-w-0 flex-1 rounded-md border border-current/25 bg-white/75 px-1 py-1 text-[10px] font-semibold"
                               >
                                 {draftShift ? 'Cambiar' : 'Elegir'}
                               </button>
@@ -1042,18 +1042,21 @@ export default function KioskShiftChange({
                                 type="button"
                                 onClick={() => openDraftRequest(plan)}
                                 disabled={!draftShift}
-                                className="rounded-md border border-blue-300 bg-blue-600 px-1 py-1 text-[10px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                className="inline-flex h-7 w-7 items-center justify-center justify-self-center rounded-md border border-blue-300 bg-blue-600 text-white disabled:cursor-not-allowed disabled:opacity-40"
+                                title="Solicitar cambio"
+                                aria-label={`Solicitar cambio de turno para ${formatDateLong(dateIso)}`}
                               >
-                                Solicitar
+                                <Send className="h-3.5 w-3.5" aria-hidden="true" />
                               </button>
                               {draftShift ? (
                                 <button
                                   type="button"
                                   onClick={() => clearDraftRequestedShift(dateIso)}
-                                  className="col-span-2 inline-flex items-center justify-center gap-1 rounded-md border border-rose-200 bg-white/80 px-1 py-1 text-[10px] font-semibold text-rose-700"
+                                  className="inline-flex h-7 w-7 items-center justify-center justify-self-center rounded-md border border-rose-200 bg-white/80 text-rose-700"
+                                  title="Deshacer selección"
+                                  aria-label={`Deshacer turno solicitado para ${formatDateLong(dateIso)}`}
                                 >
-                                  <Trash2 className="h-3 w-3" />
-                                  Deshacer
+                                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                                 </button>
                               ) : null}
                             </div>
@@ -1230,9 +1233,11 @@ export default function KioskShiftChange({
                                           openDraftRequest(plan);
                                         }}
                                         onDoubleClick={(event) => event.stopPropagation()}
-                                        className="rounded-md border border-current/30 bg-white/70 px-2 py-0.5 text-[10px] font-semibold hover:bg-white"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-current/30 bg-white/70 hover:bg-white"
+                                        title="Solicitar cambio"
+                                        aria-label={`Solicitar cambio de turno para ${formatDateLong(dateIso)}`}
                                       >
-                                        Solicitar
+                                        <Send className="h-3 w-3" aria-hidden="true" />
                                       </button>
                                       <button
                                         type="button"
@@ -1241,12 +1246,11 @@ export default function KioskShiftChange({
                                           clearDraftRequestedShift(dateIso);
                                         }}
                                         onDoubleClick={(event) => event.stopPropagation()}
-                                        className="inline-flex items-center gap-1 rounded-md border border-rose-300 bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700 hover:bg-rose-50"
+                                        className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-rose-300 bg-white/80 text-rose-700 hover:bg-rose-50"
                                         title="Deshacer selección"
                                         aria-label={`Deshacer turno solicitado para ${formatDateLong(dateIso)}`}
                                       >
-                                        <Trash2 className="h-3 w-3" />
-                                        Deshacer
+                                        <Trash2 className="h-3 w-3" aria-hidden="true" />
                                       </button>
                                     </div>
                                   ) : (

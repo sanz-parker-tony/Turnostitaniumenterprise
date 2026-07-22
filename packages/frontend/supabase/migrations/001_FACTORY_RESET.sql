@@ -24,7 +24,7 @@ SELECT pg_catalog.pg_advisory_xact_lock(
 DO $$
 DECLARE
   baseline_key constant text := 'system:factory-baseline:v1';
-  required_seed_version constant text := '2026-07-22-FACTORY-V12';
+  required_seed_version constant text := '2026-07-22-FACTORY-V14';
   baseline jsonb;
   current_table_count integer;
   snapshot_table_count integer;
@@ -487,8 +487,8 @@ BEGIN
     RAISE EXCEPTION 'FACTORY RESET invalido: no se restauro el mantenimiento de movimientos';
   END IF;
 
-  IF (SELECT count(*) FROM public.api_authorization_rules WHERE is_active) <> 376 THEN
-    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 376 reglas de autorización API';
+  IF (SELECT count(*) FROM public.api_authorization_rules WHERE is_active) <> 377 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron las 377 reglas de autorización API';
   END IF;
 
   IF (SELECT count(*) FROM public.data_access_authorization_rules WHERE is_active) <> 141 THEN
@@ -524,6 +524,95 @@ BEGIN
        NULL, NULL, NULL
      ), '') IS NULL THEN
     RAISE EXCEPTION 'FACTORY RESET invalido: no se puede resolver la zona horaria de asistencia';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_user_notifications_realtime_notify'
+      AND tgrelid = 'public.user_notifications'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta la entrega en tiempo real de notificaciones';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_notification_refresh',
+      'trg_shift_change_requests_notification_refresh',
+      'trg_time_punch_change_requests_notification_refresh',
+      'trg_time_punches_notification_refresh'
+    )
+      AND NOT tgisinternal
+  ) <> 4 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: faltan enlaces del ciclo de vida de notificaciones';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_requester_status_notification',
+      'trg_shift_change_requests_requester_status_notification',
+      'trg_time_punch_change_requests_requester_status_notification'
+    )
+      AND NOT tgisinternal
+  ) <> 3 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: faltan los tres enlaces transaccionales del solicitante';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+      AND value.is_active
+      AND value.metadata->'action'->>'enabled' = 'true'
+  ) < 10 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: no se restauraron los diez destinos de notificación';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+      AND value.lookup_key IN (
+        'ABSENCE_REQUEST_STATUS_CHANGED',
+        'SHIFT_CHANGE_REQUEST_STATUS_CHANGED',
+        'TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED'
+      )
+      AND value.is_active
+      AND value.metadata->>'audience' = 'REQUESTER_STATUS'
+      AND NULLIF(value.metadata->>'reference_table', '') IS NOT NULL
+      AND value.metadata->'retain_while_status_keys' ? 'PENDING'
+      AND value.metadata->'status_content' ?& ARRAY['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']
+  ) <> 3 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta contenido parametrizado para estados del solicitante';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS')
+      AND value.is_active
+      AND NULLIF(value.metadata->>'notification_status_key', '') IS NULL
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: existen estados sin equivalencia canónica de notificación';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS')
+      AND value.is_active
+      AND NULLIF(value.metadata->>'notification_lifecycle_state', '') IS NULL
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: existen estados de solicitud sin ciclo de vida de notificación';
   END IF;
 
   RAISE NOTICE '============================================================';

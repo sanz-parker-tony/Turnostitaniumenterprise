@@ -92,6 +92,7 @@ type CatalogsResponse = {
   shift_types: ShiftTypeRow[];
   employee_combinations?: EmployeeCombinationRow[];
   companies?: CompanyFilterRow[];
+  work_patterns?: WorkPatternApiRow[];
 };
 
 type DayCellChange = {
@@ -177,12 +178,6 @@ type WorkPatternApiRow = {
 };
 
 const DAY_NAMES = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
-
-const DEFAULT_WORK_PATTERNS: WorkPattern[] = [
-  { id: 'p-5x2', name: 'Patrón 5x2', work_days: 5, free_days: 2, cycle_length_days: 7, pattern_shifts: [], is_default: true },
-  { id: 'p-6x1', name: 'Patrón 6x1', work_days: 6, free_days: 1, cycle_length_days: 7, pattern_shifts: [] },
-  { id: 'p-4x3', name: 'Patrón 4x3', work_days: 4, free_days: 3, cycle_length_days: 7, pattern_shifts: [] },
-];
 
 const KIND_META: Record<ShiftKind, { label: string; color: string; bg: string; Icon: any }> = {
   M: { label: 'Turno Mañana', color: '#0074D9', bg: '#E3F2FD', Icon: Sun },
@@ -408,8 +403,8 @@ export function EmployeeShiftPlanningManagement() {
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
   const [fechaInicio, setFechaInicio] = useState(() => toIsoDate(initialStart));
   const [fechaFin, setFechaFin] = useState(() => toIsoDate(initialEnd));
-  const [workPatterns, setWorkPatterns] = useState<WorkPattern[]>(DEFAULT_WORK_PATTERNS);
-  const [activePatternId, setActivePatternId] = useState('p-5x2');
+  const [workPatterns, setWorkPatterns] = useState<WorkPattern[]>([]);
+  const [activePatternId, setActivePatternId] = useState('');
   const [patternSelectionMode, setPatternSelectionMode] = useState<PatternSelectionMode>('patterns');
   const [customPatternRows, setCustomPatternRows] = useState<CustomPatternRow[]>([
     { id: 'custom-pattern-1', shift_id: '', days: '' },
@@ -650,16 +645,7 @@ export function EmployeeShiftPlanningManagement() {
   };
 
   const loadCatalogs = async () => {
-    const [catalogsResult, patternsResult] = await Promise.allSettled([
-      request('/employee-shift-planning/catalogs'),
-      request('/work-patterns'),
-    ]);
-
-    if (catalogsResult.status !== 'fulfilled') {
-      throw catalogsResult.reason;
-    }
-
-    const payload = catalogsResult.value as CatalogsResponse;
+    const payload = await request('/employee-shift-planning/catalogs') as CatalogsResponse;
     if (payload.attendance_timezone) setAttendanceTimeZone(payload.attendance_timezone);
     setEmployees(payload.employees || []);
     setShifts(payload.shifts || []);
@@ -667,29 +653,21 @@ export function EmployeeShiftPlanningManagement() {
     setEmployeeCombinations(payload.employee_combinations || []);
     setFilterCompanies(payload.companies || []);
 
-    if (patternsResult.status === 'fulfilled') {
-      const rows = ((patternsResult.value?.work_patterns || []) as WorkPatternApiRow[])
-        .filter((item) => item.is_active)
-        .map((item) => ({
-          id: item.id,
-          name: item.pattern_name,
-          work_days: item.work_days_per_cycle,
-          free_days: item.rest_days_per_cycle,
-          cycle_length_days: Number(item.cycle_length_days || (item.work_days_per_cycle + item.rest_days_per_cycle) || 7),
-          pattern_shifts: Array.isArray(item.pattern_shifts) ? item.pattern_shifts : [],
-        }));
+    const patterns = (payload.work_patterns || [])
+      .filter((item) => item.is_active)
+      .map((item) => ({
+        id: item.id,
+        name: item.pattern_name,
+        work_days: item.work_days_per_cycle,
+        free_days: item.rest_days_per_cycle,
+        cycle_length_days: Number(item.cycle_length_days || (item.work_days_per_cycle + item.rest_days_per_cycle)),
+        pattern_shifts: Array.isArray(item.pattern_shifts) ? item.pattern_shifts : [],
+      }));
 
-      const nextPatterns = rows.length > 0 ? rows : DEFAULT_WORK_PATTERNS;
-      setWorkPatterns(nextPatterns);
-      if (!nextPatterns.some((item) => item.id === activePatternId)) {
-        setActivePatternId(nextPatterns[0].id);
-      }
-    } else {
-      setWorkPatterns(DEFAULT_WORK_PATTERNS);
-      if (!DEFAULT_WORK_PATTERNS.some((item) => item.id === activePatternId)) {
-        setActivePatternId(DEFAULT_WORK_PATTERNS[0].id);
-      }
-    }
+    setWorkPatterns(patterns);
+    setActivePatternId((current) => (
+      patterns.some((item) => item.id === current) ? current : patterns[0]?.id || ''
+    ));
   };
 
   const loadPlans = async () => {
@@ -1508,11 +1486,11 @@ export function EmployeeShiftPlanningManagement() {
   }, [rangeDays, filteredEmployees, plansByKey, changes, shiftsById]);
 
   const shiftsByDayGridRows = useMemo(() => {
-    if (!hasAppliedParameters) return [] as ShiftRow[];
-
-    const baseIds = legendShiftIds.length > 0
-      ? legendShiftIds
-      : Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id)));
+    const baseIds = hasAppliedParameters
+      ? legendShiftIds.length > 0
+        ? legendShiftIds
+        : Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id)))
+      : [];
 
     const baseIdSet = new Set(baseIds);
     const usedIdSet = new Set<string>();
@@ -1771,7 +1749,7 @@ export function EmployeeShiftPlanningManagement() {
                     {shiftsByDayGridRows.length === 0 ? (
                       <tr>
                         <td colSpan={rangeDays.length + 1} className="px-3 py-8 text-center text-sm text-gray-500">
-                          Aplique parámetros para visualizar el consolidado de turnos por día.
+                          No existen turnos planificados para los empleados, filtros y rango seleccionados.
                         </td>
                       </tr>
                     ) : shiftsByDayGridRows.map((shift) => {
@@ -1837,7 +1815,7 @@ export function EmployeeShiftPlanningManagement() {
                 onClick={() => patternSelectionMode === 'custom'
                   ? void applyParameters()
                   : void handleGeneratePlanning()}
-                disabled={loading || saving || generatingPlanning || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0 || (patternSelectionMode === 'custom' && !customPatternIsComplete)}
+                disabled={loading || saving || generatingPlanning || confirmed || filteredEmployees.length === 0 || rangeDays.length === 0 || (patternSelectionMode === 'patterns' && !activePatternId) || (patternSelectionMode === 'custom' && !customPatternIsComplete)}
                 className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
               >
                 <span className="inline-flex items-center gap-2">
@@ -2095,6 +2073,9 @@ export function EmployeeShiftPlanningManagement() {
                   onChange={(event) => setActivePatternId(event.target.value)}
                   className="w-full rounded-xl border px-3 py-2 text-sm"
                 >
+                  {workPatterns.length === 0 ? (
+                    <option value="">No hay patrones configurados</option>
+                  ) : null}
                   {workPatterns.map((pattern) => (
                     <option key={pattern.id} value={pattern.id}>
                       {pattern.name} ({pattern.work_days}/{pattern.free_days})

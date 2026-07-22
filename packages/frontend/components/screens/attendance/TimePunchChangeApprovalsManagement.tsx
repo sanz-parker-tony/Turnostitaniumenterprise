@@ -62,11 +62,14 @@ function formatDateTime(value: string | null | undefined, timeZone?: string | nu
 }
 
 export default function TimePunchChangeApprovalsManagement() {
+  const linkedRequestId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('request_id') || ''
+    : '';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('PENDING');
+  const [status, setStatus] = useState<StatusFilter>(() => linkedRequestId ? 'ALL' : 'PENDING');
   const [notesById, setNotesById] = useState<Record<string, string>>({});
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [punchKeys, setPunchKeys] = useState<LookupItem[]>([]);
@@ -147,6 +150,7 @@ export default function TimePunchChangeApprovalsManagement() {
   };
 
   const filtered = useMemo(() => {
+    if (linkedRequestId) return rows.filter((row) => row.id === linkedRequestId);
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((row) => {
@@ -159,7 +163,7 @@ export default function TimePunchChangeApprovalsManagement() {
         String(row.request_type_label || '').toLowerCase().includes(q)
       );
     });
-  }, [rows, query]);
+  }, [rows, query, linkedRequestId]);
 
   const punchLabelByValue = useMemo(() => {
     const map = new Map<number, string>();
@@ -310,7 +314,7 @@ export default function TimePunchChangeApprovalsManagement() {
             const fullName = `${row.employee_name || ''} ${row.employee_lastname || ''}`.trim() || 'Empleado';
             const pending = isPendingStatus(row.request_status_key);
             return (
-              <div key={row.id} className="rounded-lg border bg-white p-4">
+              <div key={row.id} className={`rounded-lg border bg-white p-4 ${row.id === linkedRequestId ? 'border-blue-500 ring-2 ring-blue-100' : ''}`}>
                 <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <div className="font-semibold text-slate-900">

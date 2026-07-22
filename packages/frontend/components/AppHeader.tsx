@@ -40,6 +40,11 @@ type UserNotification = {
   icon_key: string | null;
   is_read: boolean;
   created_at: string;
+  action?: {
+    required: boolean;
+    label: string;
+    url: string;
+  } | null;
 };
 
 type EmployeeHeaderIdentity = {
@@ -70,6 +75,7 @@ export function AppHeader() {
     company: '',
   });
   const headerRef = useRef<HTMLElement | null>(null);
+  const notificationVersionRef = useRef(0);
 
   // Detectar ruta actual
   useEffect(() => {
@@ -180,14 +186,14 @@ export function AppHeader() {
     }
   };
 
-  const loadNotifications = async (includeRead = false) => {
+  const loadNotifications = async () => {
     const token = session?.access_token || localStorage.getItem('tt-access-token');
     if (!token) return;
 
     setLoadingNotifications(true);
     try {
       const response = await fetch(
-        `${API_BASE_URL}/notifications/me?include_read=${includeRead ? 'true' : 'false'}&limit=20`,
+        `${API_BASE_URL}/notifications/me?include_read=false&limit=20`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -199,9 +205,27 @@ export function AppHeader() {
 
       setNotifications(Array.isArray(payload?.notifications) ? payload.notifications : []);
       setUnreadCount(Number(payload?.unread_count || 0));
+      const nextVersion = Number(payload?.realtime?.version || 0);
+      if (Number.isFinite(nextVersion)) {
+        notificationVersionRef.current = Math.max(notificationVersionRef.current, nextVersion);
+      }
     } finally {
       setLoadingNotifications(false);
     }
+  };
+
+  const openNotificationAction = (item: UserNotification) => {
+    const target = String(item.action?.url || '').trim();
+    if (!target.startsWith('/') || target.startsWith('//')) return;
+    window.history.pushState({}, '', target);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
+  const handleNotificationSelection = async (item: UserNotification) => {
+    // Una acción requerida conserva la notificación hasta que el proceso de
+    // negocio quede realmente resuelto; abrirla no equivale a atenderla.
+    if (!item.action?.required && !item.is_read) await markNotificationAsRead(item.id);
+    if (item.action?.url) openNotificationAction(item);
   };
 
   const markNotificationAsRead = async (notificationId: string) => {
@@ -215,7 +239,7 @@ export function AppHeader() {
       },
     });
 
-    await loadNotifications(notificationsOpen);
+    await loadNotifications();
   };
 
   const markAllAsRead = async () => {
@@ -229,26 +253,62 @@ export function AppHeader() {
       },
     });
 
-    await loadNotifications(notificationsOpen);
+    await loadNotifications();
   };
 
   useEffect(() => {
     if (!session?.access_token) return;
-    void loadNotifications(false);
+    let active = true;
+    let waitController: AbortController | null = null;
+    let retryTimer: number | null = null;
+
+    const waitBeforeRetry = () => new Promise<void>((resolve) => {
+      retryTimer = window.setTimeout(resolve, 3000);
+    });
+
+    const listenForNotifications = async () => {
+      await loadNotifications();
+      while (active) {
+        const token = session?.access_token || localStorage.getItem('tt-access-token');
+        if (!token) return;
+        waitController = new AbortController();
+        try {
+          const response = await fetch(
+            `${API_BASE_URL}/notifications/events?since=${notificationVersionRef.current}`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+              signal: waitController.signal,
+            }
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+          const nextVersion = Number(payload?.version || 0);
+          if (Number.isFinite(nextVersion) && nextVersion > notificationVersionRef.current) {
+            notificationVersionRef.current = nextVersion;
+            await loadNotifications();
+          }
+        } catch (error: any) {
+          if (!active || error?.name === 'AbortError') return;
+          await waitBeforeRetry();
+          if (active) await loadNotifications();
+        }
+      }
+    };
+
+    void listenForNotifications();
 
     const refreshUnreadNotifications = () => {
       if (document.visibilityState === 'visible') {
-        void loadNotifications(false);
+        void loadNotifications();
       }
     };
-    const timer = window.setInterval(() => {
-      refreshUnreadNotifications();
-    }, 15000);
     window.addEventListener('focus', refreshUnreadNotifications);
     document.addEventListener('visibilitychange', refreshUnreadNotifications);
 
     return () => {
-      window.clearInterval(timer);
+      active = false;
+      waitController?.abort();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
       window.removeEventListener('focus', refreshUnreadNotifications);
       document.removeEventListener('visibilitychange', refreshUnreadNotifications);
     };
@@ -257,7 +317,7 @@ export function AppHeader() {
 
   useEffect(() => {
     if (notificationsOpen) {
-      void loadNotifications(true);
+      void loadNotifications();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notificationsOpen]);
@@ -395,10 +455,8 @@ export function AppHeader() {
                   key={item.id}
                   className="flex flex-col items-start gap-1 py-2"
                   onSelect={(event) => {
-                    event.preventDefault();
-                    if (!item.is_read) {
-                      void markNotificationAsRead(item.id);
-                    }
+                    if (!item.action?.url) event.preventDefault();
+                    void handleNotificationSelection(item);
                   }}
                 >
                   <div className="w-full flex items-center justify-between gap-2">
@@ -406,6 +464,11 @@ export function AppHeader() {
                     {!item.is_read && <span className="h-2 w-2 rounded-full bg-red-500" />}
                   </div>
                   <p className="text-xs text-muted-foreground whitespace-normal">{item.message}</p>
+                  {item.action?.url ? (
+                    <span className="text-xs font-medium text-primary">
+                      {item.action.label}{item.action.required ? ' · Acción requerida' : ''}
+                    </span>
+                  ) : null}
                   <span className="text-[11px] text-muted-foreground">{getReadableDateTime(item.created_at)}</span>
                 </DropdownMenuItem>
               ))

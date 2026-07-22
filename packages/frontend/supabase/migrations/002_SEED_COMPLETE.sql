@@ -173,7 +173,7 @@ ON CONFLICT (message_key, language_code) DO UPDATE SET
 
 -- KV store
 INSERT INTO public.kv_store_e19f2094 (key, value)
-VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V12'))
+VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V14'))
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- ============================================================================
@@ -584,10 +584,77 @@ FROM public.lookup_groups lg, LATERAL (VALUES
   ('ABSENCE_REQUEST_CREATED', 'Solicitud de justificación o permiso creada', 'Justificación', 30),
   ('ABSENCE_REQUEST_DECIDED', 'Solicitud de justificación o permiso resuelta', 'Justif. resuelta', 40),
   ('TIME_PUNCH_CHANGE_REQUEST_CREATED', 'Solicitud de gestión de marcación creada', 'Gestión marcación', 50),
-  ('TIME_PUNCH_CHANGE_REQUEST_DECIDED', 'Solicitud de gestión de marcación resuelta', 'Marcación resuelta', 60)
+  ('TIME_PUNCH_CHANGE_REQUEST_DECIDED', 'Solicitud de gestión de marcación resuelta', 'Marcación resuelta', 60),
+  ('PUNCH_INCONSISTENCY_DETECTED', 'Inconsistencia de marcación detectada', 'Inconsistencia', 80),
+  ('ABSENCE_REQUEST_STATUS_CHANGED', 'Seguimiento de justificación o permiso', 'Estado justificación', 90),
+  ('SHIFT_CHANGE_REQUEST_STATUS_CHANGED', 'Seguimiento de cambio de turno', 'Estado turno', 100),
+  ('TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED', 'Seguimiento de gestión de marcación', 'Estado marcación', 110)
 ) AS vals(key, label, short_label, sort)
 WHERE lg.lookup_group_key = 'USER_NOTIFICATION_TYPE'
 ON CONFLICT ON CONSTRAINT uq_lookup_values DO NOTHING;
+
+WITH configured_actions(lookup_key, visibility_policy, action_config) AS (
+  VALUES
+    ('SHIFT_CHANGE_REQUEST_CREATED', 'WHILE_REFERENCE_OPEN', '{"enabled":true,"required":true,"label":"Revisar solicitud","path":"/dashboard/employees/shift-change-approvals","parameters":{"status":"ALL"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('SHIFT_CHANGE_REQUEST_DECIDED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver resolución","path":"/dashboard/kiosk/shift-change","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('ABSENCE_REQUEST_CREATED', 'WHILE_REFERENCE_OPEN', '{"enabled":true,"required":true,"label":"Revisar solicitud","path":"/dashboard/employees/requests","parameters":{"status":"ALL"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('ABSENCE_REQUEST_DECIDED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver resolución","path":"/dashboard/kiosk/requests","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('TIME_PUNCH_CHANGE_REQUEST_CREATED', 'WHILE_REFERENCE_OPEN', '{"enabled":true,"required":true,"label":"Revisar solicitud","path":"/dashboard/employees/time-punch-change-approvals","parameters":{"status":"ALL"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('TIME_PUNCH_CHANGE_REQUEST_DECIDED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver resolución","path":"/dashboard/kiosk/time-punch-requests","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('PUNCH_INCONSISTENCY_DETECTED', 'WHILE_REFERENCE_OPEN', '{"enabled":true,"required":true,"label":"Corregir marcación","path":"/dashboard/kiosk/time-punch-requests","parameters":{"mode":"create","open_popup":"1","request_type_key":"CREATE_PUNCH"},"parameter_sources":{"context_punch_id":"ref_id","punch_datetime":"metadata.punch_datetime","punch_key":"metadata.missing_punch_key","incident":"metadata.inconsistency_type"}}'::jsonb),
+    ('ABSENCE_REQUEST_STATUS_CHANGED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver solicitud","path":"/dashboard/kiosk/requests","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('SHIFT_CHANGE_REQUEST_STATUS_CHANGED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver solicitud","path":"/dashboard/kiosk/shift-change","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb),
+    ('TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED', 'UNTIL_READ', '{"enabled":true,"required":false,"label":"Ver solicitud","path":"/dashboard/kiosk/time-punch-requests","parameters":{"mode":"view","open_popup":"1"},"parameter_sources":{"request_id":"ref_id"}}'::jsonb)
+)
+UPDATE public.lookup_values value
+SET metadata = COALESCE(value.metadata, '{}'::jsonb)
+      || jsonb_build_object('action', configured_actions.action_config)
+      || jsonb_build_object('visibility_policy', configured_actions.visibility_policy),
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.lookup_groups group_row, configured_actions
+WHERE value.lookup_group_id = group_row.id
+  AND group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+  AND value.lookup_key = configured_actions.lookup_key;
+
+WITH requester_status_configuration(lookup_key, reference_table, icon_key, status_content) AS (
+  VALUES
+    ('ABSENCE_REQUEST_STATUS_CHANGED', 'employee_absence_requests', 'FileCheck', '{"PENDING":{"title":"Solicitud de justificación o permiso pendiente","message":"Tu solicitud fue enviada y está pendiente de revisión.","icon_key":"FileCheck"},"APPROVED":{"title":"Solicitud de justificación o permiso aprobada","message":"Tu solicitud fue aprobada.","icon_key":"FileCheck"},"REJECTED":{"title":"Solicitud de justificación o permiso rechazada","message":"Tu solicitud fue rechazada.","icon_key":"FileCheck"},"CANCELLED":{"title":"Solicitud de justificación o permiso cancelada","message":"Tu solicitud fue cancelada.","icon_key":"FileCheck"}}'::jsonb),
+    ('SHIFT_CHANGE_REQUEST_STATUS_CHANGED', 'employee_shift_change_requests', 'ArrowLeftRight', '{"PENDING":{"title":"Solicitud de cambio de turno pendiente","message":"Tu solicitud fue enviada y está pendiente de revisión.","icon_key":"ArrowLeftRight"},"APPROVED":{"title":"Solicitud de cambio de turno aprobada","message":"Tu solicitud fue aprobada.","icon_key":"ArrowLeftRight"},"REJECTED":{"title":"Solicitud de cambio de turno rechazada","message":"Tu solicitud fue rechazada.","icon_key":"ArrowLeftRight"},"CANCELLED":{"title":"Solicitud de cambio de turno cancelada","message":"Tu solicitud fue cancelada.","icon_key":"ArrowLeftRight"}}'::jsonb),
+    ('TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED', 'employee_time_punch_change_requests', 'ClipboardCheck', '{"PENDING":{"title":"Solicitud de marcación pendiente","message":"Tu solicitud fue enviada y está pendiente de revisión.","icon_key":"ClipboardCheck"},"APPROVED":{"title":"Solicitud de marcación aprobada","message":"Tu solicitud fue aprobada.","icon_key":"ClipboardCheck"},"REJECTED":{"title":"Solicitud de marcación rechazada","message":"Tu solicitud fue rechazada.","icon_key":"ClipboardCheck"},"CANCELLED":{"title":"Solicitud de marcación cancelada","message":"Tu solicitud fue cancelada.","icon_key":"ClipboardCheck"}}'::jsonb)
+)
+UPDATE public.lookup_values value
+SET metadata = COALESCE(value.metadata, '{}'::jsonb)
+      || jsonb_build_object('audience', 'REQUESTER_STATUS')
+      || jsonb_build_object('reference_table', requester_status_configuration.reference_table)
+      || jsonb_build_object('retain_while_status_keys', '["PENDING"]'::jsonb)
+      || jsonb_build_object('icon_key', requester_status_configuration.icon_key)
+      || jsonb_build_object('status_content', requester_status_configuration.status_content),
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.lookup_groups group_row, requester_status_configuration
+WHERE value.lookup_group_id = group_row.id
+  AND group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+  AND value.lookup_key = requester_status_configuration.lookup_key;
+
+UPDATE public.lookup_values value
+SET metadata = COALESCE(value.metadata, '{}'::jsonb) || jsonb_build_object(
+      'notification_lifecycle_state',
+      CASE WHEN value.lookup_key IN ('APPROVED', 'REJECTED', 'CANCELLED') THEN 'TERMINAL' ELSE 'OPEN' END
+    ) || jsonb_build_object(
+      'notification_status_key',
+      CASE
+        WHEN value.lookup_key IN ('APPROVED', 'APROBADO') THEN 'APPROVED'
+        WHEN value.lookup_key IN ('REJECTED', 'RECHAZADO') THEN 'REJECTED'
+        WHEN value.lookup_key IN ('CANCELLED', 'CANCELED', 'CANCELADO') THEN 'CANCELLED'
+        ELSE 'PENDING'
+      END
+    ),
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.lookup_groups group_row
+WHERE value.lookup_group_id = group_row.id
+  AND group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS');
 
 -- SHIFT_TYPE
 INSERT INTO public.lookup_values (tenant_id, lookup_group_id, lookup_key, lookup_label, lookup_short_label, lookup_scope, sort_order, is_active, created_by)
@@ -719,6 +786,28 @@ FROM public.lookup_groups lg, LATERAL (VALUES
 ) AS vals(key, label, short_label, sort)
 WHERE lg.lookup_group_key = 'TIME_PUNCH_CHANGE_REQUEST_STATUS'
 ON CONFLICT ON CONSTRAINT uq_lookup_values DO NOTHING;
+
+-- El ciclo de vida de la bandeja se parametriza después de cargar todos los
+-- catálogos de estado; las notificaciones pendientes permanecen visibles y
+-- las terminales salen de la bandeja activa sin perder auditoría.
+UPDATE public.lookup_values value
+SET metadata = COALESCE(value.metadata, '{}'::jsonb) || jsonb_build_object(
+      'notification_lifecycle_state',
+      CASE WHEN value.lookup_key IN ('APPROVED', 'REJECTED', 'CANCELLED') THEN 'TERMINAL' ELSE 'OPEN' END
+    ) || jsonb_build_object(
+      'notification_status_key',
+      CASE
+        WHEN value.lookup_key IN ('APPROVED', 'APROBADO') THEN 'APPROVED'
+        WHEN value.lookup_key IN ('REJECTED', 'RECHAZADO') THEN 'REJECTED'
+        WHEN value.lookup_key IN ('CANCELLED', 'CANCELED', 'CANCELADO') THEN 'CANCELLED'
+        ELSE 'PENDING'
+      END
+    ),
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.lookup_groups group_row
+WHERE value.lookup_group_id = group_row.id
+  AND group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS');
 
 -- DEVICE_TYPE
 INSERT INTO public.lookup_values (tenant_id, lookup_group_id, lookup_key, lookup_label, lookup_short_label, lookup_scope, sort_order, is_active, created_by)
@@ -23717,6 +23806,10 @@ INSERT INTO seed_lookup_value_i18n VALUES
   ('USER_NOTIFICATION_TYPE', 'ABSENCE_REQUEST_DECIDED', 'Justification or Leave Request Decided', 'Solicitação de Justificativa ou Licença Resolvida'),
   ('USER_NOTIFICATION_TYPE', 'TIME_PUNCH_CHANGE_REQUEST_CREATED', 'Punch Change Request Created', 'Solicitação de Alteração de Registro Criada'),
   ('USER_NOTIFICATION_TYPE', 'TIME_PUNCH_CHANGE_REQUEST_DECIDED', 'Punch Change Request Decided', 'Solicitação de Alteração de Registro Resolvida'),
+  ('USER_NOTIFICATION_TYPE', 'PUNCH_INCONSISTENCY_DETECTED', 'Punch Inconsistency Detected', 'Inconsistência de Registro Detectada'),
+  ('USER_NOTIFICATION_TYPE', 'ABSENCE_REQUEST_STATUS_CHANGED', 'Justification or Leave Request Status', 'Status da Solicitação de Justificativa ou Licença'),
+  ('USER_NOTIFICATION_TYPE', 'SHIFT_CHANGE_REQUEST_STATUS_CHANGED', 'Shift Change Request Status', 'Status da Solicitação de Mudança de Turno'),
+  ('USER_NOTIFICATION_TYPE', 'TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED', 'Punch Change Request Status', 'Status da Solicitação de Alteração de Registro'),
 
   ('SETTINGS', 'TIMEZONE', 'Time Zone', 'Fuso Horário'),
   ('SETTINGS', 'DATE_FORMAT', 'Date Format', 'Formato de Data'),
@@ -24238,7 +24331,8 @@ authorization_mode='PERMISSION',priority=GREATEST(public.api_authorization_rules
 
 WITH authenticated_rule(route_prefix,http_method) AS (
   VALUES ('/auth/me','GET'),('/users/profile','GET'),('/users/menu-screens','GET'),
-         ('/users/change-password','POST'),('/db/query','POST'),('/notifications','GET'),('/notifications','PATCH')
+         ('/users/change-password','POST'),('/db/query','POST'),('/notifications','GET'),('/notifications','PATCH'),
+         ('/organization/companies/:id/asset/:assetType','GET')
 ), resolved AS (
   SELECT rule.route_prefix,rule.http_method,screen.id screen_id,action.id action_id
   FROM authenticated_rule rule
@@ -24713,9 +24807,9 @@ BEGIN
       ('system_message_keys', 5::bigint),
       ('system_message_translations', 15::bigint),
       ('lookup_groups', 35::bigint),
-      ('lookup_values', 249::bigint),
+      ('lookup_values', 253::bigint),
       ('lookup_group_translations', 105::bigint),
-      ('lookup_value_translations', 747::bigint),
+      ('lookup_value_translations', 759::bigint),
       ('attendance_movements', 3::bigint),
       ('attendance_events', 24::bigint),
       ('attendance_event_punch_keys', 6::bigint),
@@ -24736,7 +24830,7 @@ BEGIN
       ('screen_translations', 204::bigint),
       ('screen_actions', 265::bigint),
       ('role_screen_actions', 397::bigint),
-      ('api_authorization_rules', 376::bigint),
+      ('api_authorization_rules', 377::bigint),
       ('data_access_authorization_rules', 141::bigint),
       ('system_reports', 6::bigint),
       ('system_report_translations', 18::bigint),
@@ -24862,6 +24956,95 @@ BEGIN
     RAISE EXCEPTION 'Integridad de permisos incumplida: SYSTEM_ADMIN requiere las 6 acciones de Dispositivos';
   END IF;
 
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_user_notifications_realtime_notify'
+      AND tgrelid = 'public.user_notifications'::regclass
+      AND NOT tgisinternal
+  ) THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: falta el trigger de entrega en tiempo real';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_notification_refresh',
+      'trg_shift_change_requests_notification_refresh',
+      'trg_time_punch_change_requests_notification_refresh',
+      'trg_time_punches_notification_refresh'
+    )
+      AND NOT tgisinternal
+  ) <> 4 THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: faltan enlaces de ciclo de vida';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM pg_trigger
+    WHERE tgname IN (
+      'trg_absence_requests_requester_status_notification',
+      'trg_shift_change_requests_requester_status_notification',
+      'trg_time_punch_change_requests_requester_status_notification'
+    )
+      AND NOT tgisinternal
+  ) <> 3 THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: faltan los tres enlaces transaccionales del solicitante';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+      AND value.is_active
+      AND value.metadata->'action'->>'enabled' = 'true'
+  ) < 10 THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: se requieren diez destinos configurados';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key = 'USER_NOTIFICATION_TYPE'
+      AND value.lookup_key IN (
+        'ABSENCE_REQUEST_STATUS_CHANGED',
+        'SHIFT_CHANGE_REQUEST_STATUS_CHANGED',
+        'TIME_PUNCH_CHANGE_REQUEST_STATUS_CHANGED'
+      )
+      AND value.is_active
+      AND value.metadata->>'audience' = 'REQUESTER_STATUS'
+      AND NULLIF(value.metadata->>'reference_table', '') IS NOT NULL
+      AND value.metadata->'retain_while_status_keys' ? 'PENDING'
+      AND value.metadata->'status_content' ?& ARRAY['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED']
+  ) <> 3 THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: falta contenido parametrizado para estados del solicitante';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS')
+      AND value.is_active
+      AND NULLIF(value.metadata->>'notification_lifecycle_state', '') IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: existen estados sin ciclo de vida';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.lookup_values value
+    JOIN public.lookup_groups group_row ON group_row.id = value.lookup_group_id
+    WHERE group_row.lookup_group_key IN ('REQUEST_STATUS', 'SHIFT_CHANGE_REQUEST_STATUS', 'TIME_PUNCH_CHANGE_REQUEST_STATUS')
+      AND value.is_active
+      AND NULLIF(value.metadata->>'notification_status_key', '') IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Integridad de notificaciones incumplida: existen estados sin equivalencia canónica de notificación';
+  END IF;
+
   RAISE NOTICE 'Contrato de integridad de 002_SEED_COMPLETE verificado.';
 END $$;
 
@@ -24887,8 +25070,8 @@ DECLARE
     "kv_store_e19f2094": 1,
     "lookup_groups": 35,
     "lookup_group_translations": 105,
-    "lookup_values": 249,
-    "lookup_value_translations": 747,
+    "lookup_values": 253,
+    "lookup_value_translations": 759,
     "report_parameters": 46,
     "report_parameter_translations": 138,
     "report_permissions": 3,
@@ -24896,7 +25079,7 @@ DECLARE
     "role_screen_actions": 397,
     "scope_types": 7,
     "screen_actions": 265,
-    "api_authorization_rules": 376,
+    "api_authorization_rules": 377,
     "data_access_authorization_rules": 141,
     "screens": 68,
     "screen_translations": 204,
@@ -24939,8 +25122,8 @@ BEGIN
   WHERE key = 'seed.version';
 
   IF current_seed_version IS NULL
-     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V12' THEN
-    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V12';
+     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V14' THEN
+    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V14';
   END IF;
 
   IF existing_baseline IS NOT NULL

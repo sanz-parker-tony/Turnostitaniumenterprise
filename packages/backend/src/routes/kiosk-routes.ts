@@ -3599,35 +3599,6 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
       ]
     );
 
-    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
-      userContext.tenant_id,
-      USER_NOTIFICATION_TYPE_GROUP_KEY,
-      ['ABSENCE_REQUEST_DECIDED']
-    );
-    if (notificationTypeId && current.employee_user_id) {
-      await pool.query(
-        `
-          INSERT INTO public.user_notifications (
-            id, tenant_id, user_id, notification_type_id, title, message,
-            icon_key, ref_table, ref_id, is_read, is_active, created_by
-          )
-          VALUES (
-            gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
-            'FileCheck', 'employee_absence_requests', $6::uuid, false, true, $7
-          )
-        `,
-        [
-          userContext.tenant_id,
-          current.employee_user_id,
-          notificationTypeId,
-          decision === 'APPROVE' ? 'Solicitud de permiso o justificación aprobada' : 'Solicitud de permiso o justificación denegada',
-          resolvedApprovalNotes,
-          requestId,
-          getActor(req),
-        ]
-      );
-    }
-
     return res.status(200).json({ success: true, request: updated.rows[0] });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -4806,40 +4777,6 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
       ]
     );
 
-    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
-      userContext.tenant_id,
-      USER_NOTIFICATION_TYPE_GROUP_KEY,
-      ['SHIFT_CHANGE_REQUEST_DECIDED']
-    );
-    if (notificationTypeId && current.employee_user_id) {
-      const decisionMessage = supervisorNotes || (
-        decision === 'APPROVE'
-          ? `El cambio de turno del ${String(current.shift_date).slice(0, 10)} fue aprobado.`
-          : `El cambio de turno del ${String(current.shift_date).slice(0, 10)} fue denegado.`
-      );
-      await pool.query(
-        `
-          INSERT INTO public.user_notifications (
-            id, tenant_id, user_id, notification_type_id, title, message,
-            icon_key, ref_table, ref_id, is_read, is_active, created_by
-          )
-          VALUES (
-            gen_random_uuid(), $1::uuid, $2::uuid, $3::uuid, $4, $5,
-            'ArrowLeftRight', 'employee_shift_change_requests', $6::uuid, false, true, $7
-          )
-        `,
-        [
-          userContext.tenant_id,
-          current.employee_user_id,
-          notificationTypeId,
-          decision === 'APPROVE' ? 'Solicitud de cambio de turno aprobada' : 'Solicitud de cambio de turno denegada',
-          decisionMessage,
-          requestId,
-          getActor(req),
-        ]
-      );
-    }
-
     return res.status(200).json({ success: true, request: updated.rows[0] || null });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Error interno' });
@@ -4974,16 +4911,6 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
     const to = normalizeNullableText(req.query.to) || normalizeNullableText(req.query.date_to);
     const requestId = normalizeNullableText(req.query.request_id);
     const status = String(req.query.status || 'ALL').trim().toUpperCase();
-    const statusKeys =
-      status === 'PENDING'
-        ? ['PENDING', 'PENDIENTE', 'IN_REVIEW', 'EN_REVISION', 'EN_REVISIÓN', 'REQUESTED', 'SOLICITADO']
-        : status === 'APPROVED'
-        ? ['APPROVED', 'APROBADO']
-        : status === 'REJECTED'
-        ? ['REJECTED', 'RECHAZADO', 'DENEGADO']
-        : status === 'CANCELLED'
-        ? ['CANCELLED', 'CANCELED', 'CANCELADO']
-        : [];
 
     const params: any[] = [context.tenant_id, context.employee_id];
     let whereExtra = '';
@@ -4999,9 +4926,11 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
       params.push(`${to}T23:59:59`);
       whereExtra += ` AND r.created_at <= $${params.length}::timestamptz`;
     }
-    if (statusKeys.length > 0 && !requestId) {
-      params.push(statusKeys);
-      whereExtra += ` AND UPPER(COALESCE(st.lookup_key, '')) = ANY($${params.length}::text[])`;
+    if (status !== 'ALL' && !requestId) {
+      params.push(status);
+      whereExtra += `
+        AND UPPER(COALESCE(st.metadata->>'notification_status_key', '')) = $${params.length}
+      `;
     }
 
     const result = await pool.query(
@@ -5021,6 +4950,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
           r.request_status_id,
           st.lookup_key AS request_status_key,
           st.lookup_label AS request_status_label,
+          UPPER(COALESCE(st.metadata->>'notification_status_key', '')) AS request_status_filter_key,
           r.supervisor_notes,
           r.approved_by,
           au.display_name AS approved_by_display_name,
@@ -6056,46 +5986,6 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
         getActor(req),
       ]
     );
-
-    const notificationTypeId = await resolveLookupValueIdByGroupKeyAndKeys(
-      approver.userContext.tenant_id,
-      USER_NOTIFICATION_TYPE_GROUP_KEY,
-      ['TIME_PUNCH_CHANGE_REQUEST_DECIDED']
-    );
-    if (notificationTypeId && current.employee_user_id) {
-      await pool.query(
-        `
-          INSERT INTO public.user_notifications (
-            id,
-            tenant_id,
-            user_id,
-            notification_type_id,
-            title,
-            message,
-            icon_key,
-            ref_table,
-            ref_id,
-            is_read,
-            is_active,
-            created_by
-          )
-          VALUES (
-            gen_random_uuid(),
-            $1::uuid, $2::uuid, $3::uuid, $4, $5, 'ClipboardCheck',
-            'employee_time_punch_change_requests', $6::uuid, false, true, $7
-          )
-        `,
-        [
-          approver.userContext.tenant_id,
-          current.employee_user_id,
-          notificationTypeId,
-          decision === 'APPROVE' ? 'Solicitud de marcacion aprobada' : 'Solicitud de marcacion denegada',
-          finalNotes,
-          requestId,
-          getActor(req),
-        ]
-      );
-    }
 
     return res.status(200).json({ success: true, request: updated.rows[0] || null });
   } catch (err: any) {

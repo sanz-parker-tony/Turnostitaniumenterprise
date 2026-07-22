@@ -79,10 +79,13 @@ function approvalStatusBadgeClass(statusKey: string | null | undefined, statusLa
 }
 
 export default function ShiftChangeApprovalsManagement() {
+  const linkedRequestId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('request_id') || ''
+    : '';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('PENDING');
+  const [status, setStatus] = useState<StatusFilter>(() => linkedRequestId ? 'ALL' : 'PENDING');
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [notesById, setNotesById] = useState<Record<string, string>>({});
 
@@ -139,6 +142,7 @@ export default function ShiftChangeApprovalsManagement() {
   }, [status]);
 
   const filtered = useMemo(() => {
+    if (linkedRequestId) return rows.filter((row) => row.id === linkedRequestId);
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((row) => {
@@ -152,7 +156,7 @@ export default function ShiftChangeApprovalsManagement() {
         String(row.reason || '').toLowerCase().includes(q)
       );
     });
-  }, [rows, query]);
+  }, [rows, query, linkedRequestId]);
 
   const openSupportDocument = async (row: Row) => {
     try {
@@ -248,7 +252,7 @@ export default function ShiftChangeApprovalsManagement() {
             const fullName = `${row.employee_name || ''} ${row.employee_lastname || ''}`.trim() || 'Empleado';
             const pending = isPendingStatus(row.request_status_key);
             return (
-              <div key={row.id} className="rounded-lg border bg-white p-4">
+              <div key={row.id} className={`rounded-lg border bg-white p-4 ${row.id === linkedRequestId ? 'border-blue-500 ring-2 ring-blue-100' : ''}`}>
                 <div className="mb-3 flex items-start justify-between gap-3">
                   <div>
                     <div className="font-semibold text-gray-900">

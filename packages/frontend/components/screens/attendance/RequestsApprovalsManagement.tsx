@@ -51,11 +51,14 @@ function approvalStatusBadgeClass(statusKey: string | null | undefined, statusLa
 }
 
 export default function RequestsApprovalsManagement() {
+  const linkedRequestId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('request_id') || ''
+    : '';
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [workingId, setWorkingId] = useState<string | null>(null);
-  const [status, setStatus] = useState<StatusFilter>('PENDING');
+  const [status, setStatus] = useState<StatusFilter>(() => linkedRequestId ? 'ALL' : 'PENDING');
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
   const request = async (path: string, init?: RequestInit) => {
@@ -141,6 +144,7 @@ export default function RequestsApprovalsManagement() {
   }, [status]);
 
   const filtered = useMemo(() => {
+    if (linkedRequestId) return rows.filter((row) => row.id === linkedRequestId);
     const q = query.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) => {
@@ -153,7 +157,7 @@ export default function RequestsApprovalsManagement() {
         String(r.notes || '').toLowerCase().includes(q)
       );
     });
-  }, [rows, query]);
+  }, [rows, query, linkedRequestId]);
 
   const isPending = (row: Row) => {
     const key = String(row.request_status_key || '').trim().toUpperCase();
@@ -212,7 +216,7 @@ export default function RequestsApprovalsManagement() {
             const fullName = `${r.employee_name || ''} ${r.employee_lastname || ''}`.trim() || 'Empleado';
             const pending = isPending(r);
             return (
-              <div key={r.id} className="rounded-lg border bg-white p-4">
+              <div key={r.id} className={`rounded-lg border bg-white p-4 ${r.id === linkedRequestId ? 'border-blue-500 ring-2 ring-blue-100' : ''}`}>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
                     <div className="font-semibold text-gray-900">
