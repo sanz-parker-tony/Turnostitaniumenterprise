@@ -61,7 +61,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
     let isMounted = true; // ✅ Flag dentro del useEffect
     
     const loadMenuScreens = async () => {
-      if (!user || !profile?.role_key || !session?.access_token) {
+      if (!user || !session?.access_token) {
         console.log('⚠️ No hay usuario o rol, limpiando menú');
         if (isMounted) {
           setMenuScreens([]);
@@ -73,7 +73,9 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const menuIdentity = `${user.id}:${profile.role_key}`;
+      // The backend resolves roles from the signed identity. Do not block the
+      // menu while the visual profile is recovering after a transient outage.
+      const menuIdentity = `${user.id}:${session.access_token}`;
       const isNewMenuIdentity = lastMenuIdentityRef.current !== menuIdentity;
       const shouldShowBlockingLoading = isNewMenuIdentity || !hasLoadedMenuRef.current;
 
@@ -164,7 +166,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
       console.log('🧹 Limpiando - componente desmontado');
       isMounted = false;
     };
-  }, [user, profile?.role_key, session?.access_token, reloadTrigger]);
+  }, [user, session?.access_token, reloadTrigger]);
 
   // Obtener la primera pantalla disponible (ordenada)
   const getFirstAvailableScreen = (): MenuScreen | null => {

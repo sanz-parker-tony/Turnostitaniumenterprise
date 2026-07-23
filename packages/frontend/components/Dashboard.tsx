@@ -1501,7 +1501,7 @@ function SupervisorHome({
   return (
     <div className="space-y-4">
       <div className="grid items-stretch gap-4 xl:grid-cols-2">
-        <div className="flex h-full flex-col gap-4">
+        <div className="order-2 flex h-full flex-col gap-4 xl:order-1">
           <Card className="flex-1">
             <CardHeader>
               <CardTitle>Faltas, atrasos y salidas anticipadas</CardTitle>
@@ -1523,7 +1523,7 @@ function SupervisorHome({
           </Card>
         </div>
 
-        <Card className="flex h-full flex-col">
+        <Card className="order-1 flex h-full flex-col xl:order-2">
           <CardHeader>
             <div className="space-y-2">
               <CardTitle>Últimas marcaciones del día</CardTitle>
@@ -2721,22 +2721,22 @@ export function Dashboard() {
             </label>
           </div>
         ) : isSupervisor ? (
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Empleados</p>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+            <div className="flex h-[62px] w-[88px] flex-col justify-center rounded-lg border bg-white px-2 py-2 sm:h-[68px] sm:w-[108px] sm:px-3">
+              <p className="text-[11px] leading-tight text-muted-foreground sm:text-[13px]">Empleados</p>
               <p className="mt-2 text-base font-semibold leading-none">{formatMetric(supervisorPayload?.metrics?.today_scheduled_employees ?? supervisorPayload?.metrics?.assigned_employees)}</p>
             </div>
-            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Atrasos no just.</p>
+            <div className="flex h-[62px] w-[88px] flex-col justify-center rounded-lg border bg-white px-2 py-2 sm:h-[68px] sm:w-[108px] sm:px-3">
+              <p className="text-[11px] leading-tight text-muted-foreground sm:text-[13px]">Atrasos no just.</p>
               <p className="mt-2 text-base font-semibold leading-none text-red-700">{formatMetric(supervisorPayload?.metrics?.today_late)}</p>
             </div>
-            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Faltas no just.</p>
+            <div className="flex h-[62px] w-[88px] flex-col justify-center rounded-lg border bg-white px-2 py-2 sm:h-[68px] sm:w-[108px] sm:px-3">
+              <p className="text-[11px] leading-tight text-muted-foreground sm:text-[13px]">Faltas no just.</p>
               <p className="mt-2 text-base font-semibold leading-none text-red-700">{formatMetric(supervisorPayload?.metrics?.today_absences)}</p>
             </div>
-            <div className="flex h-[68px] min-w-[108px] flex-col justify-center rounded-lg border bg-white px-3 py-2">
-              <p className="text-[13px] leading-none text-muted-foreground">Actualizado</p>
-              <p className="mt-2 text-base font-semibold leading-none">{supervisorLoading ? 'Actualizando...' : formatTimeOnly(supervisorPayload?.generated_at)}</p>
+            <div className="flex h-[62px] w-[88px] flex-col justify-center rounded-lg border bg-white px-2 py-2 sm:h-[68px] sm:w-[108px] sm:px-3">
+              <p className="text-[11px] leading-tight text-muted-foreground sm:text-[13px]">Actualizado</p>
+              <p className="mt-2 text-sm font-semibold leading-none sm:text-base">{supervisorLoading ? 'Actualizando...' : formatTimeOnly(supervisorPayload?.generated_at)}</p>
             </div>
           </div>
         ) : undefined}

@@ -337,6 +337,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // A locally persisted session may still be valid when the first profile
+  // request fails because the backend is temporarily unavailable. Recover the
+  // profile in the background so an authenticated user is not left with an
+  // empty application until the page is manually reloaded.
+  useEffect(() => {
+    if (!user || !session?.access_token || profile || isLoading) return;
+
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const maximumAttempts = 3;
+
+    const recoverProfile = async () => {
+      attempt += 1;
+      const recoveredProfile = await loadProfile(user);
+      if (cancelled || recoveredProfile || attempt >= maximumAttempts) return;
+
+      retryTimer = window.setTimeout(recoverProfile, attempt * 750);
+    };
+
+    void recoverProfile();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [user?.id, session?.access_token, profile?.id, isLoading]);
+
   // Sign out
   const signOut = async () => {
     console.log('🚪 [LOGOUT] Iniciando cierre de sesión...');
