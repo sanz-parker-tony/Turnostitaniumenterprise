@@ -182,6 +182,17 @@ const currentNotificationSql = `
         WHERE referenced_punch.id = n.ref_id
           AND referenced_punch.tenant_id = n.tenant_id
           AND referenced_punch.is_active = true
+          -- La incidencia original deja de ser accionable en cuanto existe una
+          -- solicitud vinculada. Desde ese momento la notificacion de estado de
+          -- la solicitud es la unica fuente de navegacion para el empleado.
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.employee_time_punch_change_requests linked_request
+            WHERE linked_request.tenant_id = referenced_punch.tenant_id
+              AND linked_request.employee_id = referenced_punch.employee_id
+              AND linked_request.target_punch_id = referenced_punch.id
+              AND linked_request.is_active = true
+          )
           AND (
             (referenced_punch.punch_key_lookup_id = movement.start_punch_key_id AND pairing.end_count < pairing.referenced_start_rank)
             OR (referenced_punch.punch_key_lookup_id = movement.end_punch_key_id AND pairing.start_count < pairing.referenced_end_rank)

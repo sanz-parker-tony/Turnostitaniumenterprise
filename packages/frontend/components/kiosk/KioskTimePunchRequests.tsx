@@ -253,11 +253,14 @@ export default function KioskTimePunchRequests({
   const loadRows = async () => {
     const requestSequence = ++rowsRequestSequence.current;
     const qs = new URLSearchParams();
-    const linkedRequestId = !deepLinkHandled.current && (deepLinkSearch !== undefined || typeof window !== 'undefined')
-      ? new URLSearchParams(deepLinkSearch ?? window.location.search).get('request_id')
+    const deepLinkParams = !deepLinkHandled.current && (deepLinkSearch !== undefined || typeof window !== 'undefined')
+      ? new URLSearchParams(deepLinkSearch ?? window.location.search)
       : null;
+    const linkedRequestId = deepLinkParams?.get('request_id') || null;
+    const linkedTargetPunchId = linkedRequestId ? null : deepLinkParams?.get('context_punch_id') || null;
     if (linkedRequestId) qs.set('request_id', linkedRequestId);
-    const requestedStatus = linkedRequestId ? 'ALL' : status;
+    if (linkedTargetPunchId) qs.set('target_punch_id', linkedTargetPunchId);
+    const requestedStatus = linkedRequestId || linkedTargetPunchId ? 'ALL' : status;
     qs.set('status', requestedStatus);
     if (rangeFrom) qs.set('from', rangeFrom);
     if (rangeTo) qs.set('to', rangeTo);
@@ -265,8 +268,10 @@ export default function KioskTimePunchRequests({
     if (requestSequence !== rowsRequestSequence.current) return;
 
     const nextRows = (payload?.requests || []) as RequestRow[];
-    if (linkedRequestId) {
-      const linkedRow = nextRows.find((row) => row.id === linkedRequestId);
+    if (linkedRequestId || linkedTargetPunchId) {
+      const linkedRow = linkedRequestId
+        ? nextRows.find((row) => row.id === linkedRequestId)
+        : nextRows.find((row) => row.target_punch_id === linkedTargetPunchId);
       const linkedStatus = normalizeStatus(linkedRow?.request_status_filter_key);
       setStatus(
         ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(linkedStatus)
@@ -431,6 +436,7 @@ export default function KioskTimePunchRequests({
     const params = new URLSearchParams(deepLinkSearch ?? window.location.search);
     const mode = params.get('mode');
     const requestId = params.get('request_id');
+    const contextPunchId = params.get('context_punch_id') || '';
     if (!mode && !requestId) return;
 
     deepLinkHandled.current = true;
@@ -445,11 +451,19 @@ export default function KioskTimePunchRequests({
       return;
     }
 
+    if (contextPunchId) {
+      const existing = rows.find((row) => row.target_punch_id === contextPunchId);
+      if (existing) {
+        openEditPopup(existing);
+        setPopupMode('view');
+        return;
+      }
+    }
+
     if (mode !== 'create') return;
     const requestTypeKey = String(params.get('request_type_key') || 'CREATE_PUNCH').toUpperCase();
     const requestType = requestTypes.find((item) => String(item.lookup_key || '').toUpperCase() === requestTypeKey)
       || requestTypes[0];
-    const contextPunchId = params.get('context_punch_id') || '';
     const contextPunch = recentPunches.find((item) => item.id === contextPunchId) || null;
     const incidentDate = params.get('date') || toDateTimeLocal(
       contextPunch?.punch_datetime || null,
@@ -786,31 +800,56 @@ export default function KioskTimePunchRequests({
 
           <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-1 pb-3">
             {popupMode === 'view' && viewingRequest ? (
-              <div className="rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium">Estado de la solicitud</span>
-                <span className={`rounded border px-2 py-1 text-xs font-medium ${statusBadgeClass(viewingRequest.request_status_key)}`}>
-                  {viewingRequest.request_status_label || viewingRequest.request_status_key || '-'}
-                </span>
+              <div className="space-y-3 rounded-lg border bg-slate-50 p-3 text-sm text-slate-700">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">Estado de la solicitud</span>
+                  <span className={`rounded border px-2 py-1 text-xs font-medium ${statusBadgeClass(viewingRequest.request_status_key)}`}>
+                    {viewingRequest.request_status_label || viewingRequest.request_status_key || '-'}
+                  </span>
+                </div>
+                <dl className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-md bg-white p-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Tipo de solicitud</dt>
+                    <dd className="mt-1 font-medium text-slate-900">{viewingRequest.request_type_label || viewingRequest.request_type_key || '-'}</dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Empresa</dt>
+                    <dd className="mt-1 font-medium text-slate-900">{viewingRequest.company_name || '-'}</dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2 sm:col-span-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Valores solicitados</dt>
+                    <dd className="mt-1">{renderRequestedSummary(viewingRequest)}</dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2 sm:col-span-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Motivo</dt>
+                    <dd className="mt-1 whitespace-pre-wrap text-slate-900">{viewingRequest.reason || '-'}</dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Aprobador</dt>
+                    <dd className="mt-1 text-slate-900">
+                      {viewingRequest.approved_by_display_name || viewingRequest.approved_by_username || 'Pendiente'}
+                    </dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Fecha de decision</dt>
+                    <dd className="mt-1 text-slate-900">{viewingRequest.approved_at ? formatDateTime(viewingRequest.approved_at) : 'Pendiente'}</dd>
+                  </div>
+                  <div className="rounded-md bg-white p-2 sm:col-span-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Respuesta del supervisor</dt>
+                    <dd className="mt-1 whitespace-pre-wrap text-slate-900">{viewingRequest.supervisor_notes || 'Sin respuesta todavia.'}</dd>
+                  </div>
+                </dl>
+                {viewingRequest.support_document_name ? (
+                  <button
+                    type="button"
+                    onClick={() => void openSupportDocument(viewingRequest)}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline"
+                  >
+                    <Paperclip className="h-3.5 w-3.5" /> Ver respaldo adjunto
+                  </button>
+                ) : null}
               </div>
-              {viewingRequest.supervisor_notes ? (
-                <p className="mt-2"><span className="font-medium">Respuesta:</span> {viewingRequest.supervisor_notes}</p>
-              ) : null}
-              {viewingRequest.approved_at ? (
-                <p className="mt-1 text-xs text-slate-500">Revisada: {formatDateTime(viewingRequest.approved_at)}</p>
-              ) : null}
-              {viewingRequest.support_document_name ? (
-                <button
-                  type="button"
-                  onClick={() => void openSupportDocument(viewingRequest)}
-                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700 hover:underline"
-                >
-                  <Paperclip className="h-3.5 w-3.5" /> Ver respaldo adjunto
-                </button>
-              ) : null}
-              </div>
-            ) : null}
-
+            ) : (
             <div className="grid gap-3 md:grid-cols-2">
             {popupForm.incident_date ? (
               <label className="space-y-1 text-sm">
@@ -990,6 +1029,7 @@ export default function KioskTimePunchRequests({
               </div>
             ) : null}
             </div>
+            )}
           </div>
 
           <DialogFooter className="static bottom-auto mx-0 mb-0 shrink-0 px-0 pt-4 pb-0 sm:mx-0 sm:mb-0 sm:px-0">

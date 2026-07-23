@@ -228,10 +228,6 @@ function isPendingShiftChangeStatus(statusKey: string | null | undefined, status
   return ['PENDING', 'PENDIENTE'].includes(key);
 }
 
-function isAnsweredShiftChangeStatus(statusKey: string | null | undefined, statusLabel?: string | null): boolean {
-  return !isEditableShiftChangeStatus(statusKey, statusLabel);
-}
-
 function resolveIconComponent(iconKey?: string | null) {
   const raw = String(iconKey || '').trim();
   if (!raw) return CircleDot;
@@ -1390,6 +1386,60 @@ export default function KioskShiftChange({
               </div>
             ) : null}
 
+            {dialogMode === 'view' ? (
+              <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                <div className="rounded-md border bg-white p-3">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Turno actual</dt>
+                  <dd className="mt-1 font-medium text-slate-900">
+                    {selectedRequest?.current_shift_name || selectedPlan?.shift_name || '-'}
+                  </dd>
+                </div>
+                <div className="rounded-md border bg-white p-3">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Turno solicitado</dt>
+                  <dd className="mt-1 font-medium text-slate-900">
+                    {selectedRequest?.requested_shift_name || selectedPlan?.open_requested_shift_name || selectedShiftOption?.shift_name || '-'}
+                  </dd>
+                </div>
+                <div className="rounded-md border bg-white p-3 sm:col-span-2">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Motivo</dt>
+                  <dd className="mt-1 whitespace-pre-wrap text-slate-900">
+                    {selectedRequest?.reason || selectedPlan?.open_request_reason || '-'}
+                  </dd>
+                </div>
+                <div className="rounded-md border bg-white p-3">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Aprobador</dt>
+                  <dd className="mt-1 text-slate-900">
+                    {selectedRequest?.approved_by_display_name || selectedRequest?.approved_by_username || 'Pendiente'}
+                  </dd>
+                </div>
+                <div className="rounded-md border bg-white p-3">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Fecha de decision</dt>
+                  <dd className="mt-1 text-slate-900">
+                    {selectedRequest?.approved_at ? formatDateTime(selectedRequest.approved_at) : 'Pendiente'}
+                  </dd>
+                </div>
+                <div className="rounded-md border bg-white p-3 sm:col-span-2">
+                  <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">Respuesta del supervisor</dt>
+                  <dd className="mt-1 whitespace-pre-wrap text-slate-900">
+                    {selectedRequest?.supervisor_notes || 'Sin respuesta todavia.'}
+                  </dd>
+                </div>
+                {(selectedRequest?.support_document_name || selectedPlan?.open_request_support_document_name) && selectedPlan?.open_request_id ? (
+                  <div className="sm:col-span-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void openSupportDocument(selectedPlan.open_request_id!)}
+                    >
+                      <FileText className="h-4 w-4" />
+                      Ver respaldo PDF
+                    </Button>
+                  </div>
+                ) : null}
+              </dl>
+            ) : (
+            <>
             <label className="text-sm space-y-1 block">
               <span className="block text-slate-700">Turno solicitado</span>
               <Select
@@ -1481,11 +1531,8 @@ export default function KioskShiftChange({
               </label>
             ) : null}
 
-            {dialogMode === 'view' && isAnsweredShiftChangeStatus(selectedPlan?.open_request_status_key, selectedPlan?.open_request_status_label) ? (
-              <div className="rounded-md border bg-slate-50 p-3 text-xs text-slate-600">
-                Solicitud respondida: se mantiene solo para referencia y no puede editarse ni eliminarse.
-              </div>
-            ) : null}
+            </>
+            )}
           </div>
 
           <DialogFooter>

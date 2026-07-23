@@ -5129,6 +5129,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
     const from = normalizeNullableText(req.query.from) || normalizeNullableText(req.query.date_from);
     const to = normalizeNullableText(req.query.to) || normalizeNullableText(req.query.date_to);
     const requestId = normalizeNullableText(req.query.request_id);
+    const targetPunchId = normalizeNullableText(req.query.target_punch_id);
     const status = String(req.query.status || 'ALL').trim().toUpperCase();
 
     const params: any[] = [context.tenant_id, context.employee_id];
@@ -5137,15 +5138,19 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
       params.push(requestId);
       whereExtra += ` AND r.id = $${params.length}::uuid`;
     }
-    if (from && isIsoDate(from) && !requestId) {
+    if (targetPunchId && !requestId) {
+      params.push(targetPunchId);
+      whereExtra += ` AND r.target_punch_id = $${params.length}::uuid`;
+    }
+    if (from && isIsoDate(from) && !requestId && !targetPunchId) {
       params.push(`${from}T00:00:00`);
       whereExtra += ` AND r.created_at >= $${params.length}::timestamptz`;
     }
-    if (to && isIsoDate(to) && !requestId) {
+    if (to && isIsoDate(to) && !requestId && !targetPunchId) {
       params.push(`${to}T23:59:59`);
       whereExtra += ` AND r.created_at <= $${params.length}::timestamptz`;
     }
-    if (status !== 'ALL' && !requestId) {
+    if (status !== 'ALL' && !requestId && !targetPunchId) {
       params.push(status);
       whereExtra += `
         AND UPPER(COALESCE(st.metadata->>'notification_status_key', '')) = $${params.length}
