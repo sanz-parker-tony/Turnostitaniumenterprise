@@ -24,7 +24,7 @@ SELECT pg_catalog.pg_advisory_xact_lock(
 DO $$
 DECLARE
   baseline_key constant text := 'system:factory-baseline:v1';
-  required_seed_version constant text := '2026-07-22-FACTORY-V16';
+  required_seed_version constant text := '2026-07-23-FACTORY-V17';
   baseline jsonb;
   current_table_count integer;
   snapshot_table_count integer;
@@ -629,6 +629,35 @@ BEGIN
       )
   ) THEN
     RAISE EXCEPTION 'FACTORY RESET invalido: existen justificaciones sin politica de planificacion valida';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.lookup_values policy
+    JOIN public.lookup_groups group_row ON group_row.id = policy.lookup_group_id
+    WHERE group_row.lookup_group_key = 'SHIFT_PLANNING_ABSENCE_POLICY'
+      AND policy.lookup_key = 'UNCLASSIFIED'
+      AND policy.tenant_id IS NULL
+      AND policy.is_active
+      AND policy.metadata->>'approval_control' = 'ALLOW_WITH_SUPERVISOR_ACKNOWLEDGEMENT'
+      AND policy.metadata->>'risk_acceptance_required' = 'true'
+  ) THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta la excepcion auditable para politicas de planificacion sin clasificar';
+  END IF;
+
+  IF (
+    SELECT count(*)
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'employee_absence_requests'
+      AND column_name IN (
+        'planning_risk_accepted_by',
+        'planning_risk_accepted_at',
+        'planning_risk_assessment_token',
+        'planning_risk_snapshot'
+      )
+  ) <> 4 THEN
+    RAISE EXCEPTION 'FACTORY RESET invalido: falta trazabilidad estructurada de aceptacion de riesgo';
   END IF;
 
   IF NOT EXISTS (

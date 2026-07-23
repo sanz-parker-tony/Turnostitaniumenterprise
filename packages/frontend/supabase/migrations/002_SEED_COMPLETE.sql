@@ -173,7 +173,7 @@ ON CONFLICT (message_key, language_code) DO UPDATE SET
 
 -- KV store
 INSERT INTO public.kv_store_e19f2094 (key, value)
-VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-22-FACTORY-V16'))
+VALUES ('seed.version', jsonb_build_object('script','002_SEED_COMPLETE.sql','version','2026-07-23-FACTORY-V17'))
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- ============================================================================
@@ -24811,7 +24811,7 @@ WITH values_seed(group_key, value_key, label, short_label, sort_order, metadata)
     ('SHIFT_PLANNING_ABSENCE_POLICY','NO_IMPACT','Sin impacto en planificacion','Sin impacto',10,'{"blocks_assignment":false,"blocking_scope":"NONE","approval_control":"ALLOW"}'::jsonb),
     ('SHIFT_PLANNING_ABSENCE_POLICY','TIME_OVERLAP_BLOCK','Bloqueo durante el intervalo autorizado','Bloqueo parcial',20,'{"blocks_assignment":true,"blocking_scope":"TIME_OVERLAP","approval_control":"REQUIRE_COVERAGE"}'::jsonb),
     ('SHIFT_PLANNING_ABSENCE_POLICY','FULL_DAY_BLOCK','Bloqueo de jornada completa','Bloqueo completo',30,'{"blocks_assignment":true,"blocking_scope":"FULL_DAY","approval_control":"REQUIRE_COVERAGE"}'::jsonb),
-    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','Politica pendiente de clasificacion','Sin clasificar',40,'{"blocks_assignment":true,"blocking_scope":"UNCLASSIFIED","approval_control":"BLOCK_UNTIL_CONFIGURED"}'::jsonb),
+    ('SHIFT_PLANNING_ABSENCE_POLICY','UNCLASSIFIED','Politica pendiente de clasificacion','Sin clasificar',40,'{"blocks_assignment":true,"blocking_scope":"UNCLASSIFIED","approval_control":"ALLOW_WITH_SUPERVISOR_ACKNOWLEDGEMENT","risk_acceptance_required":true}'::jsonb),
     ('SHIFT_PLANNING_IMPACT_STATUS','PENDING_REVIEW','Pendiente de revision','Pendiente',10,'{}'::jsonb),
     ('SHIFT_PLANNING_IMPACT_STATUS','QUEUED','Replanificacion en cola','En cola',20,'{}'::jsonb),
     ('SHIFT_PLANNING_IMPACT_STATUS','RESOLVED','Impacto resuelto','Resuelto',30,'{}'::jsonb),
@@ -25387,8 +25387,8 @@ BEGIN
   WHERE key = 'seed.version';
 
   IF current_seed_version IS NULL
-     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-22-FACTORY-V16' THEN
-    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-22-FACTORY-V16';
+     OR current_seed_version->>'version' IS DISTINCT FROM '2026-07-23-FACTORY-V17' THEN
+    RAISE EXCEPTION 'No se puede crear la fotografia: seed.version no corresponde a 2026-07-23-FACTORY-V17';
   END IF;
 
   IF existing_baseline IS NOT NULL

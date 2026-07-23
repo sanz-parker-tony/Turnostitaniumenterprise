@@ -2553,6 +2553,10 @@ router.get('/requests', async (req: Request, res: Response) => {
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
+          r.planning_risk_accepted_by,
+          risk_user.display_name AS planning_risk_accepted_by_display_name,
+          risk_user.username AS planning_risk_accepted_by_username,
+          r.planning_risk_accepted_at,
           r.is_active,
           r.created_at,
           r.updated_at
@@ -3342,6 +3346,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values jm ON jm.id = r.justify_method_id
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
         LEFT JOIN public.users au ON au.id = r.approved_by
+        LEFT JOIN public.users risk_user ON risk_user.id = r.planning_risk_accepted_by
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = ANY($2::uuid[])
           AND r.is_active = true
@@ -3563,6 +3568,7 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
     const justifyMethodId = normalizeNullableText(req.body?.justify_method_id);
     const planningResolution = String(req.body?.planning_resolution || 'NONE').trim().toUpperCase();
     const assessmentToken = normalizeNullableText(req.body?.assessment_token);
+    const planningRiskAccepted = req.body?.planning_risk_accepted === true;
     if (!requestId) return res.status(400).json({ error: 'id es obligatorio' });
     if (!['APPROVE', 'REJECT'].includes(decision)) {
       return res.status(400).json({ error: 'decision debe ser APPROVE o REJECT' });
@@ -3590,6 +3596,7 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
       `
         SELECT
           r.id,
+          r.company_id,
           r.request_status_id,
           rs.lookup_key AS request_status_key,
           e.user_id AS employee_user_id
@@ -3680,6 +3687,24 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         transactionStarted = false;
         return res.status(409).json({ error: planningImpact.message, planning_impact: planningImpact });
       }
+      if (planningImpact.assessment_key === 'RISK_ACCEPTANCE_REQUIRED') {
+        if (assessmentToken !== planningImpact.assessment_token) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          return res.status(409).json({
+            error: 'Debe revisar y aceptar la evaluacion de riesgo vigente antes de aprobar.',
+            planning_impact: planningImpact,
+          });
+        }
+        if (!planningRiskAccepted) {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+          return res.status(409).json({
+            error: 'Debe aceptar expresamente el riesgo y la responsabilidad para aprobar esta solicitud sin clasificar.',
+            planning_impact: planningImpact,
+          });
+        }
+      }
       if (planningImpact.assessment_key === 'NOT_FEASIBLE') {
         await client.query('ROLLBACK');
         transactionStarted = false;
@@ -3708,7 +3733,11 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
           approved_by = $6::uuid,
           approved_at = now(),
           updated_by = $7,
-          updated_at = now()
+          updated_at = now(),
+          planning_risk_accepted_by = CASE WHEN $8::boolean THEN $6::uuid ELSE NULL END,
+          planning_risk_accepted_at = CASE WHEN $8::boolean THEN now() ELSE NULL END,
+          planning_risk_assessment_token = CASE WHEN $8::boolean THEN $9 ELSE NULL END,
+          planning_risk_snapshot = CASE WHEN $8::boolean THEN $10::jsonb ELSE NULL END
         WHERE id = $1::uuid
           AND tenant_id = $2::uuid
         RETURNING *
@@ -3721,8 +3750,48 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
         justifyMethodId,
         userContext.user_id,
         getActor(req),
+        planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED' && planningRiskAccepted,
+        assessmentToken,
+        planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED' && planningRiskAccepted
+          ? JSON.stringify({
+              assessment: planningImpact,
+              acceptance: {
+                accepted: true,
+                accepted_by: userContext.user_id,
+                approval_notes: resolvedApprovalNotes,
+              },
+            })
+          : null,
       ]
     );
+
+    if (decision === 'APPROVE' && planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED') {
+      await client.query(
+        `
+          INSERT INTO public.audit_log (
+            tenant_id, user_id, company_id, action_key,
+            entity_type, entity_id, metadata
+          ) VALUES (
+            $1::uuid, $2::uuid, $3::uuid, $4,
+            'employee_absence_requests', $5::uuid, $6::jsonb
+          )
+        `,
+        [
+          userContext.tenant_id,
+          userContext.user_id,
+          current.company_id,
+          'APPROVE_UNCLASSIFIED_PLANNING_RISK',
+          requestId,
+          JSON.stringify({
+            assessment_token: planningImpact.assessment_token,
+            policy_key: planningImpact.policy_key,
+            assessment_key: planningImpact.assessment_key,
+            approval_notes: resolvedApprovalNotes,
+            responsibility_accepted: true,
+          }),
+        ]
+      );
+    }
 
     let planningImpactId: string | null = null;
     if (decision === 'APPROVE' && planningImpact) {

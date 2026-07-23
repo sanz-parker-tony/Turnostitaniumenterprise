@@ -30,13 +30,19 @@ type Row = {
   approved_by_display_name: string | null;
   approved_by_username: string | null;
   approved_at: string | null;
+  planning_risk_accepted_by: string | null;
+  planning_risk_accepted_by_display_name: string | null;
+  planning_risk_accepted_by_username: string | null;
+  planning_risk_accepted_at: string | null;
 };
 
 type PlanningImpact = {
   request_id: string;
   policy_key: string | null;
   policy_label: string | null;
-  assessment_key: 'NO_IMPACT' | 'SAFE' | 'CONDITIONAL' | 'NOT_FEASIBLE' | 'CONFIGURATION_REQUIRED';
+  assessment_key: 'NO_IMPACT' | 'SAFE' | 'CONDITIONAL' | 'NOT_FEASIBLE' | 'CONFIGURATION_REQUIRED' | 'RISK_ACCEPTANCE_REQUIRED';
+  approval_control: string | null;
+  risk_acceptance_required: boolean;
   message: string;
   affected_plan_count: number;
   date_from: string;
@@ -88,6 +94,7 @@ export default function RequestsApprovalsManagement() {
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [planningImpacts, setPlanningImpacts] = useState<Record<string, PlanningImpact>>({});
   const [planningImpactLoading, setPlanningImpactLoading] = useState<Record<string, boolean>>({});
+  const [planningRiskAcceptances, setPlanningRiskAcceptances] = useState<Record<string, boolean>>({});
 
   const request = async (path: string, init?: RequestInit) => {
     const api = createClient();
@@ -247,8 +254,13 @@ export default function RequestsApprovalsManagement() {
           planning_resolution:
             decision === 'APPROVE' && impact?.assessment_key === 'CONDITIONAL' ? 'REPLAN' : 'NONE',
           assessment_token: decision === 'APPROVE' ? impact?.assessment_token || null : null,
+          planning_risk_accepted:
+            decision === 'APPROVE'
+            && impact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED'
+            && planningRiskAcceptances[row.id] === true,
         }),
       });
+      setPlanningRiskAcceptances((prev) => ({ ...prev, [row.id]: false }));
       toast.success(decision === 'APPROVE' ? 'Solicitud aprobada' : 'Solicitud denegada');
       await load();
     } catch (err: any) {
@@ -290,6 +302,8 @@ export default function RequestsApprovalsManagement() {
             const planningImpact = planningImpacts[r.id];
             const planningBlocked = planningImpact?.assessment_key === 'NOT_FEASIBLE'
               || planningImpact?.assessment_key === 'CONFIGURATION_REQUIRED';
+            const riskAcceptanceRequired = planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED'
+              && planningImpact?.risk_acceptance_required === true;
             return (
               <div key={r.id} className={`rounded-lg border bg-white p-4 ${r.id === linkedRequestId ? 'border-blue-500 ring-2 ring-blue-100' : ''}`}>
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -334,6 +348,7 @@ export default function RequestsApprovalsManagement() {
                     planningImpact?.assessment_key === 'SAFE' || planningImpact?.assessment_key === 'NO_IMPACT'
                       ? 'border-green-200 bg-green-50'
                       : planningImpact?.assessment_key === 'CONDITIONAL'
+                        || planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED'
                       ? 'border-amber-300 bg-amber-50'
                       : 'border-red-200 bg-red-50'
                   }`}>
@@ -341,7 +356,8 @@ export default function RequestsApprovalsManagement() {
                       <div className="flex items-start gap-2">
                         {planningImpact?.assessment_key === 'SAFE' || planningImpact?.assessment_key === 'NO_IMPACT' ? (
                           <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-700" />
-                        ) : planningImpact?.assessment_key === 'CONDITIONAL' ? (
+                        ) : planningImpact?.assessment_key === 'CONDITIONAL'
+                          || planningImpact?.assessment_key === 'RISK_ACCEPTANCE_REQUIRED' ? (
                           <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-700" />
                         ) : (
                           <ShieldAlert className="mt-0.5 h-4 w-4 text-red-700" />
@@ -355,6 +371,22 @@ export default function RequestsApprovalsManagement() {
                               <div className="mt-1 text-sm text-slate-700">
                                 {planningImpact.policy_label || planningImpact.policy_key || 'Política no configurada'} · {planningImpact.message}
                               </div>
+                              {riskAcceptanceRequired ? (
+                                <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-md border border-amber-300 bg-white p-3 text-sm text-amber-950">
+                                  <input
+                                    type="checkbox"
+                                    checked={planningRiskAcceptances[r.id] === true}
+                                    onChange={(event) => setPlanningRiskAcceptances((prev) => ({
+                                      ...prev,
+                                      [r.id]: event.target.checked,
+                                    }))}
+                                    className="mt-0.5 h-4 w-4 rounded border-amber-400 text-amber-700 focus:ring-amber-500"
+                                  />
+                                  <span>
+                                    Confirmo que revisé la solicitud y acepto aprobarla bajo mi riesgo y responsabilidad como supervisor, aun cuando este tipo de justificación no ha sido clasificado.
+                                  </span>
+                                </label>
+                              ) : null}
                               {planningImpact.days.length > 0 ? (
                                 <div className="mt-3 overflow-x-auto rounded border border-slate-200 bg-white">
                                   <table className="w-full min-w-[680px] text-left text-xs">
@@ -430,7 +462,13 @@ export default function RequestsApprovalsManagement() {
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        disabled={workingId === r.id || planningImpactLoading[r.id] || !planningImpact || planningBlocked}
+                        disabled={
+                          workingId === r.id
+                          || planningImpactLoading[r.id]
+                          || !planningImpact
+                          || planningBlocked
+                          || (riskAcceptanceRequired && planningRiskAcceptances[r.id] !== true)
+                        }
                         onClick={() => decide(r, 'APPROVE')}
                       >
                         {planningImpact?.assessment_key === 'CONDITIONAL' ? 'Aprobar y replanificar' : 'Aprobar'}
@@ -452,6 +490,15 @@ export default function RequestsApprovalsManagement() {
                     <div className="text-slate-700">
                       Observacion aprobador: {r.approval_notes || '-'}
                     </div>
+                    {r.planning_risk_accepted_at ? (
+                      <div className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
+                        <div className="font-medium">Aprobada bajo aceptación expresa de riesgo</div>
+                        <div>
+                          Responsable: {r.planning_risk_accepted_by_display_name || r.planning_risk_accepted_by_username || '-'}
+                        </div>
+                        <div>Fecha de aceptación: {formatClientDateTime(r.planning_risk_accepted_at)}</div>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>

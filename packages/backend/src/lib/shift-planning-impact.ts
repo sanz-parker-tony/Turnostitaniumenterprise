@@ -25,7 +25,9 @@ export type ShiftPlanningImpactAssessment = {
   request_id: string;
   policy_key: string | null;
   policy_label: string | null;
-  assessment_key: 'NO_IMPACT' | 'SAFE' | 'CONDITIONAL' | 'NOT_FEASIBLE' | 'CONFIGURATION_REQUIRED';
+  assessment_key: 'NO_IMPACT' | 'SAFE' | 'CONDITIONAL' | 'NOT_FEASIBLE' | 'CONFIGURATION_REQUIRED' | 'RISK_ACCEPTANCE_REQUIRED';
+  approval_control: string | null;
+  risk_acceptance_required: boolean;
   message: string;
   affected_plan_count: number;
   date_from: string;
@@ -348,12 +350,38 @@ export async function evaluateAbsencePlanningImpact(
   const policyKey = String(context.policy_key || '').toUpperCase() || null;
   const policyMetadata = context.policy_metadata || {};
   const blockingScope = String(policyMetadata.blocking_scope || '').toUpperCase();
-  if (!policyKey || blockingScope === 'UNCLASSIFIED' || policyMetadata.approval_control === 'BLOCK_UNTIL_CONFIGURED') {
+  const approvalControl = String(policyMetadata.approval_control || '').trim().toUpperCase() || null;
+  const riskAcceptanceRequired = policyMetadata.risk_acceptance_required === true;
+  if (
+    policyKey
+    && blockingScope === 'UNCLASSIFIED'
+    && approvalControl === 'ALLOW_WITH_SUPERVISOR_ACKNOWLEDGEMENT'
+    && riskAcceptanceRequired
+  ) {
+    const base = {
+      request_id: context.id,
+      policy_key: policyKey,
+      policy_label: context.policy_label,
+      assessment_key: 'RISK_ACCEPTANCE_REQUIRED' as const,
+      approval_control: approvalControl,
+      risk_acceptance_required: true,
+      message: 'La politica sigue sin clasificar. El supervisor puede aprobar excepcionalmente si acepta expresamente el riesgo y la responsabilidad.',
+      affected_plan_count: 0,
+      date_from: context.date_from,
+      date_to: context.date_to,
+      days: [],
+    };
+    return { ...base, assessment_token: assessmentToken(base) };
+  }
+
+  if (!policyKey || blockingScope === 'UNCLASSIFIED' || approvalControl === 'BLOCK_UNTIL_CONFIGURED') {
     const base = {
       request_id: context.id,
       policy_key: policyKey,
       policy_label: context.policy_label,
       assessment_key: 'CONFIGURATION_REQUIRED' as const,
+      approval_control: approvalControl,
+      risk_acceptance_required: false,
       message: 'El tipo de justificacion no tiene una politica de planificacion clasificada.',
       affected_plan_count: 0,
       date_from: context.date_from,
@@ -369,6 +397,8 @@ export async function evaluateAbsencePlanningImpact(
       policy_key: policyKey,
       policy_label: context.policy_label,
       assessment_key: 'NO_IMPACT' as const,
+      approval_control: approvalControl,
+      risk_acceptance_required: false,
       message: 'La politica configurada no bloquea asignaciones de turno.',
       affected_plan_count: 0,
       date_from: context.date_from,
@@ -410,6 +440,8 @@ export async function evaluateAbsencePlanningImpact(
     policy_key: policyKey,
     policy_label: context.policy_label,
     assessment_key: key,
+    approval_control: approvalControl,
+    risk_acceptance_required: false,
     message,
     affected_plan_count: affectedPlans.length,
     date_from: context.date_from,

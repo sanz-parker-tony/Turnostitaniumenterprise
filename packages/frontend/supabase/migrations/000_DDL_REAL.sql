@@ -397,7 +397,12 @@ CREATE TABLE public.employee_absence_requests (
     support_document_path character varying,
     support_document_name character varying,
     support_document_mime character varying,
-    support_document_size_bytes integer
+    support_document_size_bytes integer,
+    planning_risk_accepted_by uuid,
+    planning_risk_accepted_at timestamp with time zone,
+    planning_risk_assessment_token character varying(64),
+    planning_risk_snapshot jsonb,
+    CONSTRAINT employee_absence_requests_planning_risk_complete_check CHECK (((planning_risk_accepted_by IS NULL) AND (planning_risk_accepted_at IS NULL) AND (planning_risk_assessment_token IS NULL) AND (planning_risk_snapshot IS NULL)) OR ((planning_risk_accepted_by IS NOT NULL) AND (planning_risk_accepted_at IS NOT NULL) AND (length((planning_risk_assessment_token)::text) = 64) AND (planning_risk_snapshot IS NOT NULL)))
 );
 
 
@@ -3404,6 +3409,8 @@ CREATE INDEX idx_employee_absence_requests_approved_at ON public.employee_absenc
 
 CREATE INDEX idx_employee_absence_requests_approved_by ON public.employee_absence_requests USING btree (approved_by);
 
+CREATE INDEX idx_employee_absence_requests_planning_risk_accepted_by ON public.employee_absence_requests USING btree (planning_risk_accepted_by) WHERE (planning_risk_accepted_by IS NOT NULL);
+
 
 --
 -- TOC entry 5157 (class 1259 OID 37918)
@@ -4062,6 +4069,9 @@ ALTER TABLE ONLY public.departments
 
 ALTER TABLE ONLY public.employee_absence_requests
     ADD CONSTRAINT employee_absence_requests_approved_by_fkey FOREIGN KEY (approved_by) REFERENCES public.users(id);
+
+ALTER TABLE ONLY public.employee_absence_requests
+    ADD CONSTRAINT employee_absence_requests_planning_risk_accepted_by_fkey FOREIGN KEY (planning_risk_accepted_by) REFERENCES public.users(id);
 
 
 --
