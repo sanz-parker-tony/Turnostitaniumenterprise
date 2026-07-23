@@ -2576,6 +2576,8 @@ router.get('/requests', async (req: Request, res: Response) => {
           ON rs.id = r.request_status_id
         LEFT JOIN public.users au
           ON au.id = r.approved_by
+        LEFT JOIN public.users risk_user
+          ON risk_user.id = r.planning_risk_accepted_by
         WHERE r.tenant_id = $1
           AND r.employee_id = $2
           AND ($3::boolean = true OR r.is_active = true)
