@@ -34,7 +34,7 @@ interface PermissionsContextType {
 const PermissionsContext = createContext<PermissionsContextType | undefined>(undefined);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
-  const { user, profile, session } = useAuth();
+  const { user, session } = useAuth();
   const [menuScreens, setMenuScreens] = useState<MenuScreen[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
         if (isMounted && shouldShowBlockingLoading) setIsLoading(true);
         if (isMounted && isNewMenuIdentity) setMenuScreens([]);
         if (isMounted) setLoadError(null);
-        console.log('🔄 Cargando pantallas del menú por backend endpoint para rol:', profile.role_key);
+        console.log('[PERMISSIONS] Cargando pantallas autorizadas desde el backend');
 
         let response: Response | null = null;
         let payload: any = {};
