@@ -64,7 +64,6 @@ import screenActionsRouter from './routes/screen-actions-mgmt-routes';
 import screensRouter from './routes/screens-mgmt-routes';
 import securityUserScopesRouter from './routes/security-user-scopes-routes';
 import settingsRouter from './routes/settings-routes';
-import shiftPlanningRouter from './routes/shift-planning.routes';
 import employeeShiftPlanningRouter from './routes/employee-shift-planning-routes';
 import employeeTimePunchesRouter from './routes/employee-time-punches-routes';
 import employeeAbsenceRequestsRouter from './routes/employee-absence-requests-routes';
@@ -6369,9 +6368,6 @@ router.use('/profile-attendance-events', requireAuth, profileAttendanceEventsRou
 // Time Clock Devices Management
 router.use('/time-clock-devices', requireAuth, timeClockDevicesRouter);
 
-// Shift Planning Optimizer Bridge
-router.use('/api/shift-planning', requireAuth, shiftPlanningRouter);
-
 // Employee Shift Planning
 router.use('/employee-shift-planning', requireAuth, employeeShiftPlanningRouter);
 
@@ -6418,7 +6414,6 @@ router.get('/status', (req: Request, res: Response) => {
       tenants: ['/tenants/:id', '/tenant/settings'],
       maintenance: ['/actions', '/attendance-events', '/holidays', '/bootstrap-screens', '/lookup-groups', '/lookup-routes', '/lookup-values', '/menu-groups', '/role-screen-actions', '/roles', '/scope-types', '/screen-actions', '/screens', '/settings', '/system-settings', '/users-management'],
       config: ['/shift-constructor', '/work-patterns', '/time-clock-devices', '/profile-attendance-events'],
-      planning: ['/api/shift-planning/generate'],
       employees: ['/employee-shift-planning'],
       attendance: ['/employee-time-punches', '/employee-absence-requests', '/kiosk'],
     },

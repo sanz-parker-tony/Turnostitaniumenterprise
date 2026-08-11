@@ -417,7 +417,7 @@ const getEmployeeAbsenceRequests = withDocs(
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
           r.approval_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -444,7 +444,7 @@ const getEmployeeAbsenceRequests = withDocs(
         LEFT JOIN public.lookup_values rs
           ON rs.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         WHERE r.tenant_id = $1::uuid
           AND ($2::boolean = true OR r.is_active = true)
           ${whereExtra}
@@ -536,7 +536,7 @@ const getEmployeeAbsenceRequestById = withDocs(
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
           r.approval_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -563,7 +563,7 @@ const getEmployeeAbsenceRequestById = withDocs(
         LEFT JOIN public.lookup_values rs
           ON rs.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         WHERE r.id = $1::uuid
           AND r.tenant_id = $2::uuid
           ${

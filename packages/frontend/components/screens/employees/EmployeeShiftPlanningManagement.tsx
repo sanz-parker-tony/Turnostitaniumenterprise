@@ -31,11 +31,6 @@ import {
 } from 'lucide-react';
 import { StandardDateInput } from '@/components/ui/standard-date-input';
 import { getClientTimeZone } from '@/utils/date-time';
-import {
-  generateShiftPlanning,
-  ShiftPlanningGeneratePayload,
-  ShiftPlanningGeneratedItem,
-} from '@/lib/shift-planning-api';
 import { publicApiToken } from '../../../utils/backend/info';
 
 type ShiftPlanRow = {
@@ -1176,227 +1171,15 @@ export function EmployeeShiftPlanningManagement() {
     ? legendShiftIds
     : configuredShiftIds;
 
-  const buildShiftPlanningPayload = (): ShiftPlanningGeneratePayload => {
-    const uniquePatternShifts = Array.from(
-      new Set(activePatternShiftSequence.map((item) => item.shift_id))
-    )
-      .map((shiftId) => shiftsById.get(shiftId))
-      .filter((shift): shift is ShiftRow => Boolean(shift));
-
-    const dotacionRequerida = uniquePatternShifts.map((shift) => {
-      const startMinutes = parseTimeToMinutes(shift.start_time);
-      const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
-      const horaFin = startMinutes !== null && workMinutes > 0
-        ? formatMinutesAsClock(startMinutes + workMinutes)
-        : null;
-
-      return {
-        turnoId: shift.id,
-        nombreTurno: shift.shift_name,
-        codigoTurno: shift.shift_short_name,
-        horaInicio: shift.start_time || null,
-        horaFin,
-        cantidadRequerida: Math.max(0, Math.trunc(Number(requiredEmployeesPerShift ?? 0))),
-        duracionMinutos: workMinutes,
-      };
-    });
-
-    return {
-      filtrosEmpleados: {
-        soloEmpleadosTurnosRotativos: true,
-        empresaId: companyFilter === 'ALL' ? null : companyFilter,
-        localizacionId: workLocationFilter === 'ALL' ? null : workLocationFilter,
-        departamentoId: departmentFilter === 'ALL' ? null : departmentFilter,
-        areaId: areaFilter === 'ALL' ? null : areaFilter,
-        perfilId: employeeProfileFilter === 'ALL' ? null : employeeProfileFilter,
-        grupoTrabajoId: workGroupFilter === 'ALL' ? null : workGroupFilter,
-      },
-      rangoFechas: {
-        fechaInicio,
-        fechaFin,
-      },
-      patronActivo: {
-        patronId: activePatternId,
-        nombrePatron: activePattern?.name || 'Patrón no seleccionado',
-        esquemaActual: {
-          diasTrabajo,
-          diasLibres,
-        },
-      },
-      dotacionRequerida,
-      reglasIA: {
-        evitarTurnoNocheManana: reglaEvitarNM,
-        priorizarEquidadHoras: reglaEquidad,
-        equilibrarFeriados: reglaFeriados,
-        permitirSwaps: reglaSwaps,
-        modoDistribucionTurnos: shiftDistributionMode === 'staggered' ? 'ESCALONADOS' : 'IGUALES',
-      },
-      empleadosDisponibles: filteredEmployees.map((employee) => ({
-        id: employee.id,
-        codigo: employee.employee_code,
-        nombres: employee.employee_name,
-        apellidos: employee.employee_lastname,
-        companyId: employee.company_id,
-        companyName: employee.company_name,
-      })),
-      turnosDisponibles: uniquePatternShifts.map((shift) => {
-        const startMinutes = parseTimeToMinutes(shift.start_time);
-        const workMinutes = Math.max(0, Number(shift.work_minutes || 0));
-        const horaFin = startMinutes !== null && workMinutes > 0
-          ? formatMinutesAsClock(startMinutes + workMinutes)
-          : null;
-        return {
-          id: shift.id,
-          nombreTurno: shift.shift_name,
-          codigoTurno: shift.shift_short_name,
-          horaInicio: shift.start_time || null,
-          horaFin,
-          duracionMinutos: shift.work_minutes ?? null,
-          companyId: shift.company_id,
-        };
-      }),
-      restriccionesDisponibilidad: effectivePlanningConstraints.map((constraint) => ({
-        empleadoId: constraint.employee_id,
-        fecha: constraint.constraint_date,
-        bloqueo: constraint.blocking_scope,
-        desdeLocal: constraint.start_local,
-        hastaLocal: constraint.end_local,
-        motivo: constraint.reason,
-        sourceKey: constraint.source_key,
-        sourceId: constraint.source_id,
-      })),
-    };
-  };
-
-  const resolveShiftFromGeneratedItem = (item: ShiftPlanningGeneratedItem): ShiftRow | null => {
-    const shiftId = String(item.turnoId || '').trim();
-    if (shiftId && shiftsById.has(shiftId)) {
-      return shiftsById.get(shiftId) || null;
-    }
-
-    const codeKey = normalizeLookupValue(item.codigoTurno);
-    if (codeKey && shiftsByCode.has(codeKey)) {
-      return shiftsByCode.get(codeKey) || null;
-    }
-
-    const nameKey = normalizeLookupValue(item.nombreTurno);
-    if (nameKey && shiftsByName.has(nameKey)) {
-      return shiftsByName.get(nameKey) || null;
-    }
-
-    return null;
-  };
-
-  const applyGeneratedPlanningToTable = (planificacion: ShiftPlanningGeneratedItem[]) => {
-    const employeesById = new Map(filteredEmployees.map((employee) => [employee.id, employee]));
-    const validDates = new Set(rangeDays.map((day) => toIsoDate(day)).filter((dateIso) => isFutureDateIso(dateIso, attendanceTimeZone)));
-    const generated: Record<string, DayCellChange> = {};
-    let appliedCount = 0;
-
-    planificacion.forEach((item) => {
-      const employeeId = String(item.empleadoId || '').trim();
-      const dateIso = String(item.fecha || '').trim().split('T')[0];
-      const employee = employeesById.get(employeeId);
-      if (!employee || !validDates.has(dateIso)) return;
-
-      const resolvedShift = resolveShiftFromGeneratedItem(item);
-      const resolvedKind = resolvedShift
-        ? classifyShift(resolvedShift)
-        : classifyShiftText(item.nombreTurno, item.codigoTurno);
-      const isLibre = item.esLibre === true || resolvedKind === 'L';
-
-      const shiftId = resolvedShift?.id || null;
-      if (!shiftId && !isLibre) return;
-      if (shiftId && constraintBlockingShift(employee.id, dateIso, shiftId)) return;
-
-      generated[keyOf(employee.id, dateIso)] = {
-        employee_id: employee.id,
-        shift_date: dateIso,
-        shift_id: shiftId,
-        shift_type_id: shiftId ? (shiftTypeIdByKind[resolvedKind] || null) : null,
-        company_id: employee.company_id,
-      };
-      appliedCount += 1;
-    });
-
-    setChanges(generated);
-    setLegendShiftIds(Array.from(new Set(activePatternShiftSequence.map((item) => item.shift_id))));
-    setHasAppliedParameters(true);
-    setConfirmed(false);
-
-    return appliedCount;
-  };
-
   const handleGeneratePlanning = async () => {
     if (confirmed) return;
-    setError(null);
-    setSuccess(null);
-
-    if (!fechaInicio) {
-      setError('Debe seleccionar Fecha Inicio.');
-      return;
-    }
-    if (!fechaFin) {
-      setError('Debe seleccionar Fecha Fin.');
-      return;
-    }
-
-    const startDate = parseIsoDate(fechaInicio);
-    const endDate = parseIsoDate(fechaFin);
-    if (!startDate || !endDate) {
-      setError('Las fechas deben tener formato válido YYYY-MM-DD.');
-      return;
-    }
-    if (startDate > endDate) {
-      setError('Fecha Inicio no puede ser mayor que Fecha Fin.');
-      return;
-    }
-    if (filteredEmployees.length === 0) {
-      setError('No hay empleados disponibles con los filtros actuales.');
-      return;
-    }
-
-    if (activePatternShiftSequence.length === 0) {
-      setError('El patrón seleccionado no tiene turnos configurados.');
-      return;
-    }
-
-    if (!rangeDays.some((day) => isFutureDateIso(toIsoDate(day), attendanceTimeZone))) {
-      setError('No hay fechas futuras en el rango seleccionado. Solo se pueden planificar fechas posteriores a la fecha actual.');
-      return;
-    }
-
-    if (requiredEmployeesPerShift === null) {
-      setError('La cobertura mínima no está configurada en la base de datos.');
-      return;
-    }
-    if (Math.max(0, Math.trunc(Number(requiredEmployeesPerShift))) < 1) {
-      setError('La dotación mínima configurada debe ser mayor o igual a 1 para generar turnos productivos.');
-      return;
-    }
-
     setGeneratingPlanning(true);
     try {
-      const payload = buildShiftPlanningPayload();
-      console.log('Shift planning payload (/api/shift-planning/generate):', payload);
-      const response = await generateShiftPlanning(payload);
-
-      if (!response?.success) {
-        setError(response?.message || 'No se pudo generar la planificación.');
-        return;
-      }
-
-      const planificacion = Array.isArray(response?.planificacion) ? response.planificacion : [];
-      const applied = applyGeneratedPlanningToTable(planificacion);
-      if (applied === 0) {
-        setError('La planificación generada no contiene cambios para fechas futuras del rango seleccionado.');
-        return;
-      }
-      setSuccess(
-        response?.message || `Planificación aplicada en ${applied} celdas futuras.`
-      );
+      // La primera fase usa el planificador determinista local. La integración
+      // con el optimizador externo queda reservada para una fase posterior.
+      await applyParameters();
     } catch (err: any) {
-      setError(err?.message || 'Error preparando payload de planificación');
+      setError(err?.message || 'Error generando la planificación');
     } finally {
       setGeneratingPlanning(false);
     }
@@ -1931,7 +1714,7 @@ export function EmployeeShiftPlanningManagement() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-[40px] font-semibold leading-none tracking-tight">Planificación 24/7 IA</h1>
+        <h1 className="text-[40px] font-semibold leading-none tracking-tight">Planificación 24/7</h1>
         <p className="text-muted-foreground mt-2">Gestión de empleados, marcaciones y justificaciones</p>
       </div>
 
@@ -2594,7 +2377,7 @@ export function EmployeeShiftPlanningManagement() {
 
           <div className="rounded-2xl border bg-white p-4">
             <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
-              <Sparkles className="size-4" /> Reglas de IA
+              <Sparkles className="size-4" /> Reglas de planificación
             </div>
             <div className="space-y-3 text-sm">
               <label className="flex items-center justify-between"><span>Evitar Amanecida → Mañana</span><input type="checkbox" checked={reglaEvitarNM} onChange={(e) => setReglaEvitarNM(e.target.checked)} /></label>
@@ -2633,7 +2416,7 @@ export function EmployeeShiftPlanningManagement() {
 
         <div className="space-y-4 overflow-y-auto pb-8">
           <div className="rounded-2xl border bg-white p-4">
-            <div className="mb-1 flex items-center gap-2 text-xl font-semibold"><Lightbulb className="size-5" /> Sugerencias de IA</div>
+            <div className="mb-1 flex items-center gap-2 text-xl font-semibold"><Lightbulb className="size-5" /> Sugerencias de planificación</div>
             <div className="mb-3 text-sm text-gray-600">{suggestions.length} recomendaciones</div>
 
             <div className="space-y-3">

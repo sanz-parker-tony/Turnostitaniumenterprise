@@ -11,6 +11,8 @@ import HeaderInfoTips from '@/components/shared/HeaderInfoTips';
 
 type TargetRoleKey = 'SUPERVISOR' | 'RRHH_ADMIN' | 'RHADMIN';
 
+const SELECTABLE_TARGET_ROLE_KEYS = new Set<TargetRoleKey>(['SUPERVISOR', 'RRHH_ADMIN', 'RHADMIN']);
+
 type Target = {
   user_role_id: string;
   user_id: string;
@@ -248,7 +250,9 @@ export default function SecurityUserScopesManagement() {
       const response = await authorizedFetch('/targets?capability=ORG_SCOPE');
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error || 'No se pudo cargar usuarios objetivo');
-      const nextTargets = (payload.targets || []) as Target[];
+      const nextTargets = (payload.targets || []).filter((target: Target) => (
+        SELECTABLE_TARGET_ROLE_KEYS.has(target.role_key)
+      )) as Target[];
       setTargets(nextTargets);
       if (!selectedUserRoleId && nextTargets.length > 0) {
         setSelectedUserRoleId(nextTargets[0].user_role_id);

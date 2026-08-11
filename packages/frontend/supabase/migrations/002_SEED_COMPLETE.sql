@@ -24283,7 +24283,92 @@ ON CONFLICT(tenant_id,role_id,screen_action_id) DO UPDATE SET is_allowed=true,is
 
 -- Cobertura completa de autorización API. Toda ruta autenticada queda en
 -- denegación por defecto si no coincide con una regla de esta tabla.
-WITH route_screen(route_prefix, screen_key) AS (
+-- TENANT_ADMIN administra usuarios y configuración del tenant, pero no
+-- aprueba solicitudes de empleados. Las bandejas del grupo APROVE quedan
+-- reservadas para SUPERVISOR/RRHH_ADMIN según la responsabilidad operativa.
+UPDATE public.role_screen_actions AS permission
+SET is_allowed = false,
+    is_active = true,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.roles AS role,
+     public.screen_actions AS screen_action,
+     public.screens AS screen,
+     public.system_menu_groups AS menu_group
+WHERE permission.role_id = role.id
+  AND permission.screen_action_id = screen_action.id
+  AND screen_action.screen_id = screen.id
+  AND screen.menu_group_id = menu_group.id
+  AND role.role_key = 'TENANT_ADMIN'
+  AND menu_group.menu_group_key = 'APROVE';
+
+-- Matriz de presentaciÃ³n heredada de tt_test_db. Los componentes Workforce,
+-- Titanium Engine y planificaciÃ³n avanzada quedan fuera de esta versiÃ³n.
+UPDATE public.system_menu_groups AS menu_group
+SET is_active = true,
+    sort_order = baseline.sort_order,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM (VALUES
+  ('APROVE', 10), ('PROCESSES', 20), ('REPORTS', 30),
+  ('KIOSK', 50), ('SECURITY', 60), ('MAINT', 70),
+  ('CONFIG', 80), ('ORG', 90), ('DASH', 100), ('EMPLOYEE', 110)
+) AS baseline(menu_group_key, sort_order)
+WHERE menu_group.menu_group_key = baseline.menu_group_key;
+
+UPDATE public.system_menu_groups
+SET is_active = false,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+WHERE menu_group_key = 'ATTENDANCE';
+
+UPDATE public.screens AS screen
+SET menu_group_id = menu_group.id,
+    sort_order = 20,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.system_menu_groups AS menu_group
+WHERE screen.screen_key = 'EMPLOYEE_SHIFT_PLANNING'
+  AND menu_group.menu_group_key = 'PROCESSES';
+
+WITH role_menu_policy(role_key, menu_group_key) AS (
+  VALUES
+    ('SYSTEM_ADMIN', 'SECURITY'), ('SYSTEM_ADMIN', 'MAINT'),
+    ('TENANT_ADMIN', 'SECURITY'), ('TENANT_ADMIN', 'MAINT'),
+    ('TENANT_ADMIN', 'CONFIG'), ('TENANT_ADMIN', 'ORG'),
+    ('RRHH_ADMIN', 'APROVE'), ('RRHH_ADMIN', 'PROCESSES'), ('RRHH_ADMIN', 'REPORTS'),
+    ('SUPERVISOR', 'APROVE'), ('SUPERVISOR', 'PROCESSES'), ('SUPERVISOR', 'REPORTS'),
+    ('EMPLOYEE', 'KIOSK')
+)
+UPDATE public.role_screen_actions AS permission
+SET is_allowed = false,
+    is_active = true,
+    updated_by = 'SYSTEM',
+    updated_at = now()
+FROM public.roles AS role,
+     public.screen_actions AS screen_action,
+     public.screens AS screen,
+     public.system_menu_groups AS menu_group
+WHERE permission.role_id = role.id
+  AND permission.screen_action_id = screen_action.id
+  AND screen_action.screen_id = screen.id
+  AND screen.menu_group_id = menu_group.id
+  AND role.role_key IN ('SYSTEM_ADMIN', 'TENANT_ADMIN', 'RRHH_ADMIN', 'SUPERVISOR', 'EMPLOYEE')
+  AND (
+    NOT EXISTS (
+      SELECT 1
+      FROM role_menu_policy policy
+      WHERE policy.role_key = role.role_key
+        AND policy.menu_group_key = menu_group.menu_group_key
+    )
+    OR screen.screen_key ILIKE 'WORKFORCE_%'
+    OR screen.screen_key ILIKE 'EMPLOYEE_WORKFORCE_%'
+    OR screen.screen_key ILIKE 'POSITION_%'
+    OR screen.screen_key ILIKE 'TITANIUM_%'
+    OR screen.screen_key ILIKE 'OPERATIONAL_%'
+  );
+
+-- Cobertura completa de autorizaciÃ³n API. Toda ruta autenticada queda en
   VALUES
     ('/actions','SEC_ACTIONS'),('/actions-management','SEC_ACTIONS'),
     ('/attendance-events/movements','ATTENDANCE_MOVEMENTS_MANAGEMENT'),('/attendance-events','ATTENDANCE_EVENTS_MANAGEMENT'),
@@ -24300,7 +24385,7 @@ WITH route_screen(route_prefix, screen_key) AS (
     ('/shift-constructor','SHIFT_CONSTRUCTOR_MANAGEMENT'),('/subscription-plans','SUBSCRIPTION_PLAN_MANAGEMENT'),
     ('/subscription-plans-management','SUBSCRIPTION_PLAN_MANAGEMENT'),('/work-patterns','CONF_WORK_PATTERNS'),
     ('/profile-attendance-events','CONF_PROFILE_ATT_EVENTS'),('/time-clock-devices','DEVICE_MANAGEMENT'),
-    ('/api/shift-planning','EMPLOYEE_SHIFT_PLANNING'),('/employee-shift-planning','EMPLOYEE_SHIFT_PLANNING'),
+    ('/employee-shift-planning','EMPLOYEE_SHIFT_PLANNING'),
     ('/employee-time-punches','TIMECLOCK_MANAGEMENT'),('/employee-absence-requests','REQUESTS_MANAGEMENT'),
     ('/kiosk/requests/approvals','REQUESTS_MANAGEMENT'),('/kiosk/requests','MY_REQUESTS'),
     ('/kiosk/request-shift-change/approvals','SHIFT_CHANGE_APPROVALS'),('/kiosk/request-shift-change','KIOSK_SHIFT_CHANGE'),

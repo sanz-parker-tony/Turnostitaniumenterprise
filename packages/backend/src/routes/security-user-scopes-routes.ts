@@ -58,6 +58,11 @@ async function resolveAuthContext(req: Request): Promise<AuthContext | null> {
 
 type UserGovernanceCapability = 'ORG_SCOPE' | 'EMPLOYEE_ACCESS';
 
+// El Tenant Admin administra el alcance y el acceso a empleados de los
+// perfiles operativos. Los perfiles de plataforma, tenant y autoservicio no
+// se seleccionan desde estas pantallas.
+const TENANT_ADMIN_TARGET_ROLE_KEYS = ['RRHH_ADMIN', 'RHADMIN', 'SUPERVISOR'];
+
 function governanceCapabilityColumn(capability: UserGovernanceCapability): string {
   return capability === 'ORG_SCOPE' ? 'is_org_scope_target' : 'is_employee_access_target';
 }
@@ -79,12 +84,16 @@ async function ensureActorHasGovernedTargets(
        AND target_role.user_manager_role_id = actor_role.id
        AND target_role.is_active = true
        AND target_role.${capabilityColumn} = true
+       AND (
+         actor_role.role_key <> 'TENANT_ADMIN'
+         OR target_role.role_key = ANY($3::text[])
+       )
       WHERE actor_ur.user_id = $1
         AND actor_ur.tenant_id = $2
         AND actor_ur.is_active = true
       LIMIT 1
     `,
-    [ctx.userId, ctx.tenantId]
+    [ctx.userId, ctx.tenantId, TENANT_ADMIN_TARGET_ROLE_KEYS]
   );
 
   return result.rows.length > 0;
@@ -109,12 +118,19 @@ async function ensureActorCanManageTargetUserRole(
        AND actor_ur.user_id = $1
        AND actor_ur.is_active = true
        AND actor_ur.role_id = target_role.user_manager_role_id
+      JOIN roles actor_role
+        ON actor_role.id = actor_ur.role_id
+       AND actor_role.is_active = true
+       AND (
+         actor_role.role_key <> 'TENANT_ADMIN'
+         OR target_role.role_key = ANY($4::text[])
+       )
       WHERE target_ur.tenant_id = $2
         AND target_ur.id = $3
         AND target_ur.is_active = true
       LIMIT 1
     `,
-    [ctx.userId, ctx.tenantId, userRoleId]
+    [ctx.userId, ctx.tenantId, userRoleId, TENANT_ADMIN_TARGET_ROLE_KEYS]
   );
 
   return result.rows.length > 0;
@@ -324,17 +340,24 @@ router.get('/targets', async (req: Request, res: Response) => {
     const roleKey = String(req.query.role_key || '').trim().toUpperCase();
     const search = normalizeSearch(req.query.search);
 
-    const params: any[] = [ctx.tenantId, ctx.userId];
+    const params: any[] = [ctx.tenantId, ctx.userId, TENANT_ADMIN_TARGET_ROLE_KEYS];
     const where: string[] = [
       't.tenant_id = $1',
       `t.${capabilityColumn} = true`,
       `EXISTS (
         SELECT 1
         FROM user_roles actor_ur
+        JOIN roles actor_role
+          ON actor_role.id = actor_ur.role_id
+         AND actor_role.is_active = true
         WHERE actor_ur.tenant_id = t.tenant_id
           AND actor_ur.user_id = $2
           AND actor_ur.role_id = t.user_manager_role_id
           AND actor_ur.is_active = true
+          AND (
+            actor_role.role_key <> 'TENANT_ADMIN'
+            OR t.role_key = ANY($3::text[])
+          )
       )`,
     ];
 

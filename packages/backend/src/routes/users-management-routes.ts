@@ -25,6 +25,16 @@ type UserAdministrationContext = {
   authUserId: string;
 };
 
+// TENANT_ADMIN puede consultar los usuarios modelo del sistema para poder
+// crear usuarios usando roles ya definidos. Esta visibilidad no amplía sus
+// permisos de escritura sobre los usuarios protegidos del sistema.
+const TENANT_ADMIN_VISIBLE_ROLE_KEYS = [
+  'SYSTEM_ADMIN',
+  'TENANT_ADMIN',
+  'RRHH_ADMIN',
+  'SUPERVISOR',
+];
+
 function administrationContext(req: Request): UserAdministrationContext {
   return (req as any).userAdministrationContext as UserAdministrationContext;
 }
@@ -67,6 +77,45 @@ async function manageableRoleIds(ctx: UserAdministrationContext): Promise<string
   return result.rows.map((row) => String(row.id));
 }
 
+async function isTenantAdmin(ctx: UserAdministrationContext): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM user_roles ur
+        JOIN roles r ON r.id = ur.role_id AND r.is_active = true
+        WHERE ur.user_id = $1
+          AND ur.tenant_id = $2
+          AND ur.is_active = true
+          AND r.role_key = 'TENANT_ADMIN'
+      ) AS is_tenant_admin
+    `,
+    [ctx.userId, ctx.tenantId]
+  );
+  return Boolean(result.rows[0]?.is_tenant_admin);
+}
+
+async function viewableRoleIds(ctx: UserAdministrationContext): Promise<string[]> {
+  const roleIds = await manageableRoleIds(ctx);
+  if (!(await isTenantAdmin(ctx))) return roleIds;
+
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM roles
+      WHERE tenant_id = $1
+        AND is_active = true
+        AND role_key = ANY($2::text[])
+    `,
+    [ctx.tenantId, TENANT_ADMIN_VISIBLE_ROLE_KEYS]
+  );
+
+  return Array.from(new Set([
+    ...roleIds,
+    ...result.rows.map((row) => String(row.id)),
+  ]));
+}
+
 async function manageableUserIds(ctx: UserAdministrationContext): Promise<string[]> {
   const result = await pool.query(
     `
@@ -96,6 +145,29 @@ async function manageableUserIds(ctx: UserAdministrationContext): Promise<string
   return result.rows.map((row) => String(row.id));
 }
 
+async function viewableUserIds(ctx: UserAdministrationContext): Promise<string[]> {
+  if (!(await isTenantAdmin(ctx))) return manageableUserIds(ctx);
+
+  const result = await pool.query(
+    `
+      SELECT target_user.id
+      FROM users target_user
+      JOIN user_roles target_ur
+        ON target_ur.user_id = target_user.id
+       AND target_ur.tenant_id = target_user.tenant_id
+       AND target_ur.is_active = true
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+      WHERE target_user.tenant_id = $1
+      GROUP BY target_user.id
+      HAVING bool_and(target_role.role_key = ANY($2::text[]))
+    `,
+    [ctx.tenantId, TENANT_ADMIN_VISIBLE_ROLE_KEYS]
+  );
+  return result.rows.map((row) => String(row.id));
+}
+
 async function canManageRole(ctx: UserAdministrationContext, roleId: string): Promise<boolean> {
   const roleIds = await manageableRoleIds(ctx);
   return roleIds.includes(roleId);
@@ -104,6 +176,35 @@ async function canManageRole(ctx: UserAdministrationContext, roleId: string): Pr
 async function canManageUser(ctx: UserAdministrationContext, userId: string): Promise<boolean> {
   const userIds = await manageableUserIds(ctx);
   return userIds.includes(userId);
+}
+
+async function canViewUser(ctx: UserAdministrationContext, userId: string): Promise<boolean> {
+  const userIds = await viewableUserIds(ctx);
+  return userIds.includes(userId);
+}
+
+async function canViewUserRole(
+  ctx: UserAdministrationContext,
+  userRoleId: string,
+  requireOrgScope = false
+): Promise<boolean> {
+  const result = await pool.query(
+    `
+      SELECT target_ur.user_id, target_role.is_org_scope_target
+      FROM user_roles target_ur
+      JOIN roles target_role
+        ON target_role.id = target_ur.role_id
+       AND target_role.is_active = true
+      WHERE target_ur.id = $1
+        AND target_ur.tenant_id = $2
+        AND target_ur.is_active = true
+      LIMIT 1
+    `,
+    [userRoleId, ctx.tenantId]
+  );
+  const row = result.rows[0];
+  if (!row || (requireOrgScope && row.is_org_scope_target !== true)) return false;
+  return canViewUser(ctx, String(row.user_id));
 }
 
 async function canCreateUsers(ctx: UserAdministrationContext): Promise<boolean> {
@@ -196,7 +297,7 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
   try {
     const ctx = await resolveAdministrationContext(req);
     if (!ctx) return res.status(401).json({ error: 'No autenticado' });
-    const roleIds = await manageableRoleIds(ctx);
+    const roleIds = await viewableRoleIds(ctx);
     if (roleIds.length === 0) {
       return res.status(403).json({ error: 'Su rol no tiene responsabilidad para administrar usuarios' });
     }
@@ -359,7 +460,7 @@ router.get('/catalogs/tenants', async (req: Request, res: Response) => {
 router.get('/catalogs/roles', async (req: Request, res: Response) => {
   try {
     const ctx = administrationContext(req);
-    const roleIds = await manageableRoleIds(ctx);
+    const roleIds = await viewableRoleIds(ctx);
     if (roleIds.length === 0) return res.status(200).json({ success: true, roles: [] });
     const Postgres = getPostgres();
     const { data, error } = await Postgres
@@ -628,7 +729,7 @@ router.get('/catalogs/languages', async (req: Request, res: Response) => {
 router.get('/catalogs/user-role-summaries', async (req: Request, res: Response) => {
   try {
     const ctx = administrationContext(req);
-    const userIds = await manageableUserIds(ctx);
+    const userIds = await viewableUserIds(ctx);
     if (userIds.length === 0) {
       return res.status(200).json({ success: true, summaries: [], count: 0 });
     }
@@ -900,7 +1001,7 @@ router.get('/user-roles/:user_role_id/scopes', async (req: Request, res: Respons
   try {
     const userRoleId = req.params.user_role_id;
     const ctx = administrationContext(req);
-    if (!(await canManageUserRole(ctx, userRoleId, true))) {
+    if (!(await canViewUserRole(ctx, userRoleId, true))) {
       return res.status(403).json({ error: 'Este rol de usuario no admite administración de alcances' });
     }
     const Postgres = getPostgres();
@@ -1197,7 +1298,7 @@ router.delete('/scopes/:scope_id', async (req: Request, res: Response) => {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const ctx = administrationContext(req);
-    const userIds = await manageableUserIds(ctx);
+    const userIds = await viewableUserIds(ctx);
     if (userIds.length === 0) return res.status(200).json({ success: true, users: [], count: 0 });
     const Postgres = getPostgres();
 
@@ -1235,7 +1336,7 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id;
     const ctx = administrationContext(req);
-    if (!(await canManageUser(ctx, id))) {
+    if (!(await canViewUser(ctx, id))) {
       return res.status(403).json({ error: 'No puede administrar este usuario' });
     }
     const Postgres = getPostgres();
@@ -1570,7 +1671,7 @@ router.get('/:user_id/roles', async (req: Request, res: Response) => {
   try {
     const userId = req.params.user_id;
     const ctx = administrationContext(req);
-    if (!(await canManageUser(ctx, userId))) {
+    if (!(await canViewUser(ctx, userId))) {
       return res.status(403).json({ error: 'No puede administrar este usuario' });
     }
     const Postgres = getPostgres();

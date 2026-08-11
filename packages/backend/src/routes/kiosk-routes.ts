@@ -2549,11 +2549,11 @@ router.get('/requests', async (req: Request, res: Response) => {
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
           r.approval_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
-          r.planning_risk_accepted_by,
+          r.planning_risk_accepted_user_id AS planning_risk_accepted_by,
           risk_user.display_name AS planning_risk_accepted_by_display_name,
           risk_user.username AS planning_risk_accepted_by_username,
           r.planning_risk_accepted_at,
@@ -2575,9 +2575,9 @@ router.get('/requests', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values rs
           ON rs.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         LEFT JOIN public.users risk_user
-          ON risk_user.id = r.planning_risk_accepted_by
+          ON risk_user.id = r.planning_risk_accepted_user_id
         WHERE r.tenant_id = $1
           AND r.employee_id = $2
           AND ($3::boolean = true OR r.is_active = true)
@@ -3331,7 +3331,7 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
           rs.lookup_key AS request_status_key,
           rs.lookup_label AS request_status_label,
           r.approval_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -3347,8 +3347,8 @@ router.get('/requests/approvals', async (req: Request, res: Response) => {
         LEFT JOIN public.attendance_events ae ON ae.id = r.attendance_event_id
         LEFT JOIN public.lookup_values jm ON jm.id = r.justify_method_id
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
-        LEFT JOIN public.users au ON au.id = r.approved_by
-        LEFT JOIN public.users risk_user ON risk_user.id = r.planning_risk_accepted_by
+        LEFT JOIN public.users au ON au.id = r.approved_user_id
+        LEFT JOIN public.users risk_user ON risk_user.id = r.planning_risk_accepted_user_id
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = ANY($2::uuid[])
           AND r.is_active = true
@@ -3732,11 +3732,11 @@ router.patch('/requests/:id/decision', async (req: Request, res: Response) => {
           request_status_id = $3::uuid,
           approval_notes = $4,
           justify_method_id = COALESCE($5::uuid, justify_method_id),
-          approved_by = $6::uuid,
+          approved_user_id = $6::uuid,
           approved_at = now(),
           updated_by = $7,
           updated_at = now(),
-          planning_risk_accepted_by = CASE WHEN $8::boolean THEN $6::uuid ELSE NULL END,
+          planning_risk_accepted_user_id = CASE WHEN $8::boolean THEN $6::uuid ELSE NULL END,
           planning_risk_accepted_at = CASE WHEN $8::boolean THEN now() ELSE NULL END,
           planning_risk_assessment_token = CASE WHEN $8::boolean THEN $9 ELSE NULL END,
           planning_risk_snapshot = CASE WHEN $8::boolean THEN $10::jsonb ELSE NULL END
@@ -3860,7 +3860,7 @@ router.get('/my-requests', async (req: Request, res: Response) => {
           r.support_document_mime,
           r.support_document_size_bytes,
           r.approval_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -3873,7 +3873,7 @@ router.get('/my-requests', async (req: Request, res: Response) => {
         LEFT JOIN public.justification_types jt ON jt.id = r.justification_type_id
         LEFT JOIN public.attendance_events ae ON ae.id = r.attendance_event_id
         LEFT JOIN public.lookup_values rs ON rs.id = r.request_status_id
-        LEFT JOIN public.users au ON au.id = r.approved_by
+        LEFT JOIN public.users au ON au.id = r.approved_user_id
         WHERE r.tenant_id = $1
           AND r.employee_id = $2
           ${whereExtra}
@@ -4147,7 +4147,7 @@ router.get('/request-shift-change/approvals', async (req: Request, res: Response
           st.lookup_key AS request_status_key,
           st.lookup_label AS request_status_label,
           r.supervisor_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -4167,7 +4167,7 @@ router.get('/request-shift-change/approvals', async (req: Request, res: Response
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = ANY($2::uuid[])
           AND r.is_active = true
@@ -4253,7 +4253,7 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
           st.lookup_key AS request_status_key,
           st.lookup_label AS request_status_label,
           r.supervisor_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -4269,7 +4269,7 @@ router.get('/my-shift-changes', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         WHERE r.tenant_id = $1::uuid
           AND r.employee_id = $2::uuid
           AND r.is_active = true
@@ -4979,7 +4979,7 @@ router.patch('/request-shift-change/:id/decision', async (req: Request, res: Res
         SET
           request_status_id = $3::uuid,
           supervisor_notes = $4,
-          approved_by = $5::uuid,
+          approved_user_id = $5::uuid,
           approved_at = now(),
           updated_by = $6,
           updated_at = now()
@@ -5178,7 +5178,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
           st.lookup_label AS request_status_label,
           UPPER(COALESCE(st.metadata->>'notification_status_key', '')) AS request_status_filter_key,
           r.supervisor_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -5201,7 +5201,7 @@ router.get('/time-punch-requests', async (req: Request, res: Response) => {
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         LEFT JOIN public.employee_time_punches p
           ON p.id = r.target_punch_id
         LEFT JOIN public.lookup_values pm
@@ -5835,7 +5835,7 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
           st.lookup_key AS request_status_key,
           st.lookup_label AS request_status_label,
           r.supervisor_notes,
-          r.approved_by,
+          r.approved_user_id AS approved_by,
           au.display_name AS approved_by_display_name,
           au.username AS approved_by_username,
           r.approved_at,
@@ -5862,7 +5862,7 @@ router.get('/time-punch-requests/approvals', async (req: Request, res: Response)
         LEFT JOIN public.lookup_values st
           ON st.id = r.request_status_id
         LEFT JOIN public.users au
-          ON au.id = r.approved_by
+          ON au.id = r.approved_user_id
         LEFT JOIN public.employee_time_punches p
           ON p.id = r.target_punch_id
         LEFT JOIN public.lookup_values pm
@@ -6195,7 +6195,7 @@ router.patch('/time-punch-requests/:id/decision', async (req: Request, res: Resp
         SET
           request_status_id = $3::uuid,
           supervisor_notes = $4,
-          approved_by = $5::uuid,
+          approved_user_id = $5::uuid,
           approved_at = now(),
           updated_by = $6,
           updated_at = now()
